@@ -1,0 +1,36 @@
+# Django y Django REST Framework
+Django==5.0.1
+djangorestframework==3.14.0
+djangorestframework-simplejwt==5.3.1
+
+# Base de datos
+psycopg2-binary==2.9.9
+dj-database-url==2.1.0
+
+# CORS para React
+django-cors-headers==4.3.1
+
+# Utilidades
+python-dotenv==1.0.0
+Pillow==10.2.0
+
+# Filtros y búsqueda
+django-filter==23.5
+
+# Tareas asíncronas
+celery==5.3.6
+redis==5.0.1
+
+# Generación de reportes
+reportlab==4.0.9
+WeasyPrint==60.2
+
+# Importación/Exportación Excel
+django-import-export==3.3.7
+openpyxl==3.1.2
+
+# Impresión de tickets (opcional)
+python-escpos==3.0a9
+
+# Desarrollo
+autopep8==2.0.4
