@@ -1,1 +1,1 @@
-# Placeholder para apps adicionales - se desarrollarán en siguientes iteraciones
+default_app_config = 'apps.ventas.apps.VentasConfig'

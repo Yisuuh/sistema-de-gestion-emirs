@@ -40,14 +40,14 @@ INSTALLED_APPS = [
     'import_export',
     
     # Local apps
-    'apps.usuarios',
-    'apps.inventario',
-    'apps.ventas',
-    'apps.caja',
-    'apps.gastos',
-    'apps.nomina',
-    'apps.clientes',
-    'apps.reportes',
+    'apps.usuarios.apps.UsuariosConfig',
+    'apps.inventario.apps.InventarioConfig',
+    'apps.ventas.apps.VentasConfig',
+    'apps.caja.apps.CajaConfig',
+    'apps.gastos.apps.GastosConfig',
+    'apps.nomina.apps.NominaConfig',
+    'apps.clientes.apps.ClientesConfig',
+    'apps.reportes.apps.ReportesConfig',
 ]
 
 MIDDLEWARE = [
