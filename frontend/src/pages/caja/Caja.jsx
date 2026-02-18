@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import API_BASE from '../../config/api';
 import { 
   CurrencyDollarIcon, 
   ArrowUpIcon, 
@@ -79,7 +80,7 @@ export default function Caja() {
 
   const cargarCajaActual = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/caja/cajas/caja_actual/', {
+      const response = await fetch(`${API_BASE}/api/caja/cajas/caja_actual/`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -102,7 +103,7 @@ export default function Caja() {
 
   const cargarEmpleados = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/nomina/empleados/?activos=true', {
+      const response = await fetch(`${API_BASE}/api/nomina/empleados/?activos=true`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -118,7 +119,7 @@ export default function Caja() {
 
   const cargarMovimientos = async (cajaId) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/caja/movimientos/?caja=${cajaId}`, {
+      const response = await fetch(`${API_BASE}/api/caja/movimientos/?caja=${cajaId}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -138,7 +139,7 @@ export default function Caja() {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/caja/cajas/', {
+      const response = await fetch(`${API_BASE}/api/caja/cajas/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -171,7 +172,7 @@ export default function Caja() {
     setError(null);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/caja/cajas/${cajaActual.id}/cerrar/`, {
+      const response = await fetch(`${API_BASE}/api/caja/cajas/${cajaActual.id}/cerrar/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -204,7 +205,7 @@ export default function Caja() {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/caja/movimientos/', {
+      const response = await fetch(`${API_BASE}/api/caja/movimientos/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -239,7 +240,7 @@ export default function Caja() {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/caja/arqueos/', {
+      const response = await fetch(`${API_BASE}/api/caja/arqueos/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

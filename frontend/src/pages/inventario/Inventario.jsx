@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import API_BASE from '../../config/api';
 import { 
   PlusIcon, 
   MagnifyingGlassIcon, 
@@ -52,7 +53,7 @@ export default function Inventario() {
 
   const cargarProductos = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/inventario/productos/', {
+      const response = await fetch(`${API_BASE}/api/inventario/productos/`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       if (response.ok) {
@@ -66,7 +67,7 @@ export default function Inventario() {
 
   const cargarMarcas = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/inventario/marcas/', {
+      const response = await fetch(`${API_BASE}/api/inventario/marcas/`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       if (response.ok) {
@@ -80,7 +81,7 @@ export default function Inventario() {
 
   const cargarProveedores = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/inventario/proveedores/?activo=true', {
+      const response = await fetch(`${API_BASE}/api/inventario/proveedores/?activo=true`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       if (response.ok) {
@@ -98,7 +99,7 @@ export default function Inventario() {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/inventario/entradas/', {
+      const response = await fetch(`${API_BASE}/api/inventario/entradas/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
