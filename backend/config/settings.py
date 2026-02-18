@@ -156,12 +156,13 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# WhiteNoise: compresión y caché de estáticos
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# WhiteNoise: compresión de estáticos (sin re-hash, ya Vite hashea los nombres)
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
-# Carpeta con el build de React (se copia durante el deploy)
-_frontend_assets = BASE_DIR / 'frontend_build' / 'assets'
-STATICFILES_DIRS = [_frontend_assets] if _frontend_assets.exists() else []
+# Carpeta con el build de React (index.html + assets/)
+# Con base='/static/' en Vite los assets se referencian como /static/assets/...
+_frontend_build = BASE_DIR / 'frontend_build'
+STATICFILES_DIRS = [_frontend_build] if _frontend_build.exists() else []
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'

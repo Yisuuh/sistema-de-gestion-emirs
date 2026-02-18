@@ -10,11 +10,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  // En producción el build se sirve desde Django, por eso la base es '/'
-  base: '/',
+  // En producción Django sirve los estáticos bajo /static/, usamos esa base
+  base: '/static/',
   build: {
     outDir: 'dist',
-    // Coloca todos los assets en una carpeta para que Django los sirva fácilmente
     assetsDir: 'assets',
   },
   server: {
