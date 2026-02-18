@@ -19,5 +19,9 @@ cp -r frontend/dist backend/frontend_build
 
 # ── 4. Migraciones y archivos estáticos ────────────────────────────────────
 cd backend
+
+# El modelo de usuario personalizado debe migrarse PRIMERO para evitar
+# que post_migrate de contenttypes/auth referencie una tabla inexistente.
+python manage.py migrate usuarios --no-input
 python manage.py migrate --no-input
 python manage.py collectstatic --no-input
