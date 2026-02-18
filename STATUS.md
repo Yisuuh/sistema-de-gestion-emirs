@@ -81,7 +81,7 @@ Seguir las instrucciones en **INICIO_RAPIDO.md** sección 3.
 |--------|:-------:|:--------:|:---------:|
 | Autenticación | ✅ | 🔧 | Alta |
 | Inventario | ✅ | ❌ | Alta |
-| Ventas (POS) | ✅ | ❌ | Alta |
+| Ventas (POS) | ✅ | ✅ | Alta |
 | Caja | ⚠️ | ❌ | Alta |
 | Gastos | ⚠️ | ❌ | Media |
 | Nómina | ⚠️ | ❌ | Media |

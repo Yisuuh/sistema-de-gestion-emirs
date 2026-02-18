@@ -12,6 +12,13 @@ class UsuarioAdmin(BaseUserAdmin):
     fieldsets = BaseUserAdmin.fieldsets + (
         ('Información Adicional', {'fields': ('rol', 'telefono', 'activo', 'fecha_ultimo_acceso')}),
     )
+    
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('username', 'email', 'first_name', 'last_name', 'telefono', 'password1', 'password2', 'rol', 'activo'),
+        }),
+    )
 
 
 @admin.register(LogAuditoria)
