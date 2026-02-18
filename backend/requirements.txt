@@ -3,9 +3,15 @@ Django==5.0.1
 djangorestframework==3.14.0
 djangorestframework-simplejwt==5.3.1
 
+# Servidor de producción
+gunicorn==21.2.0
+
 # Base de datos
 psycopg2-binary==2.9.9
 dj-database-url==2.1.0
+
+# Archivos estáticos en producción
+whitenoise==6.6.0
 
 # CORS para React
 django-cors-headers==4.3.1

@@ -5,6 +5,7 @@ Django settings for Sistema de Gestión Llantero - Centro Llantero EmirS
 from pathlib import Path
 from datetime import timedelta
 import os
+import dj_database_url
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,9 +18,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-this-in-production-123456789')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,192.168.1.*').split(',')
+_raw_hosts = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+ALLOWED_HOSTS = [h.strip() for h in _raw_hosts.split(',') if h.strip()]
+
+# En Render el hostname del servicio se expone como RENDER_EXTERNAL_HOSTNAME
+RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 
 # Application definition
@@ -52,6 +59,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Debe ir justo después de SecurityMiddleware
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -66,7 +74,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'frontend_build'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -86,14 +94,20 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'sistema_llantero_db'),
-        'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'postgres'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '5432'),
-    }
+    'default': dj_database_url.config(
+        default=os.getenv(
+            'DATABASE_URL',
+            'postgres://{user}:{pw}@{host}:{port}/{name}'.format(
+                user=os.getenv('DB_USER', 'postgres'),
+                pw=os.getenv('DB_PASSWORD', 'postgres'),
+                host=os.getenv('DB_HOST', 'localhost'),
+                port=os.getenv('DB_PORT', '5432'),
+                name=os.getenv('DB_NAME', 'sistema_llantero_db'),
+            )
+        ),
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 }
 
 # Para desarrollo local con SQLite, descomentar:
@@ -139,10 +153,17 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-MEDIA_URL = 'media/'
+# WhiteNoise: compresión y caché de estáticos
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Carpeta con el build de React (se copia durante el deploy)
+_frontend_assets = BASE_DIR / 'frontend_build' / 'assets'
+STATICFILES_DIRS = [_frontend_assets] if _frontend_assets.exists() else []
+
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
@@ -182,12 +203,17 @@ SIMPLE_JWT = {
 }
 
 # CORS Settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vite default port
-    "http://localhost:3000",  # React default port
+_cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', '')
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()] or [
+    "http://localhost:5173",
+    "http://localhost:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
 ]
+
+# En producción (Render) el front y el back son el mismo origen
+if RENDER_EXTERNAL_HOSTNAME:
+    CORS_ALLOWED_ORIGINS.append(f'https://{RENDER_EXTERNAL_HOSTNAME}')
 
 CORS_ALLOW_CREDENTIALS = True
 

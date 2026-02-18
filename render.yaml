@@ -1,0 +1,32 @@
+databases:
+  - name: emirs-db
+    databaseName: sistema_llantero_db
+    user: emirs_user
+    plan: free          # Cambia a "starter" o superior si necesitas más capacidad
+
+services:
+  - type: web
+    name: emirs-sistema
+    runtime: python
+    plan: free          # Cambia a "starter" para mayor rendimiento
+    buildCommand: "./build.sh"
+    startCommand: "cd backend && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
+    rootDir: .
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true          # Render genera una clave aleatoria segura
+
+      - key: DEBUG
+        value: "False"
+
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+
+      # Render conecta automáticamente la BD con DATABASE_URL
+      - key: DATABASE_URL
+        fromDatabase:
+          name: emirs-db
+          property: connectionString
+
+      # RENDER_EXTERNAL_HOSTNAME lo pone Render automáticamente,
+      # no hace falta declararlo manualmente.

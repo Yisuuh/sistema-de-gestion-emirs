@@ -58,6 +58,9 @@ node_modules/
 /frontend/dist
 /frontend/.vite
 
+# Carpeta de build copiada al backend (generada por build.sh)
+/backend/frontend_build/
+
 # Backups
 /backend/backups/
 
