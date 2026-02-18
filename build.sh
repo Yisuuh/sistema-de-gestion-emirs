@@ -8,6 +8,9 @@ pip install -r backend/requirements.txt
 
 # ── 2. Compilar el frontend (React/Vite) ───────────────────────────────────
 cd frontend
+# Eliminar package-lock.json generado en Windows para que npm lo regenere
+# en Linux e incluya las dependencias nativas correctas (rollup-linux-x64-gnu)
+rm -f package-lock.json
 npm install
 npm run build          # genera frontend/dist/
 cd ..

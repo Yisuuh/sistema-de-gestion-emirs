@@ -57,6 +57,7 @@ Thumbs.db
 node_modules/
 /frontend/dist
 /frontend/.vite
+/frontend/package-lock.json
 
 # Carpeta de build copiada al backend (generada por build.sh)
 /backend/frontend_build/
