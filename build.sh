@@ -28,3 +28,15 @@ cd backend
 python manage.py migrate usuarios --no-input
 python manage.py migrate --no-input
 python manage.py collectstatic --no-input
+
+# Crear superusuario si las variables de entorno están definidas
+if [ -n "$DJANGO_SUPERUSER_USERNAME" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
+  python manage.py shell -c "
+from apps.usuarios.models import Usuario
+if not Usuario.objects.filter(username='$DJANGO_SUPERUSER_USERNAME').exists():
+    Usuario.objects.create_superuser('$DJANGO_SUPERUSER_USERNAME', '$DJANGO_SUPERUSER_EMAIL', '$DJANGO_SUPERUSER_PASSWORD')
+    print('Superusuario creado.')
+else:
+    print('El superusuario ya existe.')
+"
+fi
