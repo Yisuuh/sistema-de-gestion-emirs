@@ -14,11 +14,24 @@ class Venta(models.Model):
     
     folio = models.CharField(max_length=20, unique=True, editable=False)
     fecha = models.DateTimeField(auto_now_add=True)
+    caja = models.ForeignKey(
+        'caja.Caja', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='ventas',
+        help_text='Caja en la que se registró la venta'
+    )
     empleado = models.ForeignKey('nomina.Empleado', on_delete=models.PROTECT, related_name='ventas')
     cliente = models.ForeignKey('clientes.Cliente', on_delete=models.SET_NULL, null=True, blank=True, related_name='ventas')
     metodo_pago = models.CharField(max_length=20, choices=METODOS_PAGO)
     monto_efectivo = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     monto_electronico = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    num_operacion = models.CharField(
+        max_length=100, blank=True,
+        help_text='Número de operación para pagos con tarjeta'
+    )
+    num_referencia = models.CharField(
+        max_length=100, blank=True,
+        help_text='Número de referencia para pagos por transferencia'
+    )
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
     descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=10, decimal_places=2)

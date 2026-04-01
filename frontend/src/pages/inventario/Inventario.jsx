@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import API_BASE from '../../config/api';
+import { useState, useEffect, useRef } from 'react';
 import { 
   PlusIcon, 
   MagnifyingGlassIcon, 
@@ -7,7 +6,11 @@ import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   XCircleIcon,
-  ArrowDownTrayIcon
+  ArrowDownTrayIcon,
+  DocumentArrowUpIcon,
+  ArrowUpTrayIcon,
+  BuildingStorefrontIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 
 export default function Inventario() {
@@ -20,6 +23,15 @@ export default function Inventario() {
   const [error, setError] = useState(null);
   const [exito, setExito] = useState(null);
   
+  // ── Estados XML import ───────────────────────────────────────────────────
+  const [xmlFile, setXmlFile] = useState(null);
+  const [xmlPreview, setXmlPreview] = useState(null);   // datos parseados
+  const [xmlLoading, setXmlLoading] = useState(false);
+  const [xmlError, setXmlError] = useState(null);
+  const [xmlExito, setXmlExito] = useState(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef(null);
+
   // Estados para modal de entrada de inventario
   const [modalEntrada, setModalEntrada] = useState(false);
   const [entradaForm, setEntradaForm] = useState({
@@ -92,6 +104,90 @@ export default function Inventario() {
       console.error('Error al cargar proveedores:', error);
     }
   };
+
+  // ─── Funciones XML import ────────────────────────────────────────────────
+
+  const handleXmlFile = async (file) => {
+    if (!file) return;
+    if (!file.name.endsWith('.xml')) {
+      setXmlError('Solo se aceptan archivos .xml');
+      return;
+    }
+    setXmlFile(file);
+    setXmlPreview(null);
+    setXmlError(null);
+    setXmlExito(null);
+    await previsualizarXml(file);
+  };
+
+  const previsualizarXml = async (file) => {
+    setXmlLoading(true);
+    setXmlError(null);
+    try {
+      const formData = new FormData();
+      formData.append('xml', file);
+      formData.append('accion', 'preview');
+
+      const res = await fetch('http://localhost:8000/api/inventario/importar-xml/', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setXmlError(data.error || 'Error al parsear el XML');
+        return;
+      }
+      setXmlPreview(data.datos);
+    } catch (err) {
+      setXmlError('Error de conexión al procesar el XML');
+    } finally {
+      setXmlLoading(false);
+    }
+  };
+
+  const confirmarImportacion = async () => {
+    if (!xmlFile) return;
+    setXmlLoading(true);
+    setXmlError(null);
+    try {
+      const formData = new FormData();
+      formData.append('xml', xmlFile);
+      formData.append('accion', 'guardar');
+
+      const res = await fetch('http://localhost:8000/api/inventario/importar-xml/', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setXmlError(data.error || 'Error al guardar');
+        return;
+      }
+      const r = data.resultado;
+      setXmlExito(
+        `✅ Factura ${r.numero_factura} importada — ${r.total_items} línea(s) registrada(s) de ${r.proveedor}`
+      );
+      setXmlPreview(null);
+      setXmlFile(null);
+      await cargarProductos();   // refrescar tabla de productos
+      setTimeout(() => setXmlExito(null), 6000);
+    } catch (err) {
+      setXmlError('Error de conexión');
+    } finally {
+      setXmlLoading(false);
+    }
+  };
+
+  const cancelarXml = () => {
+    setXmlFile(null);
+    setXmlPreview(null);
+    setXmlError(null);
+    setXmlExito(null);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   const registrarEntrada = async (e) => {
     e.preventDefault();
@@ -210,6 +306,17 @@ export default function Inventario() {
         >
           Registrar Entrada
         </button>
+        <button
+          onClick={() => { setVistaActual('xml'); cancelarXml(); }}
+          className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+            vistaActual === 'xml'
+              ? 'bg-purple-600 text-white'
+              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+          }`}
+        >
+          <DocumentArrowUpIcon className="h-5 w-5" />
+          Importar Factura XML
+        </button>
       </div>
 
       {/* Vista de Productos */}
@@ -298,6 +405,187 @@ export default function Inventario() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ── Vista: Importar XML ────────────────────────────────────────── */}
+      {vistaActual === 'xml' && (
+        <div className="max-w-4xl">
+
+          {/* Mensajes de estado */}
+          {xmlError && (
+            <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
+              <XCircleIcon className="h-5 w-5 flex-shrink-0" />
+              <span>{xmlError}</span>
+            </div>
+          )}
+          {xmlExito && (
+            <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center gap-2">
+              <CheckCircleIcon className="h-5 w-5 flex-shrink-0" />
+              <span>{xmlExito}</span>
+            </div>
+          )}
+
+          {/* Zona de subida */}
+          {!xmlPreview && (
+            <div
+              className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
+                isDragOver
+                  ? 'border-purple-500 bg-purple-50'
+                  : 'border-gray-300 bg-white hover:border-purple-400 hover:bg-purple-50'
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                const f = e.dataTransfer.files[0];
+                if (f) handleXmlFile(f);
+              }}
+            >
+              <ArrowUpTrayIcon className="h-12 w-12 text-purple-400 mx-auto mb-3" />
+              <p className="text-lg font-medium text-gray-700">
+                {xmlLoading ? 'Procesando...' : 'Arrastra el XML aquí o haz clic para seleccionar'}
+              </p>
+              <p className="text-sm text-gray-500 mt-1">Facturas CFDI 4.0 del SAT (.xml)</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xml"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files[0];
+                  if (f) handleXmlFile(f);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+          )}
+
+          {/* Preview de datos parseados */}
+          {xmlPreview && (
+            <div className="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
+
+              {/* Encabezado de la factura */}
+              <div className="px-6 py-4 bg-purple-50 border-b border-purple-100">
+                <h3 className="text-lg font-semibold text-purple-900 flex items-center gap-2">
+                  <DocumentTextIcon className="h-6 w-6" />
+                  Vista previa de la factura
+                </h3>
+                <div className="mt-3 grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
+                  <div className="flex gap-2">
+                    <span className="text-gray-500 font-medium">Proveedor:</span>
+                    <span className="text-gray-900 font-semibold flex items-center gap-1">
+                      <BuildingStorefrontIcon className="h-4 w-4 text-purple-500" />
+                      {xmlPreview.proveedor?.nombre}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-gray-500 font-medium">RFC Emisor:</span>
+                    <span className="text-gray-900 font-mono">{xmlPreview.proveedor?.rfc}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-gray-500 font-medium">No. Factura:</span>
+                    <span className="text-gray-900 font-mono">{xmlPreview.numero_factura}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-gray-500 font-medium">Fecha:</span>
+                    <span className="text-gray-900">{xmlPreview.fecha_compra}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-gray-500 font-medium">Subtotal:</span>
+                    <span className="text-gray-900">${parseFloat(xmlPreview.subtotal).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-gray-500 font-medium">Total con IVA:</span>
+                    <span className="text-gray-900 font-semibold">${parseFloat(xmlPreview.total).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabla de artículos */}
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Medida</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Marca</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Modelo</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">IC / IV</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Cant.</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">P. Compra</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-100">
+                    {xmlPreview.items?.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-purple-50">
+                        <td className="px-4 py-3 font-mono text-gray-800 whitespace-nowrap">{item.codigo}</td>
+                        <td className="px-4 py-3 text-gray-700 max-w-xs">
+                          <span className="line-clamp-2">{item.descripcion}</span>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {item.medida ? (
+                            <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-mono text-xs">{item.medida}</span>
+                          ) : (
+                            <span className="text-red-500 text-xs">No detectada</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap font-medium text-gray-900">{item.marca_nombre || '—'}</td>
+                        <td className="px-4 py-3 text-gray-700">{item.modelo || '—'}</td>
+                        <td className="px-4 py-3 text-center whitespace-nowrap">
+                          <span className="font-mono text-gray-700">{item.indice_carga}{item.indice_velocidad}</span>
+                        </td>
+                        <td className="px-4 py-3 text-center font-bold text-gray-900">{item.cantidad}</td>
+                        <td className="px-4 py-3 text-right font-mono text-gray-900">
+                          ${item.precio_compra?.toLocaleString('es-MX', { minimumFractionDigits: 4 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Nota informativa */}
+              <div className="px-6 py-3 bg-yellow-50 border-t border-yellow-100 text-xs text-yellow-800">
+                ℹ️ Si el producto (código) ya existe en inventario se registrará la entrada sin duplicarlo.
+                Si es nuevo, se creará automáticamente con precio de venta sugerido (+30&nbsp;% margen).
+              </div>
+
+              {/* Acciones */}
+              <div className="px-6 py-4 border-t border-gray-200 flex gap-3 justify-end">
+                <button
+                  onClick={cancelarXml}
+                  className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+                  disabled={xmlLoading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmarImportacion}
+                  disabled={xmlLoading}
+                  className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                >
+                  {xmlLoading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      Importando...
+                    </>
+                  ) : (
+                    <>
+                      <ArrowDownTrayIcon className="h-4 w-4" />
+                      Confirmar e Importar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

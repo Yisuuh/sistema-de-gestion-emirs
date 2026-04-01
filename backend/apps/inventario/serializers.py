@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario
+from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
 
 
 class MarcaSerializer(serializers.ModelSerializer):
@@ -46,3 +46,13 @@ class SalidaInventarioSerializer(serializers.ModelSerializer):
         model = SalidaInventario
         fields = '__all__'
         read_only_fields = ['utilidad']
+
+
+class PagoProveedorSerializer(serializers.ModelSerializer):
+    proveedor_nombre = serializers.CharField(source='proveedor.nombre', read_only=True)
+    registrado_por_username = serializers.CharField(source='registrado_por.username', read_only=True)
+
+    class Meta:
+        model = PagoProveedor
+        fields = '__all__'
+        read_only_fields = ['registrado_por']

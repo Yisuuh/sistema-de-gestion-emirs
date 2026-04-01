@@ -3,7 +3,6 @@ Modelos para el módulo de Caja
 """
 from django.db import models
 from django.db.models import Sum
-from django.utils import timezone
 
 
 class Caja(models.Model):
@@ -45,29 +44,42 @@ class Caja(models.Model):
         return f"{self.folio} - {self.estado}"
     
     @property
+    def total_ventas_efectivo(self):
+        """Total en efectivo de ventas registradas en esta caja"""
+        return self.ventas.aggregate(
+            t=Sum('monto_efectivo')
+        )['t'] or 0
+
+    @property
+    def total_ventas_electronico(self):
+        """Total electrónico de ventas registradas en esta caja"""
+        return self.ventas.aggregate(
+            t=Sum('monto_electronico')
+        )['t'] or 0
+
+    @property
+    def total_ventas(self):
+        """Total general de ventas registradas en esta caja"""
+        return self.ventas.aggregate(
+            t=Sum('total')
+        )['t'] or 0
+
+    @property
+    def num_ventas(self):
+        """Cantidad de ventas en esta caja"""
+        return self.ventas.count()
+
+    @property
     def total_ingresos(self):
-        """Calcular total de ingresos (ventas + entradas de efectivo)"""
-        from apps.ventas.models import Venta
-        
-        # Ingresos por ventas en efectivo o mixto
-        ventas = Venta.objects.filter(
-            fecha__gte=self.fecha_apertura,
-            fecha__lte=self.fecha_cierre if self.fecha_cierre else timezone.now()
-        ).aggregate(
-            total_efectivo=Sum('monto_efectivo')
-        )
-        
-        # Movimientos de ingreso
+        """Calcular total de ingresos (ventas en efectivo + movimientos de ingreso)"""
+        # Movimientos de ingreso extra
         movimientos_ingreso = self.movimientos.filter(
             tipo='ingreso'
         ).aggregate(
             total=Sum('monto')
         )
-        
-        total_ventas = ventas['total_efectivo'] or 0
         total_movimientos = movimientos_ingreso['total'] or 0
-        
-        return total_ventas + total_movimientos
+        return self.total_ventas_efectivo + total_movimientos
     
     @property
     def total_egresos(self):

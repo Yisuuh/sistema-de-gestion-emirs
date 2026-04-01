@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, date
 from .models import Caja, MovimientoCaja, ArqueoCaja
 from .serializers import (
     CajaSerializer,
@@ -106,6 +106,107 @@ class CajaViewSet(viewsets.ModelViewSet):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=True, methods=['get'])
+    def ventas_caja(self, request, pk=None):
+        """
+        Todas las ventas registradas dentro de esta caja.
+        Devuelve lista con folio, empleado, método de pago, total y hora.
+        """
+        caja = self.get_object()
+        from apps.ventas.models import Venta
+        from apps.ventas.serializers import VentaListSerializer
+        ventas = (
+            Venta.objects
+            .filter(caja=caja)
+            .select_related('empleado', 'cliente')
+            .prefetch_related('detalles')
+            .order_by('-fecha')
+        )
+        serializer = VentaListSerializer(ventas, many=True)
+        return Response({
+            'caja_folio': caja.folio,
+            'total_ventas': caja.num_ventas,
+            'total_monto': float(caja.total_ventas),
+            'ventas': serializer.data,
+        })
+
+    @action(detail=False, methods=['get'])
+    def historial(self, request):
+        """
+        GET /api/caja/cajas/historial/?periodo=hoy|semana|mes|rango
+        &fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
+
+        Devuelve cajas agrupadas con sus totales de ventas, egresos y saldo.
+        """
+        hoy = timezone.now().date()
+        periodo = request.query_params.get('periodo', 'hoy')
+
+        if periodo == 'hoy':
+            inicio = hoy
+            fin = hoy
+        elif periodo == 'semana':
+            inicio = hoy - timedelta(days=hoy.weekday())  # lunes de esta semana
+            fin = hoy
+        elif periodo == 'mes':
+            inicio = hoy.replace(day=1)
+            fin = hoy
+        elif periodo == 'rango':
+            try:
+                inicio = date.fromisoformat(request.query_params.get('fecha_inicio', str(hoy)))
+                fin = date.fromisoformat(request.query_params.get('fecha_fin', str(hoy)))
+            except ValueError:
+                return Response({'error': 'Fechas inválidas. Use formato YYYY-MM-DD.'}, status=400)
+        else:
+            return Response({'error': 'Periodo no válido. Use: hoy, semana, mes, rango.'}, status=400)
+
+        cajas = (
+            Caja.objects
+            .filter(fecha_apertura__date__gte=inicio, fecha_apertura__date__lte=fin)
+            .select_related('empleado_apertura', 'empleado_cierre')
+            .order_by('-fecha_apertura')
+        )
+
+        # Construir resumen
+        resultado = []
+        for caja in cajas:
+            resultado.append({
+                'id': caja.id,
+                'folio': caja.folio,
+                'estado': caja.estado,
+                'fecha_apertura': caja.fecha_apertura.strftime('%Y-%m-%d %H:%M'),
+                'fecha_cierre': caja.fecha_cierre.strftime('%Y-%m-%d %H:%M') if caja.fecha_cierre else None,
+                'empleado_apertura': caja.empleado_apertura.nombre_completo if caja.empleado_apertura else '',
+                'empleado_cierre': caja.empleado_cierre.nombre_completo if caja.empleado_cierre else '',
+                'monto_inicial': float(caja.monto_inicial),
+                'monto_final': float(caja.monto_final) if caja.monto_final is not None else None,
+                'num_ventas': caja.num_ventas,
+                'total_ventas': float(caja.total_ventas),
+                'total_ventas_efectivo': float(caja.total_ventas_efectivo),
+                'total_ventas_electronico': float(caja.total_ventas_electronico),
+                'total_ingresos': float(caja.total_ingresos),
+                'total_egresos': float(caja.total_egresos),
+                'saldo_esperado': float(caja.saldo_esperado),
+                'diferencia': float(caja.diferencia) if caja.diferencia is not None else None,
+            })
+
+        # Totales del periodo
+        total_periodo = {
+            'cajas': len(resultado),
+            'ventas': sum(r['num_ventas'] for r in resultado),
+            'monto_ventas': sum(r['total_ventas'] for r in resultado),
+            'efectivo': sum(r['total_ventas_efectivo'] for r in resultado),
+            'electronico': sum(r['total_ventas_electronico'] for r in resultado),
+            'egresos': sum(r['total_egresos'] for r in resultado),
+        }
+
+        return Response({
+            'periodo': periodo,
+            'fecha_inicio': str(inicio),
+            'fecha_fin': str(fin),
+            'totales': total_periodo,
+            'cajas': resultado,
+        })
+
     @action(detail=False, methods=['get'])
     def estadisticas_hoy(self, request):
         """

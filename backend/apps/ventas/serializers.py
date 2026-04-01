@@ -66,10 +66,11 @@ class VentaSerializer(serializers.ModelSerializer):
         model = Venta
         fields = [
             'id', 'folio', 'fecha', 'fecha_formateada', 'empleado', 'empleado_nombre',
-            'cliente', 'cliente_nombre', 'metodo_pago', 'monto_efectivo', 
-            'monto_electronico', 'subtotal', 'descuento', 'total', 'notas', 'detalles'
+            'cliente', 'cliente_nombre', 'caja', 'metodo_pago', 'monto_efectivo',
+            'monto_electronico', 'num_operacion', 'num_referencia',
+            'subtotal', 'descuento', 'total', 'notas', 'detalles'
         ]
-        read_only_fields = ['id', 'folio', 'fecha']
+        read_only_fields = ['id', 'folio', 'fecha', 'caja']
     
     def validate_detalles(self, value):
         """
@@ -102,6 +103,18 @@ class VentaSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "Para pago mixto, ambos montos deben ser mayores a 0"
                 )
+
+        # Validar número de operación para tarjeta
+        if metodo_pago in ['tarjeta', 'mixto'] and not data.get('num_operacion', '').strip():
+            raise serializers.ValidationError(
+                "El número de operación es requerido para pagos con tarjeta"
+            )
+
+        # Validar número de referencia para transferencia
+        if metodo_pago in ['transferencia', 'mixto'] and not data.get('num_referencia', '').strip():
+            raise serializers.ValidationError(
+                "El número de referencia es requerido para pagos por transferencia"
+            )
         
         return data
     
@@ -127,6 +140,12 @@ class VentaSerializer(serializers.ModelSerializer):
         validated_data['folio'] = f'V-{numero:06d}'
         
         with transaction.atomic():
+            # Auto-asignar caja abierta
+            from apps.caja.models import Caja as CajaModel
+            caja_abierta = CajaModel.objects.filter(estado='abierta').first()
+            if caja_abierta:
+                validated_data['caja'] = caja_abierta
+
             # Crear venta
             venta = Venta.objects.create(**validated_data)
             
@@ -213,5 +232,6 @@ class VentaListSerializer(serializers.ModelSerializer):
         model = Venta
         fields = [
             'id', 'folio', 'fecha', 'fecha_formateada', 'empleado_nombre',
-            'cliente_nombre', 'metodo_pago', 'total', 'total_items'
+            'cliente_nombre', 'caja', 'metodo_pago', 'monto_efectivo',
+            'monto_electronico', 'num_operacion', 'num_referencia', 'total', 'total_items'
         ]

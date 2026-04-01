@@ -86,6 +86,11 @@ class VentaViewSet(viewsets.ModelViewSet):
         cliente_id = self.request.query_params.get('cliente')
         if cliente_id:
             queryset = queryset.filter(cliente_id=cliente_id)
+
+        # Filtrar por caja
+        caja_id = self.request.query_params.get('caja')
+        if caja_id:
+            queryset = queryset.filter(caja_id=caja_id)
         
         # Filtrar por método de pago
         metodo_pago = self.request.query_params.get('metodo_pago')
