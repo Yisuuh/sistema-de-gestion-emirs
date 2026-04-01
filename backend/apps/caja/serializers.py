@@ -98,6 +98,10 @@ class CajaSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True
     )
+    total_ventas = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_ventas_efectivo = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_ventas_electronico = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    num_ventas = serializers.IntegerField(read_only=True)
     
     movimientos = MovimientoCajaSerializer(many=True, read_only=True)
     arqueos = ArqueoCajaSerializer(many=True, read_only=True)
@@ -112,6 +116,7 @@ class CajaSerializer(serializers.ModelSerializer):
             'monto_inicial', 'monto_final', 'estado',
             'notas_apertura', 'notas_cierre',
             'total_ingresos', 'total_egresos', 'saldo_esperado', 'diferencia',
+            'total_ventas', 'total_ventas_efectivo', 'total_ventas_electronico', 'num_ventas',
             'movimientos', 'arqueos'
         ]
         read_only_fields = ['id', 'folio', 'fecha_apertura', 'estado']
@@ -178,13 +183,16 @@ class CajaListSerializer(serializers.ModelSerializer):
         decimal_places=2, 
         read_only=True
     )
+    total_ventas = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    num_ventas = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Caja
         fields = [
             'id', 'folio', 'fecha_apertura_formateada', 
             'empleado_apertura_nombre', 'monto_inicial',
-            'estado', 'total_ingresos', 'total_egresos', 'saldo_esperado'
+            'estado', 'total_ingresos', 'total_egresos', 'saldo_esperado',
+            'total_ventas', 'num_ventas'
         ]
 
 

@@ -131,6 +131,36 @@ class EntradaInventario(models.Model):
         return self.cantidad * self.precio_compra
 
 
+class PagoProveedor(models.Model):
+    """
+    Registro de pagos realizados a un proveedor.
+    Se aplica para reducir el saldo pendiente acumulado de facturas.
+    """
+    proveedor = models.ForeignKey(
+        Proveedor, on_delete=models.PROTECT, related_name='pagos'
+    )
+    monto = models.DecimalField(max_digits=10, decimal_places=2)
+    fecha = models.DateField()
+    referencia = models.CharField(
+        max_length=100, blank=True,
+        help_text='No. de transferencia, cheque, recibo, etc.'
+    )
+    notas = models.TextField(blank=True)
+    registrado_por = models.ForeignKey(
+        'usuarios.Usuario', on_delete=models.SET_NULL,
+        null=True, related_name='pagos_proveedores'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Pago a Proveedor'
+        verbose_name_plural = 'Pagos a Proveedores'
+        ordering = ['-fecha', '-created_at']
+
+    def __str__(self):
+        return f"{self.proveedor.nombre} — ${self.monto} ({self.fecha})"
+
+
 class SalidaInventario(models.Model):
     """
     Registro de salidas de inventario (ventas)

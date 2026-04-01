@@ -14,6 +14,8 @@ export default function Ventas() {
   const [metodoPago, setMetodoPago] = useState('efectivo');
   const [montoEfectivo, setMontoEfectivo] = useState(0);
   const [montoElectronico, setMontoElectronico] = useState(0);
+  const [numOperacion, setNumOperacion] = useState('');
+  const [numReferencia, setNumReferencia] = useState('');
   const [descuento, setDescuento] = useState(0);
   const [notas, setNotas] = useState('');
   const [mostrarProductos, setMostrarProductos] = useState(true);
@@ -240,6 +242,16 @@ export default function Ventas() {
       return;
     }
 
+    if ((metodoPago === 'tarjeta' || metodoPago === 'mixto') && !numOperacion.trim()) {
+      alert('Ingrese el número de operación de la tarjeta');
+      return;
+    }
+
+    if ((metodoPago === 'transferencia' || metodoPago === 'mixto') && !numReferencia.trim()) {
+      alert('Ingrese el número de referencia de la transferencia');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -249,6 +261,8 @@ export default function Ventas() {
         metodo_pago: metodoPago,
         monto_efectivo: metodoPago === 'efectivo' || metodoPago === 'mixto' ? parseFloat(montoEfectivo) : 0,
         monto_electronico: metodoPago === 'tarjeta' || metodoPago === 'transferencia' || metodoPago === 'mixto' ? parseFloat(montoElectronico) : 0,
+        num_operacion: (metodoPago === 'tarjeta' || metodoPago === 'mixto') ? numOperacion.trim() : '',
+        num_referencia: (metodoPago === 'transferencia' || metodoPago === 'mixto') ? numReferencia.trim() : '',
         subtotal: subtotal,
         descuento: descuento,
         total: total,
@@ -313,6 +327,8 @@ export default function Ventas() {
     setMetodoPago('efectivo');
     setMontoEfectivo(0);
     setMontoElectronico(0);
+    setNumOperacion('');
+    setNumReferencia('');
     setDescuento(0);
     setNotas('');
     setBusqueda('');
@@ -557,7 +573,11 @@ export default function Ventas() {
             </label>
             <select
               value={metodoPago}
-              onChange={(e) => setMetodoPago(e.target.value)}
+              onChange={(e) => {
+                setMetodoPago(e.target.value);
+                setNumOperacion('');
+                setNumReferencia('');
+              }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-3 text-gray-900"
             >
               <option value="efectivo">Efectivo</option>
@@ -588,6 +608,36 @@ export default function Ventas() {
                   value={montoElectronico}
                   onChange={(e) => setMontoElectronico(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900"
+                />
+              </div>
+            )}
+
+            {(metodoPago === 'tarjeta' || metodoPago === 'mixto') && (
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Número de operación (tarjeta) *
+                </label>
+                <input
+                  type="text"
+                  value={numOperacion}
+                  onChange={(e) => setNumOperacion(e.target.value)}
+                  placeholder="Ej. 123456789"
+                  className="w-full px-3 py-2 border border-orange-400 rounded-lg focus:ring-2 focus:ring-orange-400 text-gray-900 bg-orange-50"
+                />
+              </div>
+            )}
+
+            {(metodoPago === 'transferencia' || metodoPago === 'mixto') && (
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Número de referencia (transferencia) *
+                </label>
+                <input
+                  type="text"
+                  value={numReferencia}
+                  onChange={(e) => setNumReferencia(e.target.value)}
+                  placeholder="Ej. REF-987654321"
+                  className="w-full px-3 py-2 border border-purple-400 rounded-lg focus:ring-2 focus:ring-purple-400 text-gray-900 bg-purple-50"
                 />
               </div>
             )}

@@ -9,8 +9,10 @@ import AuthLayout from './layouts/AuthLayout'
 import Login from './pages/auth/Login'
 import Dashboard from './pages/Dashboard'
 import Inventario from './pages/inventario/Inventario'
+import Adeudos from './pages/inventario/Adeudos'
 import Ventas from './pages/ventas/Ventas'
 import Caja from './pages/caja/Caja'
+import Clientes from './pages/clientes/Clientes'
 
 const queryClient = new QueryClient()
 
@@ -44,8 +46,10 @@ function App() {
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="inventario" element={<Inventario />} />
+            <Route path="adeudos" element={<Adeudos />} />
             <Route path="ventas" element={<Ventas />} />
             <Route path="caja" element={<Caja />} />
+            <Route path="clientes" element={<Clientes />} />
           </Route>
 
           {/* Redirección por defecto */}

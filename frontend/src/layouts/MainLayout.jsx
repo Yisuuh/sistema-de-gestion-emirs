@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate } from 'react-router-dom'
-import { Home, Package, ShoppingCart, Wallet, Users, FileText, Settings, LogOut } from 'lucide-react'
+import { Home, Package, ShoppingCart, Wallet, Users, FileText, Settings, LogOut, CreditCard } from 'lucide-react'
 
 export default function MainLayout() {
   const navigate = useNavigate();
@@ -33,6 +33,10 @@ export default function MainLayout() {
           <Link to="/inventario" className="flex items-center px-4 py-3 hover:bg-gray-800">
             <Package className="w-5 h-5 mr-3" />
             Inventario
+          </Link>
+          <Link to="/adeudos" className="flex items-center px-4 py-3 hover:bg-gray-800">
+            <CreditCard className="w-5 h-5 mr-3" />
+            Adeudos Proveedores
           </Link>
           <Link to="/caja" className="flex items-center px-4 py-3 hover:bg-gray-800">
             <Wallet className="w-5 h-5 mr-3" />

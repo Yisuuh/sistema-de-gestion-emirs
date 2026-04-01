@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario
+from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
 
 
 @admin.register(Marca)
@@ -42,3 +42,11 @@ class SalidaInventarioAdmin(admin.ModelAdmin):
     list_filter = ['fecha_venta']
     search_fields = ['producto__codigo']
     readonly_fields = ['utilidad', 'created_at']
+
+
+@admin.register(PagoProveedor)
+class PagoProveedorAdmin(admin.ModelAdmin):
+    list_display = ['proveedor', 'monto', 'fecha', 'referencia', 'registrado_por', 'created_at']
+    list_filter = ['proveedor', 'fecha']
+    search_fields = ['proveedor__nombre', 'referencia', 'notas']
+    readonly_fields = ['created_at', 'registrado_por']
