@@ -17,8 +17,9 @@ import {
   CalendarDaysIcon,
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
+import API_BASE from '../../config/api';
 
-const API_CAJA = 'http://localhost:8000/api/caja';
+const API_CAJA = `${API_BASE}/api/caja`;
 const tok = () => localStorage.getItem('token');
 const hdrs = () => ({ Authorization: `Bearer ${tok()}` });
 const jsonHdrs = () => ({ ...hdrs(), 'Content-Type': 'application/json' });
@@ -819,7 +820,7 @@ export default function Caja() {
 
   const cargarEmpleados = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/nomina/empleados/?activos=true', { headers: hdrs() });
+      const res = await fetch(`${API_BASE}/api/nomina/empleados/?activos=true`, { headers: hdrs() });
       if (res.ok) { const d = await res.json(); setEmpleados(Array.isArray(d) ? d : d.results ?? []); }
     } catch (e) { console.error(e); }
   }, []);

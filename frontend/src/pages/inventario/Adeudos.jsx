@@ -11,8 +11,9 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
+import API_BASE from '../../config/api';
 
-const API = 'http://localhost:8000/api/inventario';
+const API = `${API_BASE}/api/inventario`;
 const token = () => localStorage.getItem('token');
 const headers = () => ({ Authorization: `Bearer ${token()}` });
 const fmt = (n) =>

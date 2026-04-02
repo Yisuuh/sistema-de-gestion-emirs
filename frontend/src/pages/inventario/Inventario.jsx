@@ -12,6 +12,7 @@ import {
   BuildingStorefrontIcon,
   DocumentTextIcon,
 } from '@heroicons/react/24/outline';
+import API_BASE from '../../config/api';
 
 export default function Inventario() {
   const [vistaActual, setVistaActual] = useState('productos'); // 'productos' | 'entradas'
@@ -128,7 +129,7 @@ export default function Inventario() {
       formData.append('xml', file);
       formData.append('accion', 'preview');
 
-      const res = await fetch('http://localhost:8000/api/inventario/importar-xml/', {
+      const res = await fetch(`${API_BASE}/api/inventario/importar-xml/`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body: formData,
@@ -155,7 +156,7 @@ export default function Inventario() {
       formData.append('xml', xmlFile);
       formData.append('accion', 'guardar');
 
-      const res = await fetch('http://localhost:8000/api/inventario/importar-xml/', {
+      const res = await fetch(`${API_BASE}/api/inventario/importar-xml/`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body: formData,

@@ -8,8 +8,9 @@ import {
   XMarkIcon,
   UserIcon,
 } from '@heroicons/react/24/outline';
+import API_BASE from '../../config/api';
 
-const API = 'http://localhost:8000/api/clientes';
+const API = `${API_BASE}/api/clientes`;
 const headers = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,
