@@ -60,7 +60,7 @@ class Producto(models.Model):
     
     codigo = models.CharField(max_length=50, unique=True, help_text='Código único del producto')
     medida = models.CharField(max_length=20, help_text='Ej: 225/65R17')
-    marca = models.ForeignKey(Marca, on_delete=models.PROTECT, related_name='productos')
+    marca = models.ForeignKey(Marca, on_delete=models.PROTECT, related_name='productos', null=True, blank=True)
     modelo = models.CharField(max_length=100, help_text='Ej: Scorpion ATR')
     indice_carga = models.IntegerField(help_text='Ej: 82, 84, 87')
     indice_velocidad = models.CharField(max_length=2, choices=INDICES_VELOCIDAD)
@@ -105,8 +105,8 @@ class EntradaInventario(models.Model):
     """
     Registro de entradas de inventario (compras a proveedores)
     """
-    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='entradas')
-    proveedor = models.ForeignKey(Proveedor, on_delete=models.PROTECT, related_name='entradas')
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='entradas', null=True, blank=True)
+    proveedor = models.ForeignKey(Proveedor, on_delete=models.PROTECT, related_name='entradas', null=True, blank=True)
     cantidad = models.IntegerField()
     precio_compra = models.DecimalField(max_digits=10, decimal_places=2, help_text='Precio unitario de compra')
     fecha_compra = models.DateField()
@@ -166,7 +166,7 @@ class SalidaInventario(models.Model):
     Registro de salidas de inventario (ventas)
     Se crea automáticamente cuando se realiza una venta
     """
-    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='salidas')
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='salidas', null=True, blank=True)
     venta = models.ForeignKey('ventas.Venta', on_delete=models.CASCADE, null=True, related_name='salidas_inventario')
     cantidad = models.IntegerField()
     precio_venta = models.DecimalField(max_digits=10, decimal_places=2, help_text='Precio unitario de venta')
