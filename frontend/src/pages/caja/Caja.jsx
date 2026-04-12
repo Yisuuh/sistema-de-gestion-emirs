@@ -17,7 +17,7 @@ import {
   CalendarDaysIcon,
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
-import API_BASE from '../../config/api';
+import API_BASE, { apiFetch } from '../../config/api';
 
 const API_CAJA = `${API_BASE}/api/caja`;
 const tok = () => localStorage.getItem('token');
@@ -83,7 +83,7 @@ function ModalApertura({ empleados, onGuardado, onClose }) {
     e.preventDefault();
     setLoading(true); setErr(null);
     try {
-      const res = await fetch(`${API_CAJA}/cajas/`, {
+      const res = await apiFetch(`${API_CAJA}/cajas/`, {
         method: 'POST',
         headers: jsonHdrs(),
         body: JSON.stringify({ ...form, monto_inicial: parseFloat(form.monto_inicial) }),
@@ -160,7 +160,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
     e.preventDefault();
     setLoading(true); setErr(null);
     try {
-      const res = await fetch(`${API_CAJA}/cajas/${caja.id}/cerrar/`, {
+      const res = await apiFetch(`${API_CAJA}/cajas/${caja.id}/cerrar/`, {
         method: 'POST',
         headers: jsonHdrs(),
         body: JSON.stringify({
@@ -371,7 +371,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
     e.preventDefault();
     setLoading(true); setErr(null);
     try {
-      const res = await fetch(`${API_CAJA}/movimientos/`, {
+      const res = await apiFetch(`${API_CAJA}/movimientos/`, {
         method: 'POST',
         headers: jsonHdrs(),
         body: JSON.stringify({ ...form, monto: parseFloat(form.monto), empleado: parseInt(form.empleado) }),
@@ -613,7 +613,7 @@ function Historial() {
     try {
       let url = `${API_CAJA}/cajas/historial/?periodo=${p}`;
       if (p === 'rango') url += `&fecha_inicio=${fi}&fecha_fin=${ff}`;
-      const res = await fetch(url, { headers: hdrs() });
+      const res = await apiFetch(url, { headers: hdrs() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
     } catch (e) { setError(String(e)); }
@@ -628,7 +628,7 @@ function Historial() {
     setCajasAbiertas((s) => ({ ...s, [cajaId]: true }));
     if (ventasCaja[cajaId]) return;
     try {
-      const res = await fetch(`${API_CAJA}/cajas/${cajaId}/ventas_caja/`, { headers: hdrs() });
+      const res = await apiFetch(`${API_CAJA}/cajas/${cajaId}/ventas_caja/`, { headers: hdrs() });
       const d = await res.json();
       setVentasCaja((s) => ({ ...s, [cajaId]: d }));
     } catch { /* silencio */ }
@@ -801,7 +801,7 @@ export default function Caja() {
 
   const cargarCaja = useCallback(async () => {
     try {
-      const res = await fetch(`${API_CAJA}/cajas/caja_actual/`, { headers: hdrs() });
+      const res = await apiFetch(`${API_CAJA}/cajas/caja_actual/`, { headers: hdrs() });
       if (res.ok) {
         const caja = await res.json();
         setCajaActual(caja);
@@ -820,7 +820,7 @@ export default function Caja() {
 
   const cargarEmpleados = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/nomina/empleados/?activos=true`, { headers: hdrs() });
+      const res = await apiFetch(`${API_BASE}/api/nomina/empleados/?activos=true`, { headers: hdrs() });
       if (res.ok) { const d = await res.json(); setEmpleados(Array.isArray(d) ? d : d.results ?? []); }
     } catch (e) { console.error(e); }
   }, []);

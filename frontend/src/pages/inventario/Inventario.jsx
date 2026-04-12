@@ -12,7 +12,7 @@ import {
   BuildingStorefrontIcon,
   DocumentTextIcon,
 } from '@heroicons/react/24/outline';
-import API_BASE from '../../config/api';
+import API_BASE, { apiFetch } from '../../config/api';
 
 export default function Inventario() {
   const [vistaActual, setVistaActual] = useState('productos'); // 'productos' | 'entradas'
@@ -66,7 +66,7 @@ export default function Inventario() {
 
   const cargarProductos = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/inventario/productos/`, {
+      const response = await apiFetch(`${API_BASE}/api/inventario/productos/`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       if (response.ok) {
@@ -80,7 +80,7 @@ export default function Inventario() {
 
   const cargarMarcas = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/inventario/marcas/`, {
+      const response = await apiFetch(`${API_BASE}/api/inventario/marcas/`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       if (response.ok) {
@@ -94,7 +94,7 @@ export default function Inventario() {
 
   const cargarProveedores = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/inventario/proveedores/?activo=true`, {
+      const response = await apiFetch(`${API_BASE}/api/inventario/proveedores/?activo=true`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       if (response.ok) {
@@ -129,7 +129,7 @@ export default function Inventario() {
       formData.append('xml', file);
       formData.append('accion', 'preview');
 
-      const res = await fetch(`${API_BASE}/api/inventario/importar-xml/`, {
+      const res = await apiFetch(`${API_BASE}/api/inventario/importar-xml/`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body: formData,
@@ -156,7 +156,7 @@ export default function Inventario() {
       formData.append('xml', xmlFile);
       formData.append('accion', 'guardar');
 
-      const res = await fetch(`${API_BASE}/api/inventario/importar-xml/`, {
+      const res = await apiFetch(`${API_BASE}/api/inventario/importar-xml/`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body: formData,
@@ -196,7 +196,7 @@ export default function Inventario() {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/inventario/entradas/`, {
+      const response = await apiFetch(`${API_BASE}/api/inventario/entradas/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

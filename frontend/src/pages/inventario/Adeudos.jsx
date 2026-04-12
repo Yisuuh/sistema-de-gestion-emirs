@@ -11,7 +11,7 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
-import API_BASE from '../../config/api';
+import API_BASE, { apiFetch } from '../../config/api';
 
 const API = `${API_BASE}/api/inventario`;
 const token = () => localStorage.getItem('token');
@@ -65,7 +65,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
     setLoading(true);
     setErr(null);
     try {
-      const res = await fetch(`${API}/pagos-proveedores/`, {
+      const res = await apiFetch(`${API}/pagos-proveedores/`, {
         method: 'POST',
         headers: { ...headers(), 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -344,7 +344,7 @@ function FilaProveedor({ resumen, onPago }) {
     if (detalle) { setAbierto(!abierto); return; }
     setCargando(true);
     try {
-      const res = await fetch(`${API}/adeudos/${resumen.proveedor_id}/`, { headers: headers() });
+      const res = await apiFetch(`${API}/adeudos/${resumen.proveedor_id}/`, { headers: headers() });
       const data = await res.json();
       setDetalle(data);
       setAbierto(true);
@@ -356,7 +356,7 @@ function FilaProveedor({ resumen, onPago }) {
   };
 
   const recargarDetalle = async () => {
-    const res = await fetch(`${API}/adeudos/${resumen.proveedor_id}/`, { headers: headers() });
+    const res = await apiFetch(`${API}/adeudos/${resumen.proveedor_id}/`, { headers: headers() });
     const data = await res.json();
     setDetalle(data);
   };
@@ -448,7 +448,7 @@ export default function Adeudos() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/adeudos/`, { headers: headers() });
+      const res = await apiFetch(`${API}/adeudos/`, { headers: headers() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setResumen(await res.json());
     } catch (e) {

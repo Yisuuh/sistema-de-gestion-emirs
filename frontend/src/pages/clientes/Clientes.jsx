@@ -8,7 +8,7 @@ import {
   XMarkIcon,
   UserIcon,
 } from '@heroicons/react/24/outline';
-import API_BASE from '../../config/api';
+import API_BASE, { apiFetch } from '../../config/api';
 
 const API = `${API_BASE}/api/clientes`;
 const headers = () => ({
@@ -58,7 +58,7 @@ export default function Clientes() {
       const url = q
         ? `${API}/clientes/?search=${encodeURIComponent(q)}`
         : `${API}/clientes/`;
-      const res = await fetch(url, { headers: headers() });
+      const res = await apiFetch(url, { headers: headers() });
       if (!res.ok) throw new Error('Error al cargar clientes');
       const data = await res.json();
       setClientes(Array.isArray(data) ? data : data.results || []);
@@ -101,7 +101,7 @@ export default function Clientes() {
         ? `${API}/clientes/${clienteEditando}/`
         : `${API}/clientes/`;
       const method = clienteEditando ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers: headers(), body: JSON.stringify(clienteForm) });
+      const res = await apiFetch(url, { method, headers: headers(), body: JSON.stringify(clienteForm) });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(JSON.stringify(err));
@@ -125,7 +125,7 @@ export default function Clientes() {
   const eliminarCliente = async (id) => {
     if (!window.confirm('¿Eliminar este cliente? También se eliminarán sus vehículos.')) return;
     try {
-      const res = await fetch(`${API}/clientes/${id}/`, { method: 'DELETE', headers: headers() });
+      const res = await apiFetch(`${API}/clientes/${id}/`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       setClientes((prev) => prev.filter((c) => c.id !== id));
       if (clienteSeleccionado?.id === id) setClienteSeleccionado(null);
@@ -163,7 +163,7 @@ export default function Clientes() {
         ? `${API}/vehiculos/${vehiculoEditando}/`
         : `${API}/vehiculos/`;
       const method = vehiculoEditando ? 'PUT' : 'POST';
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: headers(),
         body: JSON.stringify({ ...vehiculoForm, cliente: clienteSeleccionado.id }),
@@ -188,7 +188,7 @@ export default function Clientes() {
   const eliminarVehiculo = async (id) => {
     if (!window.confirm('¿Eliminar este vehículo?')) return;
     try {
-      const res = await fetch(`${API}/vehiculos/${id}/`, { method: 'DELETE', headers: headers() });
+      const res = await apiFetch(`${API}/vehiculos/${id}/`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       const updatedVehiculos = clienteSeleccionado.vehiculos.filter((v) => v.id !== id);
       const updatedCliente = { ...clienteSeleccionado, vehiculos: updatedVehiculos };

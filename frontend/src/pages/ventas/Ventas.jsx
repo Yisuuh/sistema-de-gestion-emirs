@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { PlusIcon, TrashIcon, MagnifyingGlassIcon, ShoppingCartIcon, PrinterIcon } from '@heroicons/react/24/outline';
-import API_BASE from '../../config/api';
+import API_BASE, { apiFetch } from '../../config/api';
 
 export default function Ventas() {
   // Estados
@@ -50,7 +50,7 @@ export default function Ventas() {
 
   const cargarProductos = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/inventario/productos/?activos=true`, {
+      const response = await apiFetch(`${API_BASE}/api/inventario/productos/?activos=true`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -72,7 +72,7 @@ export default function Ventas() {
 
   const cargarServicios = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/ventas/servicios/?activos=true`, {
+      const response = await apiFetch(`${API_BASE}/api/ventas/servicios/?activos=true`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -94,7 +94,7 @@ export default function Ventas() {
 
   const cargarClientes = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/clientes/clientes/`, {
+      const response = await apiFetch(`${API_BASE}/api/clientes/clientes/`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -116,7 +116,7 @@ export default function Ventas() {
 
   const cargarEmpleados = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/nomina/empleados/?activos=true`, {
+      const response = await apiFetch(`${API_BASE}/api/nomina/empleados/?activos=true`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -277,7 +277,7 @@ export default function Ventas() {
         }))
       };
 
-      const response = await fetch(`${API_BASE}/api/ventas/ventas/`, {
+      const response = await apiFetch(`${API_BASE}/api/ventas/ventas/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
