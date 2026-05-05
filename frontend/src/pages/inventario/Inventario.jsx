@@ -21,7 +21,7 @@ const fmt = (n, d = 2) => Number(n ?? 0).toLocaleString('es-MX', { minimumFracti
 
 const ESTADO_LABELS = {
   disponible:     { label: 'Disponible',    cls: 'bg-green-100 text-green-800' },
-  en_lista:       { label: 'En lista',       cls: 'bg-blue-100 text-blue-800' },
+  en_lista:       { label: 'En lista',       cls: 'bg-red-100 text-[#a80008]' },
   sin_existencia: { label: 'Sin existencia', cls: 'bg-orange-100 text-orange-800' },
   consumido:      { label: 'Consumido',      cls: 'bg-gray-100 text-gray-600' },
 };
@@ -36,7 +36,7 @@ function Badge({ val, map }) {
   return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${x.cls}`}>{x.label}</span>;
 }
 function Spinner() {
-  return <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>;
+  return <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-[#df000a] border-t-transparent rounded-full animate-spin" /></div>;
 }
 
 // ─── Vista Consolidado ────────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ function TabConsolidado({ onVerKardex }) {
       {totales && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           {[
-            { label: 'Productos',      val: totales.total_productos,                    cls: 'text-blue-700' },
+            { label: 'Productos',      val: totales.total_productos,                    cls: 'text-[#df000a]' },
             { label: 'Piezas en stock',val: totales.total_piezas,                       cls: 'text-green-700' },
             { label: 'Valor inventario',val: `$${fmt(totales.valor_inventario_total)}`, cls: 'text-indigo-700' },
             { label: 'Agotados',       val: totales.agotados,                           cls: 'text-red-700' },
@@ -116,18 +116,18 @@ function TabConsolidado({ onVerKardex }) {
             placeholder="Buscar código, medida, marca, modelo…"
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]"
           />
         </div>
         <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]">
           <option value="todos">Todos los estados</option>
           <option value="disponible">Disponible</option>
           <option value="stock_bajo">Stock bajo</option>
           <option value="agotado">Agotado</option>
         </select>
         <select value={filtroMarca} onChange={e => setFiltroMarca(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]">
           <option value="">Todas las marcas</option>
           {marcas.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
@@ -157,7 +157,7 @@ function TabConsolidado({ onVerKardex }) {
               {filas.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono text-gray-800 whitespace-nowrap">{p.codigo}</td>
-                  <td className="px-4 py-3 font-mono font-medium text-blue-700 whitespace-nowrap">{p.medida}</td>
+                  <td className="px-4 py-3 font-mono font-medium text-[#df000a] whitespace-nowrap">{p.medida}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900">{p.marca}</div>
                     <div className="text-gray-500 text-xs">{p.modelo}</div>
@@ -178,7 +178,7 @@ function TabConsolidado({ onVerKardex }) {
                   <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{p.ultima_factura ?? '—'}</td>
                   <td className="px-4 py-3 whitespace-nowrap"><Badge val={p.estado_stock} map={STOCK_LABELS} /></td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <button onClick={() => onVerKardex(p)} className="text-xs text-blue-600 hover:underline">Kardex</button>
+                    <button onClick={() => onVerKardex(p)} className="text-xs text-[#df000a] hover:underline">Kardex</button>
                   </td>
                 </tr>
               ))}
@@ -255,7 +255,7 @@ function TabEntradas({ proveedores, productos }) {
   const totalPiezas = entradas.reduce((s, e) => s + (e.cantidad ?? 0), 0);
   const totalCosto  = entradas.reduce((s, e) => s + (e.cantidad ?? 0) * parseFloat(e.precio_compra ?? 0), 0);
 
-  const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500';
+  const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]';
 
   return (
     <div>
@@ -315,7 +315,7 @@ function TabEntradas({ proveedores, productos }) {
                   <td className="px-3 py-3 font-mono text-xs whitespace-nowrap">{e.numero_factura}</td>
                   <td className="px-3 py-3 whitespace-nowrap">{e.proveedor_nombre}</td>
                   <td className="px-3 py-3 font-mono text-xs whitespace-nowrap">{e.producto_codigo}</td>
-                  <td className="px-3 py-3 font-mono font-medium text-blue-700 whitespace-nowrap">{e.producto_medida}</td>
+                  <td className="px-3 py-3 font-mono font-medium text-[#df000a] whitespace-nowrap">{e.producto_medida}</td>
                   <td className="px-3 py-3">{e.producto_descripcion}</td>
                   <td className="px-3 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">—</td>
                   <td className="px-3 py-3 text-center font-bold text-green-700">{e.cantidad}</td>
@@ -388,7 +388,7 @@ function TabEntradas({ proveedores, productos }) {
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setModal(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancelar</button>
-                <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">Guardar</button>
+                <button type="submit" className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg text-sm hover:bg-[#c4000a]">Guardar</button>
               </div>
             </form>
           </div>
@@ -474,9 +474,9 @@ function TabSalidas() {
               {filtered.map(s => (
                 <tr key={s.id} className="hover:bg-gray-50">
                   <td className="px-3 py-3 whitespace-nowrap text-gray-600">{s.fecha_venta}</td>
-                  <td className="px-3 py-3 font-mono text-xs whitespace-nowrap text-blue-600">{s.venta_folio ?? '—'}</td>
+                  <td className="px-3 py-3 font-mono text-xs whitespace-nowrap text-[#df000a]">{s.venta_folio ?? '—'}</td>
                   <td className="px-3 py-3 font-mono text-xs whitespace-nowrap">{s.producto_codigo}</td>
-                  <td className="px-3 py-3 font-mono font-medium text-blue-700 whitespace-nowrap">{s.producto_medida}</td>
+                  <td className="px-3 py-3 font-mono font-medium text-[#df000a] whitespace-nowrap">{s.producto_medida}</td>
                   <td className="px-3 py-3 whitespace-nowrap">{s.marca_nombre}</td>
                   <td className="px-3 py-3 text-gray-600">{s.producto_descripcion}</td>
                   <td className="px-3 py-3 text-center font-bold text-red-600">{s.cantidad}</td>
@@ -527,7 +527,7 @@ function TabKardex({ productoInicial }) {
       <div className="mb-4 max-w-xl">
         <label className="block text-sm font-medium text-gray-700 mb-1">Seleccionar producto</label>
         <select value={selId} onChange={e => setSelId(e.target.value)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]">
           <option value="">— Elegir producto —</option>
           {productos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.descripcion_completa}</option>)}
         </select>
@@ -538,7 +538,7 @@ function TabKardex({ productoInicial }) {
       {kardex && !loading && (
         <div>
           {/* Info producto */}
-          <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 mb-4 flex flex-wrap gap-6 text-sm">
+          <div className="bg-red-50 border border-blue-100 rounded-lg px-4 py-3 mb-4 flex flex-wrap gap-6 text-sm">
             <div><span className="text-gray-500">Código:</span> <strong className="font-mono">{kardex.producto.codigo}</strong></div>
             <div><span className="text-gray-500">Descripción:</span> <strong>{kardex.producto.descripcion}</strong></div>
             <div><span className="text-gray-500">Stock actual:</span> <strong className={kardex.producto.stock_actual <= 0 ? 'text-red-600' : 'text-green-700'}>{kardex.producto.stock_actual} pzas</strong></div>
@@ -671,7 +671,7 @@ function TabXml({ onImportado }) {
                     <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">{item.codigo}</td>
                     <td className="px-4 py-3 text-gray-700 max-w-xs text-xs">{item.descripcion}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      {item.medida ? <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-mono text-xs">{item.medida}</span> : <span className="text-red-500 text-xs">No detectada</span>}
+                      {item.medida ? <span className="px-2 py-0.5 bg-red-100 text-[#a80008] rounded font-mono text-xs">{item.medida}</span> : <span className="text-red-500 text-xs">No detectada</span>}
                     </td>
                     <td className="px-4 py-3 font-medium whitespace-nowrap">{item.marca_nombre || '—'}</td>
                     <td className="px-4 py-3 text-gray-600">{item.modelo || '—'}</td>
@@ -761,7 +761,7 @@ export default function Inventario() {
         {TABS.map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setTab(id)}
             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
-              tab === id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              tab === id ? 'border-[#df000a] text-[#df000a]' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}>
             <Icon className="h-4 w-4" />{label}
           </button>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CurrencyDollarIcon,
   ArrowUpIcon,
@@ -42,7 +42,7 @@ function Badge({ text, color = 'gray' }) {
     green: 'bg-green-100 text-green-800',
     red: 'bg-red-100 text-red-800',
     yellow: 'bg-yellow-100 text-yellow-800',
-    blue: 'bg-blue-100 text-blue-800',
+    blue: 'bg-red-100 text-[#a80008]',
     gray: 'bg-gray-100 text-gray-600',
     purple: 'bg-purple-100 text-purple-800',
     orange: 'bg-orange-100 text-orange-800',
@@ -54,7 +54,7 @@ function Badge({ text, color = 'gray' }) {
 
 function StatCard({ icon: Icon, label, value, color = 'blue', sub }) {
   const colors = {
-    blue: 'bg-blue-50 text-blue-600 border-blue-200',
+    blue: 'bg-red-50 text-[#df000a] border-red-200',
     green: 'bg-green-50 text-green-600 border-green-200',
     purple: 'bg-purple-50 text-purple-600 border-purple-200',
     orange: 'bg-orange-50 text-orange-600 border-orange-200',
@@ -226,7 +226,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                         value={arqueo[d]}
                         onChange={(e) => setDenom(d, e.target.value)}
                         placeholder="0"
-                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
                       />
                       <span className="px-2 text-xs text-gray-400 bg-gray-50 border-l border-gray-300 h-full flex items-center">
                         pzs
@@ -259,7 +259,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                         value={arqueo[d]}
                         onChange={(e) => setDenom(d, e.target.value)}
                         placeholder="0"
-                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
                       />
                       <span className="px-2 text-xs text-gray-400 bg-gray-50 border-l border-gray-300 h-full flex items-center">
                         pzs
@@ -276,9 +276,9 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             </div>
 
             {/* Total arqueo */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
-              <span className="text-sm font-semibold text-blue-800">Total contado:</span>
-              <span className="text-xl font-bold text-blue-900">{fmt(totalArqueo)}</span>
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-[#a80008]">Total contado:</span>
+              <span className="text-xl font-bold text-[#8c0007]">{fmt(totalArqueo)}</span>
             </div>
 
             <div className="flex gap-3">
@@ -290,7 +290,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 type="button"
                 disabled={totalArqueo === 0}
                 onClick={() => setPaso(2)}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 flex items-center justify-center gap-2">
+                className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-40 flex items-center justify-center gap-2">
                 <CalculatorIcon className="h-4 w-4" />
                 Continuar
               </button>
@@ -405,7 +405,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Empleado *</label>
             <select required value={form.empleado} onChange={(e) => setForm({ ...form, empleado: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
               <option value="">Seleccionar empleado</option>
               {empleados.map((e) => <option key={e.id} value={e.id}>{e.nombre} {e.apellido}</option>)}
             </select>
@@ -414,25 +414,30 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Concepto *</label>
               <input required type="text" value={form.concepto} onChange={(e) => setForm({ ...form, concepto: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto *</label>
               <input required type="number" min="0.01" step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })}
                 placeholder="0.00"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Categor�a (opcional)</label>
             <input type="text" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}
               placeholder="Operativo, Servicios, etc."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
-          </div>
-          <div className="flex gap-3 pt-2">
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+          </div>          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Descripción (opcional)</label>
+            <textarea rows={2} value={form.descripcion}
+              onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+              placeholder="Detalles adicionales del movimiento"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] resize-none" />
+          </div>          <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancelar</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50">
               {loading ? 'Guardando...' : 'Registrar'}
             </button>
           </div>
@@ -467,7 +472,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
         </div>
         <div className="sm:ml-auto flex gap-2 flex-wrap">
           <button onClick={() => setModal('movimiento')}
-            className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm flex items-center gap-1.5">
+            className="px-3 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] text-sm flex items-center gap-1.5">
             <PlusIcon className="h-4 w-4" /> Movimiento
           </button>
           <button onClick={onRefresh}
@@ -519,7 +524,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {ventas.map((v) => (
-                  <tr key={v.id} className="hover:bg-blue-50">
+                  <tr key={v.id} className="hover:bg-red-50">
                     <td className="px-4 py-3 font-mono font-semibold text-gray-800">{v.folio}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{v.fecha_formateada}</td>
                     <td className="px-4 py-3 text-gray-700">{v.empleado_nombre}</td>
@@ -529,7 +534,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                     </td>
                     <td className="px-4 py-3 text-center text-gray-600">{v.total_items}</td>
                     <td className="px-4 py-3 text-right text-green-700 font-mono">{fmt(v.monto_efectivo)}</td>
-                    <td className="px-4 py-3 text-right text-blue-700 font-mono">{fmt(v.monto_electronico)}</td>
+                    <td className="px-4 py-3 text-right text-[#df000a] font-mono">{fmt(v.monto_electronico)}</td>
                     <td className="px-4 py-3 text-right font-bold text-gray-900">{fmt(v.total)}</td>
                   </tr>
                 ))}
@@ -540,7 +545,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <td className="px-4 py-2 text-right font-bold text-green-700">
                     {fmt(ventas.reduce((s, v) => s + parseFloat(v.monto_efectivo || 0), 0))}
                   </td>
-                  <td className="px-4 py-2 text-right font-bold text-blue-700">
+                  <td className="px-4 py-2 text-right font-bold text-[#df000a]">
                     {fmt(ventas.reduce((s, v) => s + parseFloat(v.monto_electronico || 0), 0))}
                   </td>
                   <td className="px-4 py-2 text-right font-bold text-gray-900">
@@ -649,7 +654,7 @@ function Historial() {
           {periodos.map((p) => (
             <button key={p.key}
               onClick={() => setPeriodo(p.key)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${periodo === p.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${periodo === p.key ? 'bg-[#df000a] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
               {p.label}
             </button>
           ))}
@@ -664,7 +669,7 @@ function Historial() {
           </div>
         )}
         <button onClick={() => cargar(periodo, fechaInicio, fechaFin)}
-          className="ml-2 px-4 py-1.5 bg-blue-600 text-white rounded-full text-sm font-medium hover:bg-blue-700 flex items-center gap-1.5">
+          className="ml-2 px-4 py-1.5 bg-[#df000a] text-white rounded-full text-sm font-medium hover:bg-[#c4000a] flex items-center gap-1.5">
           {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : null}
           Buscar
         </button>
@@ -757,7 +762,7 @@ function Historial() {
                             </thead>
                             <tbody className="divide-y divide-gray-50">
                               {(vc.ventas || []).map((v) => (
-                                <tr key={v.id} className="hover:bg-blue-50">
+                                <tr key={v.id} className="hover:bg-red-50">
                                   <td className="px-4 py-2 font-mono font-semibold text-gray-800">{v.folio}</td>
                                   <td className="px-4 py-2 text-xs text-gray-500">{v.fecha_formateada}</td>
                                   <td className="px-4 py-2 text-gray-700">{v.empleado_nombre}</td>
@@ -766,7 +771,7 @@ function Historial() {
                                       color={{ efectivo: 'green', tarjeta: 'blue', transferencia: 'purple', mixto: 'orange' }[v.metodo_pago] ?? 'gray'} />
                                   </td>
                                   <td className="px-4 py-2 text-right font-mono text-green-700">{fmt(v.monto_efectivo)}</td>
-                                  <td className="px-4 py-2 text-right font-mono text-blue-700">{fmt(v.monto_electronico)}</td>
+                                  <td className="px-4 py-2 text-right font-mono text-[#df000a]">{fmt(v.monto_electronico)}</td>
                                   <td className="px-4 py-2 text-right font-bold text-gray-900">{fmt(v.total)}</td>
                                 </tr>
                               ))}
@@ -861,7 +866,7 @@ export default function Caja() {
           { key: 'historial', label: 'Historial', icon: CalendarDaysIcon },
         ].map(({ key, label, icon: Icon }) => (
           <button key={key} onClick={() => setTab(key)}
-            className={`px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors ${tab === key ? 'bg-blue-600 text-white shadow-sm' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            className={`px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors ${tab === key ? 'bg-[#df000a] text-white shadow-sm' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
             <Icon className="h-4 w-4" />
             {label}
           </button>

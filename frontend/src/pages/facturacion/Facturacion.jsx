@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import {
   DocumentCheckIcon, ClockIcon, MagnifyingGlassIcon, XMarkIcon,
   CheckCircleIcon,
@@ -107,7 +107,7 @@ export default function Facturacion() {
             key={id}
             onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all
-              ${tab === id ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+              ${tab === id ? 'bg-white text-[#df000a] shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
             <Icon className="w-4 h-4" /> {label}
           </button>
@@ -118,7 +118,7 @@ export default function Facturacion() {
       <div className="relative mb-4 max-w-sm">
         <MagnifyingGlassIcon className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
         <input
-          className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#df000a]"
           placeholder="Buscar por folio o cliente…"
           value={busq}
           onChange={(e) => setBusq(e.target.value)}
@@ -160,7 +160,7 @@ export default function Facturacion() {
               <tbody className="divide-y divide-gray-100">
                 {ventasFiltradas.map((v) => (
                   <tr key={v.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2 font-mono font-medium text-blue-700">{v.folio}</td>
+                    <td className="px-4 py-2 font-mono font-medium text-[#df000a]">{v.folio}</td>
                     <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{fmtDate(v.fecha)}</td>
                     <td className="px-4 py-2 text-gray-700">{v.cliente_nombre ?? 'Público general'}</td>
                     <td className="px-4 py-2 text-right font-semibold tabular-nums">{fmt(v.total)}</td>
@@ -178,7 +178,7 @@ export default function Facturacion() {
                       {!v.facturada && (
                         <button
                           onClick={() => { setModalFacturar(v); setCfdiInput(''); }}
-                          className="flex items-center gap-1 mx-auto text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-lg px-3 py-1 hover:bg-blue-100"
+                          className="flex items-center gap-1 mx-auto text-xs bg-red-50 text-[#df000a] border border-red-200 rounded-lg px-3 py-1 hover:bg-red-100"
                         >
                           <CheckCircleIcon className="w-3.5 h-3.5" /> Facturar
                         </button>
@@ -208,7 +208,7 @@ export default function Facturacion() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">UUID CFDI (opcional)</label>
                 <input
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#df000a]"
                   value={cfdiInput}
                   onChange={(e) => setCfdiInput(e.target.value)}
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import { FileText, TrendingUp, Users, TrendingDown, Download } from 'lucide-react'
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` })
@@ -13,14 +13,14 @@ const primerDiaMes = () => {
 function Spinner() {
   return (
     <div className="flex justify-center items-center py-12">
-      <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="w-8 h-8 border-4 border-[#df000a] border-t-transparent rounded-full animate-spin" />
     </div>
   )
 }
 
 function KpiCard({ label, value, sub, color = 'blue' }) {
   const colors = {
-    blue: 'bg-blue-50 border-blue-200 text-blue-700',
+    blue: 'bg-red-50 border-red-200 text-[#df000a]',
     green: 'bg-green-50 border-green-200 text-green-700',
     red: 'bg-red-50 border-red-200 text-red-700',
     yellow: 'bg-yellow-50 border-yellow-200 text-yellow-700',
@@ -61,8 +61,8 @@ function PeriodoSelector({ inicio, fin, onInicio, onFin }) {
           onClick={() => { onInicio(p.i); onFin(p.f) }}
           className={`px-3 py-1 text-xs rounded-full border transition-colors ${
             inicio === p.i && fin === p.f
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+              ? 'bg-[#df000a] text-white border-[#df000a]'
+              : 'bg-white text-gray-600 border-gray-300 hover:border-[#df000a]'
           }`}
         >
           {p.label}
@@ -370,8 +370,8 @@ export default function Reportes() {
       {/* Encabezado */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-100 rounded-xl">
-            <FileText className="w-6 h-6 text-blue-600" />
+          <div className="p-2 bg-red-100 rounded-xl">
+            <FileText className="w-6 h-6 text-[#df000a]" />
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900">Reportes</h1>
@@ -381,7 +381,7 @@ export default function Reportes() {
         <button
           onClick={descargarPDF}
           disabled={descargando}
-          className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-2 bg-[#c4000a] hover:bg-[#a80008] disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         >
           <Download className="w-4 h-4" />
           {descargando ? 'Generando PDF...' : 'Descargar Minuta PDF'}
@@ -401,7 +401,7 @@ export default function Reportes() {
             key={id}
             onClick={() => setTab(id)}
             className={`flex items-center gap-2 flex-1 justify-center py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-              tab === id ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'
+              tab === id ? 'bg-white shadow text-[#df000a]' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
             <Icon className="w-4 h-4" />

@@ -319,13 +319,19 @@ class ReportePDF(APIView):
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import cm
         from reportlab.platypus import (
-            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image,
         )
-        import io
+        import io, os
 
         hoy = timezone.now().date()
         fecha_inicio = request.query_params.get('fecha_inicio', str(hoy.replace(day=1)))
         fecha_fin = request.query_params.get('fecha_fin', str(hoy))
+
+        # Logo: frontend/public/images/logo_hd.png (3 levels up from this file)
+        logo_path = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', '..', '..', 'frontend', 'public', 'images', 'logo_hd.png'
+        ))
 
         # ── Datos ─────────────────────────────────────────────────────────────
         ventas_qs = Venta.objects.filter(fecha__date__range=[fecha_inicio, fecha_fin])
@@ -387,15 +393,19 @@ class ReportePDF(APIView):
         )
         styles = getSampleStyleSheet()
 
-        H1 = ParagraphStyle('H1', parent=styles['Heading1'], fontSize=16, spaceAfter=4)
-        H2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=12, spaceBefore=14, spaceAfter=4,
-                             textColor=colors.HexColor('#1e3a5f'))
-        NORMAL = styles['Normal']
-        SMALL = ParagraphStyle('SMALL', parent=NORMAL, fontSize=8)
+        # Brand palette
+        RED    = colors.HexColor('#df000a')
+        BLACK  = colors.HexColor('#0d0000')
+        ORANGE = colors.HexColor('#ef8701')
+        ALT_BG = colors.HexColor('#fff8f8')
+        WHITE  = colors.white
+        GRAY   = colors.HexColor('#666666')
+        GREEN  = colors.HexColor('#16a34a')
 
-        HEADER_BG = colors.HexColor('#1e3a5f')
-        ALT_BG = colors.HexColor('#f0f4f8')
-        WHITE = colors.white
+        H2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, spaceBefore=14, spaceAfter=4,
+                             textColor=RED, fontName='Helvetica-Bold')
+        NORMAL = styles['Normal']
+        SMALL  = ParagraphStyle('SMALL', parent=NORMAL, fontSize=8)
 
         def money(n): return f"${float(n or 0):,.2f}"
 
@@ -403,13 +413,13 @@ class ReportePDF(APIView):
             data = [headers] + rows
             t = Table(data, colWidths=col_widths, repeatRows=1)
             ts = TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), HEADER_BG),
+                ('BACKGROUND', (0, 0), (-1, 0), BLACK),
                 ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, 0), 8),
                 ('FONTSIZE', (0, 1), (-1, -1), 8),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, ALT_BG]),
-                ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cccccc')),
+                ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('LEFTPADDING', (0, 0), (-1, -1), 5),
                 ('RIGHTPADDING', (0, 0), (-1, -1), 5),
@@ -421,12 +431,53 @@ class ReportePDF(APIView):
 
         story = []
 
-        # Encabezado
-        story.append(Paragraph('Centro Llantero EmirS', H1))
-        story.append(Paragraph(f'Minuta de Operación — {fecha_inicio} al {fecha_fin}', NORMAL))
-        story.append(Spacer(1, 0.3*cm))
-        story.append(HRFlowable(width='100%', thickness=1, color=HEADER_BG))
-        story.append(Spacer(1, 0.3*cm))
+        # ── Encabezado con logo ───────────────────────────────────────────────
+        right_content = [
+            Paragraph(
+                'Centro Llantero <font color="#df000a"><b>EmirS</b></font>',
+                ParagraphStyle('Brand', parent=NORMAL, fontSize=20, fontName='Helvetica-Bold', leading=24),
+            ),
+            Paragraph(
+                'Minuta de Operación',
+                ParagraphStyle('Sub', parent=NORMAL, fontSize=10, textColor=GRAY, spaceBefore=2),
+            ),
+            Spacer(1, 0.18*cm),
+            Paragraph(
+                f'Período: <b>{fecha_inicio}</b> al <b>{fecha_fin}</b>',
+                ParagraphStyle('Period', parent=NORMAL, fontSize=9),
+            ),
+            Paragraph(
+                f'Generado: {timezone.now().strftime("%d/%m/%Y %H:%M")}',
+                ParagraphStyle('Gen', parent=NORMAL, fontSize=8, textColor=GRAY),
+            ),
+        ]
+
+        if os.path.exists(logo_path):
+            logo_img = Image(logo_path)
+            # Escala proporcional: altura máx 2.8 cm
+            max_h = 2.8 * cm
+            aspect = logo_img.imageWidth / max(logo_img.imageHeight, 1)
+            logo_img.drawHeight = max_h
+            logo_img.drawWidth  = max_h * aspect
+            header_tbl = Table(
+                [[logo_img, right_content]],
+                colWidths=[logo_img.drawWidth + 0.5*cm, None],
+            )
+        else:
+            header_tbl = Table([[right_content]], colWidths=[None])
+
+        header_tbl.setStyle(TableStyle([
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 2),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+            ('TOPPADDING',    (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        story.append(header_tbl)
+        story.append(Spacer(1, 0.25*cm))
+        story.append(HRFlowable(width='100%', thickness=4, color=RED, spaceAfter=2))
+        story.append(HRFlowable(width='100%', thickness=2, color=ORANGE, spaceAfter=4))
+        story.append(Spacer(1, 0.2*cm))
 
         # ── Resumen ejecutivo ─────────────────────────────────────────────────
         story.append(Paragraph('Resumen Ejecutivo', H2))
@@ -442,11 +493,12 @@ class ReportePDF(APIView):
             ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('ROWBACKGROUNDS', (0, 0), (-1, -1), [WHITE, ALT_BG]),
-            ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cccccc')),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
             ('LEFTPADDING', (0, 0), (-1, -1), 6),
             ('TOPPADDING', (0, 0), (-1, -1), 4),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('TEXTCOLOR', (1, 2), (1, 2), colors.HexColor('#16a34a') if utilidad >= 0 else colors.red),
+            ('TEXTCOLOR', (1, 2), (1, 2), GREEN if utilidad >= 0 else RED),
+            ('FONTNAME', (1, 2), (1, 2), 'Helvetica-Bold'),
         ]))
         story.append(t_res)
         story.append(Spacer(1, 0.4*cm))
@@ -500,7 +552,7 @@ class ReportePDF(APIView):
             ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('ROWBACKGROUNDS', (0, 0), (-1, -1), [WHITE, ALT_BG, WHITE]),
-            ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cccccc')),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
             ('LEFTPADDING', (0, 0), (-1, -1), 6),
             ('TOPPADDING', (0, 0), (-1, -1), 4),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
@@ -537,11 +589,13 @@ class ReportePDF(APIView):
             story.append(Paragraph('Sin gastos en el período.', SMALL))
 
         story.append(Spacer(1, 0.6*cm))
-        story.append(HRFlowable(width='100%', thickness=0.5, color=colors.grey))
+        story.append(HRFlowable(width='100%', thickness=3, color=RED, spaceAfter=2))
+        story.append(HRFlowable(width='100%', thickness=1.5, color=ORANGE, spaceAfter=4))
         story.append(Spacer(1, 0.2*cm))
         story.append(Paragraph(
-            f'Generado el {timezone.now().strftime("%d/%m/%Y %H:%M")} — Centro Llantero EmirS',
-            ParagraphStyle('footer', parent=SMALL, textColor=colors.grey, alignment=1)
+            f'Centro Llantero <font color="#df000a"><b>EmirS</b></font> '
+            f'— Generado el {timezone.now().strftime("%d/%m/%Y %H:%M")}',
+            ParagraphStyle('footer', parent=SMALL, textColor=GRAY, alignment=1)
         ))
 
         doc.build(story)

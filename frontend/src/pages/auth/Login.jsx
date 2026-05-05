@@ -1,9 +1,10 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -16,27 +17,21 @@ export default function Login() {
     try {
       const response = await fetch('/api/auth/login/', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        // Guardar tokens en localStorage
         localStorage.setItem('token', data.access);
         localStorage.setItem('refreshToken', data.refresh);
         localStorage.setItem('username', username);
-        
-        // Redirigir al dashboard
         navigate('/dashboard');
       } else {
         const errorData = await response.json();
         setError(errorData.detail || 'Usuario o contraseña incorrectos');
       }
     } catch (err) {
-      console.error('Error de login:', err);
       setError('Error de conexión. Verifica que el servidor esté corriendo.');
     } finally {
       setLoading(false);
@@ -44,56 +39,97 @@ export default function Login() {
   };
 
   return (
-    <div className="bg-white shadow-md rounded px-5 sm:px-8 pt-6 pb-8">
-      <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Iniciar Sesión</h2>
-      
+    <div>
+      {/* Encabezado del formulario */}
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-white">Bienvenido</h2>
+        <p className="text-gray-500 text-sm mt-1">Ingresa tus credenciales para continuar</p>
+      </div>
+
+      {/* Error */}
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {error}
+        <div className="flex items-start gap-3 bg-[#1a0000] border border-[#df000a] text-red-300 px-4 py-3 rounded-xl mb-5 text-sm">
+          <span className="text-[#df000a] mt-0.5">✕</span>
+          <span>{error}</span>
         </div>
       )}
-      
-      <form onSubmit={handleSubmit}>
-        <div className="mb-4">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Usuario */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2" htmlFor="username">
             Usuario
           </label>
           <input
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
             id="username"
             type="text"
-            placeholder="Usuario"
+            autoComplete="username"
+            placeholder="Ingresa tu usuario"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
             disabled={loading}
+            className="w-full bg-[#181818] border border-gray-800 text-white rounded-xl px-4 py-3 text-sm placeholder-gray-600
+              focus:outline-none focus:border-[#df000a] focus:ring-1 focus:ring-[#df000a]
+              disabled:opacity-50 transition-colors"
           />
         </div>
-        <div className="mb-6">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="password">
+
+        {/* Contraseña */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2" htmlFor="password">
             Contraseña
           </label>
-          <input
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-            id="password"
-            type="password"
-            placeholder="******************"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            disabled={loading}
-          />
+          <div className="relative">
+            <input
+              id="password"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              placeholder="••••••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              disabled={loading}
+              className="w-full bg-[#181818] border border-gray-800 text-white rounded-xl px-4 py-3 pr-11 text-sm placeholder-gray-600
+                focus:outline-none focus:border-[#df000a] focus:ring-1 focus:ring-[#df000a]
+                disabled:opacity-50 transition-colors"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(v => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-300 transition-colors text-xs select-none"
+              tabIndex={-1}
+            >
+              {showPassword ? 'OCULTAR' : 'VER'}
+            </button>
+          </div>
         </div>
-        <div className="flex items-center justify-between">
-          <button
-            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full disabled:bg-gray-400"
-            type="submit"
-            disabled={loading}
-          >
-            {loading ? 'Ingresando...' : 'Ingresar'}
-          </button>
-        </div>
+
+        {/* Botón */}
+        <button
+          type="submit"
+          disabled={loading || !username || !password}
+          className="relative w-full bg-[#df000a] hover:bg-[#c4000a] disabled:opacity-40 disabled:cursor-not-allowed
+            text-white font-bold py-3 px-6 rounded-xl transition-colors text-sm tracking-wide mt-2
+            focus:outline-none focus:ring-2 focus:ring-[#df000a] focus:ring-offset-2 focus:ring-offset-[#0a0a0a]"
+        >
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Ingresando...
+            </span>
+          ) : (
+            'Ingresar al Sistema'
+          )}
+        </button>
       </form>
+
+      {/* Línea decorativa */}
+      <div className="flex items-center gap-3 mt-8">
+        <div className="flex-1 h-px bg-gray-800" />
+        <span className="text-[#ef8701] text-xs font-bold tracking-widest">EMIRS</span>
+        <div className="flex-1 h-px bg-gray-800" />
+      </div>
     </div>
   );
 }

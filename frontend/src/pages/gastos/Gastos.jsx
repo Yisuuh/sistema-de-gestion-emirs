@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import {
   PlusIcon, TrashIcon, PencilIcon, XMarkIcon,
   FunnelIcon, BanknotesIcon,
@@ -20,12 +20,12 @@ const $fetch = async (url, opts = {}) => {
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const today = () => new Date().toISOString().slice(0, 10);
 
-const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#df000a]';
 const selectCls = inputCls + ' bg-white';
 
 const GASTO_VACIO = {
   fecha: today(), concepto: '', categoria: '', monto: '',
-  metodo_pago: 'efectivo', responsable: '', notas: '',
+  metodo_pago: 'efectivo', responsable: '', notas: '', caja: '',
 };
 
 const METODOS = [
@@ -47,7 +47,7 @@ export default function Gastos() {
 
   // Filtros
   const [filtros, setFiltros] = useState({
-    fecha_inicio: today(), fecha_fin: today(), categoria: '', metodo_pago: '',
+    fecha_inicio: today(), fecha_fin: today(), categoria: '', metodo_pago: '', responsable: '',
   });
   const [mostrarFiltros, setMostrarFiltros] = useState(false);
 
@@ -56,6 +56,18 @@ export default function Gastos() {
   const [form, setForm] = useState(GASTO_VACIO);
   const [editando, setEditando] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  // Categorías CRUD
+  const [modalCategorias, setModalCategorias] = useState(false);
+  const [catForm, setCatForm] = useState({ nombre: '', descripcion: '', tipo: 'operativo' });
+  const [catEditando, setCatEditando] = useState(null);
+  const [savingCat, setSavingCat] = useState(false);
+
+  // Cajas abiertas (para asociar gasto)
+  const [cajasAbiertas, setCajasAbiertas] = useState([]);
+
+  // Evidencia
+  const [evidenciaFile, setEvidenciaFile] = useState(null);
 
   const showExito = (msg) => { setExito(msg); setTimeout(() => setExito(null), 3000); };
 
@@ -89,6 +101,7 @@ export default function Gastos() {
       if (filtros.fecha_fin) params.set('fecha_fin', filtros.fecha_fin);
       if (filtros.categoria) params.set('categoria', filtros.categoria);
       if (filtros.metodo_pago) params.set('metodo_pago', filtros.metodo_pago);
+      if (filtros.responsable) params.set('responsable', filtros.responsable);
       const data = await $fetch(`${API}/gastos/?${params}`);
       setGastos(data.results ?? data);
     } catch (e) {
@@ -117,37 +130,54 @@ export default function Gastos() {
         metodo_pago: gasto.metodo_pago,
         responsable: gasto.responsable ?? '',
         notas: gasto.notas,
+        caja: gasto.caja ?? '',
       });
       setEditando(gasto.id);
     } else {
       setForm({ ...GASTO_VACIO, fecha: today() });
       setEditando(null);
     }
+    setEvidenciaFile(null);
+    cargarCajasAbiertas();
     setModal(true);
+  };
+
+  const cargarCajasAbiertas = async () => {
+    try {
+      const data = await $fetch('/api/caja/cajas/?estado=abierta');
+      setCajasAbiertas(data.results ?? data);
+    } catch { /* silencio */ }
   };
 
   const guardar = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
-      const body = {
-        ...form,
-        monto: parseFloat(form.monto),
-        categoria: form.categoria || null,
-        responsable: form.responsable || null,
-      };
-      if (editando) {
-        await $fetch(`${API}/gastos/${editando}/`, {
-          method: 'PUT', body: JSON.stringify(body),
-        });
-        showExito('Gasto actualizado');
-      } else {
-        await $fetch(`${API}/gastos/`, {
-          method: 'POST', body: JSON.stringify(body),
-        });
-        showExito('Gasto registrado');
+      const fd = new FormData();
+      fd.append('fecha', form.fecha);
+      fd.append('concepto', form.concepto);
+      fd.append('monto', parseFloat(form.monto));
+      fd.append('metodo_pago', form.metodo_pago);
+      if (form.categoria) fd.append('categoria', form.categoria);
+      if (form.responsable) fd.append('responsable', form.responsable);
+      if (form.caja) fd.append('caja', form.caja);
+      if (form.notas) fd.append('notas', form.notas);
+      if (evidenciaFile) fd.append('evidencia', evidenciaFile);
+      const res = await fetch(
+        editando ? `${API}/gastos/${editando}/` : `${API}/gastos/`,
+        {
+          method: editando ? 'PATCH' : 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          body: fd,
+        }
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || d.detail || JSON.stringify(d));
       }
+      showExito(editando ? 'Gasto actualizado' : 'Gasto registrado');
       setModal(false);
+      setEvidenciaFile(null);
       await Promise.all([cargarGastos(), cargarResumen()]);
     } catch (e) {
       setError(e.message);
@@ -167,6 +197,52 @@ export default function Gastos() {
     }
   };
 
+  // ── CRUD Categorías ────────────────────────────────────────────
+  const abrirModalCategorias = () => {
+    setCatForm({ nombre: '', descripcion: '', tipo: 'operativo' });
+    setCatEditando(null);
+    setModalCategorias(true);
+  };
+
+  const abrirEditarCategoria = (c) => {
+    setCatForm({ nombre: c.nombre, descripcion: c.descripcion ?? '', tipo: c.tipo ?? 'operativo' });
+    setCatEditando(c.id);
+    setModalCategorias(true);
+  };
+
+  const guardarCategoria = async (e) => {
+    e.preventDefault();
+    setSavingCat(true);
+    try {
+      const url = catEditando ? `${API}/categorias/${catEditando}/` : `${API}/categorias/`;
+      const method = catEditando ? 'PUT' : 'POST';
+      const saved = await $fetch(url, { method, body: JSON.stringify(catForm) });
+      if (catEditando) {
+        setCategorias((prev) => prev.map((c) => (c.id === catEditando ? saved : c)));
+      } else {
+        setCategorias((prev) => [...prev, saved]);
+      }
+      setCatEditando(null);
+      setCatForm({ nombre: '', descripcion: '', tipo: 'operativo' });
+      showExito(catEditando ? 'Categoría actualizada' : 'Categoría creada');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingCat(false);
+    }
+  };
+
+  const eliminarCategoria = async (id) => {
+    if (!window.confirm('¿Eliminar esta categoría?')) return;
+    try {
+      await $fetch(`${API}/categorias/${id}/`, { method: 'DELETE' });
+      setCategorias((prev) => prev.filter((c) => c.id !== id));
+      showExito('Categoría eliminada');
+    } catch (e) {
+      setError('No se puede eliminar (tiene gastos asociados)');
+    }
+  };
+
   const totalFiltrado = gastos.reduce((s, g) => s + parseFloat(g.monto || 0), 0);
 
   return (
@@ -177,12 +253,20 @@ export default function Gastos() {
           <h1 className="text-2xl font-bold text-gray-900">Gastos y Egresos</h1>
           <p className="text-sm text-gray-500 mt-0.5">Control de gastos operativos</p>
         </div>
-        <button
-          onClick={() => abrirModal()}
-          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700"
-        >
-          <PlusIcon className="w-4 h-4" /> Registrar gasto
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => abrirModal()}
+            className="flex items-center gap-2 bg-[#df000a] text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-[#c4000a]"
+          >
+            <PlusIcon className="w-4 h-4" /> Registrar gasto
+          </button>
+          <button
+            onClick={abrirModalCategorias}
+            className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-50"
+          >
+            Categorías
+          </button>
+        </div>
       </div>
 
       {/* Alertas */}
@@ -227,7 +311,7 @@ export default function Gastos() {
           <span className="text-sm font-medium text-gray-700">Filtros</span>
           <button
             onClick={() => setMostrarFiltros(!mostrarFiltros)}
-            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+            className="flex items-center gap-1 text-xs text-[#df000a] hover:text-[#a80008]"
           >
             <FunnelIcon className="w-4 h-4" />
             {mostrarFiltros ? 'Ocultar' : 'Mostrar'}
@@ -259,6 +343,16 @@ export default function Gastos() {
                 onChange={(e) => setFiltros({ ...filtros, metodo_pago: e.target.value })}>
                 <option value="">Todos</option>
                 {METODOS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Responsable</label>
+              <select className={selectCls} value={filtros.responsable}
+                onChange={(e) => setFiltros({ ...filtros, responsable: e.target.value })}>
+                <option value="">Todos</option>
+                {empleados.map((emp) => (
+                  <option key={emp.id} value={emp.id}>{emp.nombre} {emp.apellido}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -304,7 +398,7 @@ export default function Gastos() {
                     <td className="px-4 py-2 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium
                         ${g.metodo_pago === 'efectivo' ? 'bg-green-100 text-green-800'
-                          : g.metodo_pago === 'transferencia' ? 'bg-blue-100 text-blue-800'
+                          : g.metodo_pago === 'transferencia' ? 'bg-red-100 text-[#a80008]'
                           : 'bg-purple-100 text-purple-800'}`}>
                         {g.metodo_pago}
                       </span>
@@ -312,7 +406,7 @@ export default function Gastos() {
                     <td className="px-4 py-2 text-gray-500">{g.responsable_nombre ?? '—'}</td>
                     <td className="px-4 py-2 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        <button onClick={() => abrirModal(g)} className="text-blue-500 hover:text-blue-700">
+                        <button onClick={() => abrirModal(g)} className="text-[#df000a] hover:text-[#df000a]">
                           <PencilIcon className="w-4 h-4" />
                         </button>
                         <button onClick={() => eliminar(g.id)} className="text-red-400 hover:text-red-600">
@@ -389,9 +483,31 @@ export default function Gastos() {
                 </select>
               </div>
               <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Caja (opcional)</label>
+                <select className={selectCls} value={form.caja}
+                  onChange={(e) => setForm({ ...form, caja: e.target.value })}>
+                  <option value="">— Sin caja —</option>
+                  {cajasAbiertas.map((c) => (
+                    <option key={c.id} value={c.id}>{c.folio} (abierta)</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Notas</label>
                 <textarea rows={2} className={inputCls} value={form.notas}
                   onChange={(e) => setForm({ ...form, notas: e.target.value })} placeholder="Observaciones opcionales" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Evidencia (foto/comprobante)</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setEvidenciaFile(e.target.files[0] || null)}
+                  className="w-full text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-red-50 file:text-[#df000a] hover:file:bg-red-100"
+                />
+                {evidenciaFile && (
+                  <p className="text-xs text-gray-400 mt-1">{evidenciaFile.name}</p>
+                )}
               </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setModal(false)}
@@ -399,11 +515,105 @@ export default function Gastos() {
                   Cancelar
                 </button>
                 <button type="submit" disabled={saving}
-                  className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                  className="flex-1 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] disabled:opacity-50">
                   {saving ? 'Guardando…' : editando ? 'Actualizar' : 'Registrar'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Categorías ──────────────────────────────────────────────── */}
+      {modalCategorias && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold">Categorías de Gastos</h2>
+              <button onClick={() => setModalCategorias(false)}><XMarkIcon className="w-5 h-5 text-gray-400" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Formulario nueva/editar categoría */}
+              <form onSubmit={guardarCategoria} className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    {catEditando ? 'Editar categoría' : 'Nueva categoría'}
+                  </label>
+                  <input
+                    required
+                    className={inputCls}
+                    value={catForm.nombre}
+                    onChange={(e) => setCatForm({ ...catForm, nombre: e.target.value })}
+                    placeholder="Nombre de la categoría"
+                  />
+                </div>
+                <div className="w-40">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Tipo</label>
+                  <select className={selectCls} value={catForm.tipo}
+                    onChange={(e) => setCatForm({ ...catForm, tipo: e.target.value })}>
+                    <option value="operativo">Operativo</option>
+                    <option value="nomina">Nómina</option>
+                    <option value="proveedor">Proveedor</option>
+                    <option value="mantenimiento">Mantenimiento</option>
+                    <option value="servicios">Servicios</option>
+                    <option value="otro">Otro</option>
+                  </select>
+                </div>
+                <button type="submit" disabled={savingCat}
+                  className="px-4 py-2 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] disabled:opacity-50 whitespace-nowrap">
+                  {savingCat ? '…' : catEditando ? 'Actualizar' : 'Agregar'}
+                </button>
+                {catEditando && (
+                  <button type="button"
+                    onClick={() => { setCatEditando(null); setCatForm({ nombre: '', descripcion: '', tipo: 'operativo' }); }}
+                    className="px-3 py-2 border border-gray-300 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+                    ✕
+                  </button>
+                )}
+              </form>
+              {/* Lista de categorías */}
+              <div className="border rounded-xl overflow-hidden">
+                {categorias.length === 0 ? (
+                  <p className="px-4 py-6 text-center text-sm text-gray-400">Sin categorías aún</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs text-gray-500 font-medium">Nombre</th>
+                        <th className="px-4 py-2 text-left text-xs text-gray-500 font-medium">Tipo</th>
+                        <th className="px-4 py-2 w-20" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {categorias.map((c) => (
+                        <tr key={c.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-2 font-medium text-gray-800">{c.nombre}</td>
+                          <td className="px-4 py-2 text-gray-500 text-xs capitalize">{c.tipo}</td>
+                          <td className="px-4 py-2">
+                            <div className="flex gap-1 justify-end">
+                              <button onClick={() => abrirEditarCategoria(c)}
+                                className="p-1 text-[#df000a] hover:bg-red-50 rounded">
+                                <PencilIcon className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => eliminarCategoria(c.id)}
+                                className="p-1 text-red-400 hover:bg-red-50 rounded">
+                                <TrashIcon className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div className="flex justify-end">
+                <button onClick={() => setModalCategorias(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+                  Cerrar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

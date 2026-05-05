@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import {
   ShoppingCartIcon, BanknotesIcon, ExclamationTriangleIcon,
   UserGroupIcon, CurrencyDollarIcon, ArrowTrendingUpIcon,
@@ -13,7 +13,7 @@ const fmtN = (n) => Number(n ?? 0).toLocaleString('es-MX');
 
 function KPI({ icon: Icon, label, value, sub, color = 'blue', loading }) {
   const colors = {
-    blue: 'bg-blue-50 text-blue-600',
+    blue: 'bg-red-50 text-[#df000a]',
     green: 'bg-green-50 text-green-600',
     red: 'bg-red-50 text-red-600',
     orange: 'bg-orange-50 text-orange-600',
@@ -106,7 +106,7 @@ export default function Dashboard() {
                 <div key={m.metodo_pago} className="flex items-center justify-between text-sm">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize
                     ${m.metodo_pago === 'efectivo' ? 'bg-green-100 text-green-800'
-                      : m.metodo_pago === 'transferencia' ? 'bg-blue-100 text-blue-800'
+                      : m.metodo_pago === 'transferencia' ? 'bg-red-100 text-[#a80008]'
                       : m.metodo_pago === 'tarjeta' ? 'bg-purple-100 text-purple-800'
                       : 'bg-gray-100 text-gray-700'}`}>
                     {m.metodo_pago}
@@ -165,7 +165,7 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Transferencia</span>
-                <span className="font-semibold text-blue-700">{fmt(n.total_transferencia)}</span>
+                <span className="font-semibold text-[#df000a]">{fmt(n.total_transferencia)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Comisiones</span>
@@ -173,7 +173,7 @@ export default function Dashboard() {
               </div>
               <div className="mt-2">
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium
-                  ${n.estado === 'borrador' ? 'bg-yellow-100 text-yellow-800' : n.estado === 'cerrada' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                  ${n.estado === 'borrador' ? 'bg-yellow-100 text-yellow-800' : n.estado === 'cerrada' ? 'bg-red-100 text-[#a80008]' : 'bg-green-100 text-green-800'}`}>
                   {n.estado}
                 </span>
               </div>

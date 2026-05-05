@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import {
   BuildingStorefrontIcon,
   BanknotesIcon,
@@ -103,7 +103,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
                 type="number" min="0.01" step="0.01" required
                 value={form.monto}
                 onChange={(e) => setForm({ ...form, monto: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
                 placeholder="0.00"
               />
             </div>
@@ -113,7 +113,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
                 type="date" required
                 value={form.fecha}
                 onChange={(e) => setForm({ ...form, fecha: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
               />
             </div>
           </div>
@@ -126,7 +126,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
               value={form.referencia}
               onChange={(e) => setForm({ ...form, referencia: e.target.value })}
               placeholder="No. transferencia, cheque..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
             />
           </div>
           <div>
@@ -137,7 +137,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
               rows={2}
               value={form.notas}
               onChange={(e) => setForm({ ...form, notas: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
             />
           </div>
           <div className="flex gap-3 pt-2">
@@ -149,7 +149,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
             </button>
             <button
               type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loading ? (
                 <ArrowPathIcon className="h-4 w-4 animate-spin" />
@@ -238,13 +238,13 @@ function DetalleProveedor({ data, onPago }) {
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {factura.items.map((item) => (
-                        <tr key={item.entrada_id} className="hover:bg-blue-50">
+                        <tr key={item.entrada_id} className="hover:bg-red-50">
                           <td className="px-4 py-2 font-mono text-xs text-gray-700">{item.producto_codigo}</td>
                           <td className="px-4 py-2 text-gray-700 max-w-[200px]">
                             <span className="line-clamp-1">{item.producto_descripcion}</span>
                           </td>
                           <td className="px-4 py-2">
-                            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-mono">
+                            <span className="px-1.5 py-0.5 bg-red-100 text-[#df000a] rounded text-xs font-mono">
                               {item.medida}
                             </span>
                           </td>
@@ -511,7 +511,7 @@ export default function Adeudos() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 sm:mb-6">
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <div className="flex items-center gap-3">
-              <DocumentTextIcon className="h-8 w-8 text-blue-500" />
+              <DocumentTextIcon className="h-8 w-8 text-[#df000a]" />
               <div>
                 <p className="text-sm text-gray-500">Deuda total con proveedores</p>
                 <p className="text-2xl font-bold text-gray-900">{fmt(resumen.total_deuda_global)}</p>

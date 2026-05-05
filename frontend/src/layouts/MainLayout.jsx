@@ -41,13 +41,13 @@ export default function MainLayout() {
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 w-64 bg-gray-900 text-white z-30 flex flex-col transform transition-transform duration-300 ease-in-out
+      <aside className={`fixed inset-y-0 left-0 w-64 bg-black text-white z-30 flex flex-col transform transition-transform duration-300 ease-in-out
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
 
         <div className="p-4 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
           <div className="min-w-0">
-            <h1 className="text-lg font-bold leading-tight">Centro Llantero EmirS</h1>
-            <p className="text-sm text-gray-400 mt-0.5 truncate">Bienvenido, {username}</p>
+            <h1 className="text-lg font-bold leading-tight text-white">Centro Llantero <span className="text-[#df000a]">EmirS</span></h1>
+            <p className="text-xs text-gray-400 mt-0.5 truncate">Bienvenido, {username}</p>
           </div>
           <button
             className="md:hidden text-gray-400 hover:text-white ml-2 flex-shrink-0"
@@ -57,18 +57,20 @@ export default function MainLayout() {
           </button>
         </div>
 
-        <nav className="mt-4 flex-1 overflow-y-auto scrollbar-hide" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
+        <nav className="mt-2 flex-1 overflow-y-auto scrollbar-hide" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
           {NAV_LINKS.map(({ to, icon: Icon, label }) => (
             <Link
               key={to}
               to={to}
               onClick={() => setSidebarOpen(false)}
-              className={`flex items-center px-4 py-3 hover:bg-gray-800 transition-colors ${
-                location.pathname === to ? 'bg-gray-800 border-l-4 border-blue-500' : ''
+              className={`flex items-center px-4 py-3 transition-colors ${
+                location.pathname === to
+                  ? 'bg-[#1a0000] border-l-4 border-[#df000a] text-[#df000a]'
+                  : 'hover:bg-gray-900 text-gray-300 hover:text-white'
               }`}
             >
               <Icon className="w-5 h-5 mr-3 flex-shrink-0" />
-              <span className="truncate">{label}</span>
+              <span className="truncate font-medium">{label}</span>
             </Link>
           ))}
         </nav>
@@ -76,7 +78,7 @@ export default function MainLayout() {
         <div className="p-4 border-t border-gray-800 flex-shrink-0">
           <button
             onClick={handleLogout}
-            className="flex items-center w-full px-4 py-2 hover:bg-gray-800 rounded transition-colors"
+            className="flex items-center w-full px-4 py-2 hover:bg-gray-900 rounded transition-colors text-gray-300 hover:text-white"
           >
             <LogOut className="w-5 h-5 mr-3 flex-shrink-0" />
             Cerrar Sesión
@@ -85,7 +87,7 @@ export default function MainLayout() {
       </aside>
 
       {/* Mobile top bar */}
-      <header className="md:hidden fixed top-0 left-0 right-0 h-14 bg-gray-900 text-white z-10 flex items-center px-4 shadow-lg">
+      <header className="md:hidden fixed top-0 left-0 right-0 h-14 bg-black text-white z-10 flex items-center px-4 shadow-lg border-b border-[#df000a]">
         <button
           onClick={() => setSidebarOpen(true)}
           className="text-gray-300 hover:text-white mr-3"
@@ -93,7 +95,7 @@ export default function MainLayout() {
         >
           <Menu className="w-6 h-6" />
         </button>
-        <h1 className="text-base font-bold truncate">Centro Llantero EmirS</h1>
+        <h1 className="text-base font-bold truncate">Centro Llantero <span className="text-[#df000a]">EmirS</span></h1>
       </header>
 
       {/* Main Content */}

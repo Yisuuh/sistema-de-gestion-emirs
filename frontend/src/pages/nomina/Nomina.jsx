@@ -45,13 +45,13 @@ const calcLinea = (l) => {
 // ── Badge ─────────────────────────────────────────────────────────────────────
 const ESTADO_COLORS = {
   borrador: 'bg-yellow-100 text-yellow-800 border-yellow-300',
-  cerrada: 'bg-blue-100 text-blue-800 border-blue-300',
+  cerrada: 'bg-red-100 text-[#a80008] border-red-200',
   pagada: 'bg-green-100 text-green-800 border-green-300',
 };
 function Badge({ text, color = 'gray' }) {
   const map = {
     green: 'bg-green-100 text-green-800', red: 'bg-red-100 text-red-800',
-    yellow: 'bg-yellow-100 text-yellow-800', blue: 'bg-blue-100 text-blue-800',
+    yellow: 'bg-yellow-100 text-yellow-800', blue: 'bg-red-100 text-[#a80008]',
     gray: 'bg-gray-100 text-gray-600', purple: 'bg-purple-100 text-purple-800',
     orange: 'bg-orange-100 text-orange-800',
   };
@@ -83,7 +83,7 @@ function CeldaNum({ value, onChange, disabled, tabIndex, onKeyDown, inputRef, hi
         onChange(isNaN(v) ? 0 : Math.max(0, v));
       }}
       className={`w-full text-right bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 py-0.5 text-sm tabular-nums
-        ${disabled ? 'text-gray-400 cursor-default' : 'hover:bg-blue-50'}
+        ${disabled ? 'text-gray-400 cursor-default' : 'hover:bg-red-50'}
         ${highlight ? 'text-red-600 font-semibold' : ''}`}
     />
   );
@@ -92,7 +92,7 @@ function CeldaNum({ value, onChange, disabled, tabIndex, onKeyDown, inputRef, hi
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── Helpers de estilo y formulario ───────────────────────────────────────────
-const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#df000a]';
 const selectCls = inputCls + ' bg-white';
 
 function Fld({ label, req, children }) {
@@ -134,6 +134,7 @@ export default function Nomina() {
   const [guardando, setGuardando] = useState(false);
   const [cambioPendiente, setCambioPendiente] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null); // { type, onConfirm }
+  const [autoCalcLoading, setAutoCalcLoading] = useState(false);
 
   // ── Estado empleados ──────────────────────────────────────────────────────
   const [empleados, setEmpleados] = useState([]);
@@ -265,6 +266,42 @@ export default function Nomina() {
     finally { setConfirmAction(null); }
   };
 
+  // ── Auto-calcular comisiones ─────────────────────────────────────
+  const autoCalcularComisiones = async () => {
+    if (!periodoActivo || !editable) return;
+    setAutoCalcLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        fecha_inicio: periodoActivo.fecha_inicio,
+        fecha_fin: periodoActivo.fecha_fin,
+      });
+      const data = await $fetch(`/api/reportes/comisiones/?${params}`);
+      const comisiones = Array.isArray(data) ? data : data.results ?? [];
+      let actualizadas = 0;
+      setLineas((prev) => {
+        const updated = prev.map((linea) => {
+          const match = comisiones.find(
+            (c) => c.empleado_id === linea.empleado || c.empleado_id === linea.empleado_id
+          );
+          if (match) {
+            actualizadas++;
+            return calcLinea({ ...linea, comision: parseFloat(match.comision_calculada ?? match.total ?? 0) });
+          }
+          return linea;
+        });
+        return updated;
+      });
+      if (actualizadas > 0) {
+        setCambioPendiente(true);
+        showExito(`Comisiones actualizadas para ${actualizadas} empleado(s)`);
+      } else {
+        showExito('No se encontraron comisiones en el período');
+      }
+    } catch (e) { setError('Error al calcular comisiones: ' + e.message); }
+    finally { setAutoCalcLoading(false); }
+  };
+
   // ── Empleados API ─────────────────────────────────────────────────────────
   const cargarEmpleados = async (q = '') => {
     setLoadingEmp(true);
@@ -385,7 +422,7 @@ export default function Nomina() {
                 Cancelar
               </button>
               <button onClick={confirmAction.onConfirm}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium text-white ${confirmAction.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                className={`flex-1 py-2 rounded-lg text-sm font-medium text-white ${confirmAction.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-[#df000a] hover:bg-[#c4000a]'}`}>
                 Confirmar
               </button>
             </div>
@@ -412,7 +449,7 @@ export default function Nomina() {
               key={v}
               onClick={() => setVista(v)}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                vista === v ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                vista === v ? 'border-[#df000a] text-[#df000a]' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
               {v === 'periodos' ? <><CalendarDaysIcon className="w-4 h-4" /> Períodos</> : <><UserGroupIcon className="w-4 h-4" /> Empleados</>}
@@ -441,7 +478,7 @@ export default function Nomina() {
               </div>
               <button
                 onClick={() => setModalPeriodo(true)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
+                className="flex items-center gap-2 px-4 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] transition-colors shadow-sm"
               >
                 <PlusIcon className="w-4 h-4" /> Nueva Semana
               </button>
@@ -463,7 +500,7 @@ export default function Nomina() {
                     onClick={() => abrirCaptura(p)}
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
-                      <div className={`w-3 h-10 rounded-full flex-shrink-0 ${p.estado === 'pagada' ? 'bg-green-500' : p.estado === 'cerrada' ? 'bg-blue-500' : 'bg-yellow-400'}`} />
+                      <div className={`w-3 h-10 rounded-full flex-shrink-0 ${p.estado === 'pagada' ? 'bg-green-500' : p.estado === 'cerrada' ? 'bg-[#df000a]' : 'bg-yellow-400'}`} />
                       <div className="min-w-0">
                         <p className="font-semibold text-gray-900">
                           {fmtDate(p.fecha_inicio)} – {fmtDate(p.fecha_fin)}
@@ -485,13 +522,13 @@ export default function Nomina() {
                       </div>
                       <div>
                         <p className="text-xs text-gray-400">Total</p>
-                        <p className="text-base font-bold text-blue-700">${fmt(p.total_general)}</p>
+                        <p className="text-base font-bold text-[#df000a]">${fmt(p.total_general)}</p>
                       </div>
                     </div>
                     <div className="flex gap-2 md:ml-4" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => abrirCaptura(p)}
-                        className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-100 transition-colors"
+                        className="px-3 py-1.5 bg-red-50 text-[#df000a] rounded-lg text-xs font-medium hover:bg-red-100 transition-colors"
                       >
                         Abrir
                       </button>
@@ -527,11 +564,23 @@ export default function Nomina() {
                       disabled={guardando || !cambioPendiente}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors shadow-sm ${
                         cambioPendiente
-                          ? 'bg-blue-600 text-white hover:bg-blue-700'
+                          ? 'bg-[#df000a] text-white hover:bg-[#c4000a]'
                           : 'bg-gray-100 text-gray-400 cursor-default'
                       }`}
                     >
                       {guardando ? 'Guardando…' : cambioPendiente ? '● Guardar cambios' : '✓ Sin cambios'}
+                    </button>
+                  )}
+                  {editable && (
+                    <button
+                      onClick={autoCalcularComisiones}
+                      disabled={autoCalcLoading}
+                      className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-xl text-sm font-medium hover:bg-purple-700 shadow-sm disabled:opacity-50"
+                      title="Calcular comisiones desde ventas del período"
+                    >
+                      {autoCalcLoading
+                        ? <><BanknotesIcon className="w-4 h-4 animate-pulse" /> Calculando…</>
+                        : <><BanknotesIcon className="w-4 h-4" /> Auto-comisiones</>}
                     </button>
                   )}
                   {editable && !hayDiferencias && lineas.length > 0 && (
@@ -541,7 +590,7 @@ export default function Nomina() {
                         message: 'Se validarán todas las diferencias de pago. ¿Continuar?',
                         onConfirm: cerrarPeriodo,
                       })}
-                      className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 shadow-sm"
+                      className="flex items-center gap-2 px-4 py-2 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] shadow-sm"
                     >
                       <LockClosedIcon className="w-4 h-4" /> Cerrar período
                     </button>
@@ -587,7 +636,7 @@ export default function Nomina() {
                     { label: 'Sueldos', val: totales.sueldo, color: 'text-gray-900' },
                     { label: 'Comisiones', val: totales.comision, color: 'text-purple-700' },
                     { label: 'Domingos', val: totales.domingo, color: 'text-orange-700' },
-                    { label: 'Total Efectivo', val: totales.efectivo, color: 'text-blue-700', bold: true },
+                    { label: 'Total Efectivo', val: totales.efectivo, color: 'text-[#df000a]', bold: true },
                     { label: 'Total Transferencia', val: totales.transferencia, color: 'text-indigo-700', bold: true },
                   ].map(({ label, val, color, bold }) => (
                     <div key={label} className="bg-white rounded-xl border border-gray-200 p-3 text-center">
@@ -596,7 +645,7 @@ export default function Nomina() {
                     </div>
                   ))}
                 </div>
-                <div className="bg-blue-600 text-white rounded-xl px-5 py-3 mb-5 flex items-center justify-between">
+                <div className="bg-[#df000a] text-white rounded-xl px-5 py-3 mb-5 flex items-center justify-between">
                   <span className="font-medium">Total general de nómina</span>
                   <span className="text-2xl font-bold">${fmt(totales.neto)}</span>
                 </div>
@@ -615,8 +664,8 @@ export default function Nomina() {
                           <th className="px-3 py-3 text-right font-medium w-24">Desc.</th>
                           <th className="px-3 py-3 text-right font-medium w-28 bg-green-900">Efectivo</th>
                           <th className="px-3 py-3 text-right font-medium w-28 bg-green-900">Transf.</th>
-                          <th className="px-3 py-3 text-right font-medium w-32 bg-blue-900">Percepciones</th>
-                          <th className="px-3 py-3 text-right font-medium w-28 bg-blue-900">Neto</th>
+                          <th className="px-3 py-3 text-right font-medium w-32 bg-[#8c0007]">Percepciones</th>
+                          <th className="px-3 py-3 text-right font-medium w-28 bg-[#8c0007]">Neto</th>
                           <th className="px-3 py-3 text-center font-medium w-20 bg-gray-700">Diff.</th>
                           <th className="px-3 py-3 text-left font-medium w-36">Obs.</th>
                         </tr>
@@ -626,10 +675,10 @@ export default function Nomina() {
                           const hasDiff = Math.abs(linea.diff ?? 0) > 0.01;
                           return (
                             <tr key={linea.id ?? ri}
-                              className={`border-b border-gray-100 ${hasDiff && editable ? 'bg-red-50' : ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-50 transition-colors`}
+                              className={`border-b border-gray-100 ${hasDiff && editable ? 'bg-red-50' : ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-red-50 transition-colors`}
                             >
                               {/* Nombre — sticky */}
-                              <td className={`px-3 py-1 sticky left-0 z-10 ${hasDiff && editable ? 'bg-red-50' : ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-50`}>
+                              <td className={`px-3 py-1 sticky left-0 z-10 ${hasDiff && editable ? 'bg-red-50' : ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-red-50`}>
                                 <p className="font-medium text-gray-900 truncate max-w-[160px]">{linea.empleado_nombre}</p>
                                 <p className="text-xs text-gray-400 truncate">{linea.empleado_puesto}</p>
                               </td>
@@ -648,10 +697,10 @@ export default function Nomina() {
                                 </td>
                               ))}
                               {/* Totales calculados */}
-                              <td className="px-3 py-1 text-right bg-blue-50 font-medium text-blue-900 tabular-nums">
+                              <td className="px-3 py-1 text-right bg-red-50 font-medium text-[#8c0007] tabular-nums">
                                 ${fmt(linea.total_percepciones)}
                               </td>
-                              <td className="px-3 py-1 text-right bg-blue-50 font-bold text-blue-700 tabular-nums">
+                              <td className="px-3 py-1 text-right bg-red-50 font-bold text-[#df000a] tabular-nums">
                                 ${fmt(linea.neto)}
                               </td>
                               {/* Diferencia */}
@@ -672,7 +721,7 @@ export default function Nomina() {
                                   value={linea.observaciones ?? ''}
                                   onChange={(e) => updateLinea(ri, 'observaciones', e.target.value)}
                                   placeholder="—"
-                                  className="w-full text-xs bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 text-gray-500"
+                                  className="w-full text-xs bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#df000a] rounded px-1 py-0.5 text-gray-500"
                                 />
                               </td>
                             </tr>
@@ -698,8 +747,8 @@ export default function Nomina() {
                             <td className="px-3 py-2 text-right tabular-nums text-red-300">${fmt(totales.descuentos)}</td>
                             <td className="px-3 py-2 text-right tabular-nums bg-green-900 text-green-200">${fmt(totales.efectivo)}</td>
                             <td className="px-3 py-2 text-right tabular-nums bg-green-900 text-green-200">${fmt(totales.transferencia)}</td>
-                            <td className="px-3 py-2 text-right tabular-nums bg-blue-900"></td>
-                            <td className="px-3 py-2 text-right tabular-nums bg-blue-900 text-blue-200">${fmt(totales.neto)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums bg-[#8c0007]"></td>
+                            <td className="px-3 py-2 text-right tabular-nums bg-[#8c0007] text-red-200">${fmt(totales.neto)}</td>
                             <td className="px-2 py-2 text-center bg-gray-800">
                               {hayDiferencias
                                 ? <span className="text-red-400">⚠</span>
@@ -734,7 +783,7 @@ export default function Nomina() {
               </div>
               <button
                 onClick={abrirNuevoEmp}
-                className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 shadow-sm"
+                className="flex items-center gap-2 px-4 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] shadow-sm"
               >
                 <PlusIcon className="w-4 h-4" /> Nuevo Empleado
               </button>
@@ -746,7 +795,7 @@ export default function Nomina() {
                 placeholder="Buscar empleado…"
                 value={busqEmp}
                 onChange={(e) => { setBusqEmp(e.target.value); cargarEmpleados(e.target.value); }}
-                className="w-full border border-gray-300 rounded-xl pl-4 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border border-gray-300 rounded-xl pl-4 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#df000a]"
               />
             </div>
 
@@ -774,7 +823,7 @@ export default function Nomina() {
                       <tr key={e.id} className={`hover:bg-gray-50 transition-colors ${!e.activo ? 'opacity-60' : ''}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                            <div className="w-8 h-8 rounded-full bg-red-100 text-[#df000a] flex items-center justify-center text-xs font-bold flex-shrink-0">
                               {e.nombre?.[0]}{e.apellido?.[0]}
                             </div>
                             <p className="font-medium text-gray-900">{e.nombre_completo}</p>
@@ -796,7 +845,7 @@ export default function Nomina() {
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-center gap-2">
                             <button onClick={() => abrirEditarEmp(e)}
-                              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
+                              className="p-1.5 text-gray-400 hover:text-[#df000a] hover:bg-red-50 rounded transition-colors">
                               <PencilIcon className="w-4 h-4" />
                             </button>
                             <button onClick={() => eliminarEmp(e.id)}
@@ -821,7 +870,7 @@ export default function Nomina() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
             <div className="flex items-center justify-between p-5 border-b">
               <h2 className="font-bold text-lg flex items-center gap-2">
-                <CalendarDaysIcon className="w-5 h-5 text-blue-600" /> Nueva Semana de Nómina
+                <CalendarDaysIcon className="w-5 h-5 text-[#df000a]" /> Nueva Semana de Nómina
               </h2>
               <button onClick={() => setModalPeriodo(false)}><XMarkIcon className="w-5 h-5 text-gray-400" /></button>
             </div>
@@ -850,7 +899,7 @@ export default function Nomina() {
                   Cancelar
                 </button>
                 <button type="submit" disabled={savingPeriodo}
-                  className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                  className="flex-1 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] disabled:opacity-50">
                   {savingPeriodo ? 'Creando…' : 'Crear período'}
                 </button>
               </div>
@@ -912,7 +961,7 @@ export default function Nomina() {
               </details>
               <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => setModalEmp(false)} className="flex-1 py-2.5 border border-gray-300 rounded-xl text-sm hover:bg-gray-50">Cancelar</button>
-                <button type="submit" disabled={savingEmp} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                <button type="submit" disabled={savingEmp} className="flex-1 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] disabled:opacity-50">
                   {savingEmp ? 'Guardando…' : empEditando ? 'Actualizar' : 'Registrar'}
                 </button>
               </div>
