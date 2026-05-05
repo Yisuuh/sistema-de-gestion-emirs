@@ -12,7 +12,7 @@ import {
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 
-const API = 'http://localhost:8000/api/inventario';
+const API = '/api/inventario';
 const token = () => localStorage.getItem('token');
 const headers = () => ({ Authorization: `Bearer ${token()}` });
 const fmt = (n) =>
@@ -194,7 +194,7 @@ function DetalleProveedor({ data, onPago }) {
                   ? <ChevronDownIcon className="h-4 w-4 text-gray-500 flex-shrink-0" />
                   : <ChevronRightIcon className="h-4 w-4 text-gray-500 flex-shrink-0" />
                 }
-                <div className="flex-1 grid grid-cols-4 gap-4 text-sm">
+                <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 text-sm">
                   <div>
                     <span className="font-mono font-semibold text-gray-800">{factura.numero_factura}</span>
                     <div className="text-xs text-gray-500">{factura.fecha_compra}</div>
@@ -395,7 +395,7 @@ function FilaProveedor({ resumen, onPago }) {
         </div>
 
         {/* Deuda */}
-        <div className="flex-1 grid grid-cols-3 gap-6 text-sm">
+        <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 text-sm">
           <div>
             <div className="text-xs text-gray-400">Deuda total</div>
             <div className="font-semibold text-gray-800">{fmt(resumen.monto_total_deuda)}</div>
@@ -474,11 +474,11 @@ export default function Adeudos() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto">
       {/* Encabezado */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4 sm:mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Adeudos a Proveedores</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Adeudos a Proveedores</h1>
           <p className="text-sm text-gray-500 mt-1">
             Acumulado por factura. Haz clic en un proveedor para ver el detalle.
           </p>
@@ -508,7 +508,7 @@ export default function Adeudos() {
 
       {/* Tarjetas globales */}
       {resumen && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 sm:mb-6">
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <div className="flex items-center gap-3">
               <DocumentTextIcon className="h-8 w-8 text-blue-500" />

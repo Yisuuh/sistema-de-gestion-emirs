@@ -1,4 +1,5 @@
 import re
+import csv
 import xml.etree.ElementTree as ET
 from decimal import Decimal
 
@@ -10,7 +11,8 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Max, OuterRef, Subquery
+from django.http import HttpResponse
 
 from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
 from .serializers import (
@@ -439,15 +441,22 @@ class ProductoViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['marca', 'activo', 'indice_velocidad']
     search_fields = ['codigo', 'medida', 'modelo', 'marca__nombre']
-    ordering_fields = ['medida', 'precio_venta', 'stock_actual']
-    
+    ordering_fields = ['medida', 'precio_venta', 'codigo']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        medida = self.request.query_params.get('medida')
+        if medida:
+            qs = qs.filter(medida__icontains=medida)
+        return qs
+
     @action(detail=False, methods=['get'])
     def stock_bajo(self, request):
-        """Productos con stock bajo"""
+        """Productos con stock bajo (stock_actual <= stock_minimo)"""
         productos_stock_bajo = [p for p in self.get_queryset() if p.tiene_stock_bajo and not p.stock_agotado]
         serializer = self.get_serializer(productos_stock_bajo, many=True)
         return Response(serializer.data)
-    
+
     @action(detail=False, methods=['get'])
     def agotados(self, request):
         """Productos agotados"""
@@ -455,25 +464,240 @@ class ProductoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(productos_agotados, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'])
+    def consolidado(self, request):
+        """
+        GET /api/inventario/productos/consolidado/
+        Vista consolidada: entradas_total, salidas_total, stock_actual,
+        ultimo_precio_compra, precio_venta, precio_descuento por producto.
+        """
+        productos = self.get_queryset().filter(activo=True)
+
+        # Último precio de compra por producto
+        ultimo_precio_qs = (
+            EntradaInventario.objects
+            .filter(producto=OuterRef('pk'))
+            .order_by('-fecha_compra', '-created_at')
+            .values('precio_compra')[:1]
+        )
+        ultima_factura_qs = (
+            EntradaInventario.objects
+            .filter(producto=OuterRef('pk'))
+            .order_by('-fecha_compra', '-created_at')
+            .values('numero_factura')[:1]
+        )
+
+        resultado = []
+        for p in productos:
+            entradas_total = p.entradas.aggregate(t=Sum('cantidad'))['t'] or 0
+            salidas_total = p.salidas.aggregate(t=Sum('cantidad'))['t'] or 0
+            stock = entradas_total - salidas_total
+
+            ultimo_precio = (
+                p.entradas.order_by('-fecha_compra', '-created_at')
+                .values_list('precio_compra', flat=True)
+                .first()
+            )
+            ultima_factura = (
+                p.entradas.order_by('-fecha_compra', '-created_at')
+                .values_list('numero_factura', flat=True)
+                .first()
+            )
+
+            if stock <= 0:
+                estado_stock = 'agotado'
+            elif stock <= p.stock_minimo:
+                estado_stock = 'stock_bajo'
+            else:
+                estado_stock = 'disponible'
+
+            resultado.append({
+                'id': p.id,
+                'codigo': p.codigo,
+                'medida': p.medida,
+                'marca': p.marca.nombre,
+                'modelo': p.modelo,
+                'indice_carga': p.indice_carga,
+                'indice_velocidad': p.indice_velocidad,
+                'entradas_total': entradas_total,
+                'salidas_total': salidas_total,
+                'stock_actual': stock,
+                'stock_minimo': p.stock_minimo,
+                'precio_venta': float(p.precio_venta),
+                'precio_descuento': float(p.precio_descuento) if p.precio_descuento else None,
+                'ultimo_precio_compra': float(ultimo_precio) if ultimo_precio else None,
+                'ultima_factura': ultima_factura,
+                'estado_stock': estado_stock,
+                'valor_inventario': round(float(ultimo_precio or 0) * stock, 2),
+            })
+
+        # Ordenar por estado (agotados primero para visibilidad)
+        orden = {'agotado': 0, 'stock_bajo': 1, 'disponible': 2}
+        resultado.sort(key=lambda x: (orden.get(x['estado_stock'], 3), x['medida']))
+
+        total_valor = sum(r['valor_inventario'] for r in resultado)
+        total_piezas = sum(r['stock_actual'] for r in resultado)
+
+        return Response({
+            'productos': resultado,
+            'totales': {
+                'total_productos': len(resultado),
+                'total_piezas': total_piezas,
+                'valor_inventario_total': round(total_valor, 2),
+                'agotados': sum(1 for r in resultado if r['estado_stock'] == 'agotado'),
+                'stock_bajo': sum(1 for r in resultado if r['estado_stock'] == 'stock_bajo'),
+            },
+        })
+
+    @action(detail=True, methods=['get'])
+    def kardex(self, request, pk=None):
+        """
+        GET /api/inventario/productos/{id}/kardex/
+        Movimientos cronológicos completos de un producto (entradas + salidas).
+        """
+        producto = self.get_object()
+        movimientos = []
+
+        for e in producto.entradas.select_related('proveedor').order_by('fecha_compra', 'created_at'):
+            movimientos.append({
+                'tipo': 'entrada',
+                'fecha': str(e.fecha_compra),
+                'cantidad': e.cantidad,
+                'precio_unitario': float(e.precio_compra),
+                'total': float(e.total_compra),
+                'referencia': e.numero_factura,
+                'proveedor': e.proveedor.nombre,
+                'estado': e.estado,
+                'notas': e.notas,
+            })
+
+        for s in producto.salidas.select_related('venta').order_by('fecha_venta', 'created_at'):
+            movimientos.append({
+                'tipo': 'salida',
+                'fecha': str(s.fecha_venta),
+                'cantidad': s.cantidad,
+                'precio_unitario': float(s.precio_venta),
+                'total': float(s.total_venta),
+                'referencia': s.venta.folio if s.venta else '',
+                'utilidad': float(s.utilidad),
+                'notas': '',
+            })
+
+        movimientos.sort(key=lambda m: m['fecha'])
+
+        # Calcular saldo acumulado
+        saldo = 0
+        for m in movimientos:
+            if m['tipo'] == 'entrada':
+                saldo += m['cantidad']
+            else:
+                saldo -= m['cantidad']
+            m['saldo'] = saldo
+
+        return Response({
+            'producto': {
+                'id': producto.id,
+                'codigo': producto.codigo,
+                'descripcion': str(producto),
+                'medida': producto.medida,
+                'stock_actual': producto.stock_actual,
+            },
+            'movimientos': movimientos,
+        })
+
+    @action(detail=False, methods=['get'])
+    def exportar_csv(self, request):
+        """
+        GET /api/inventario/productos/exportar_csv/
+        Exporta el inventario consolidado como CSV.
+        """
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="inventario.csv"'
+        response.write('\ufeff')  # BOM para Excel
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'Código', 'Medida', 'Marca', 'Modelo', 'IC/IV',
+            'Entradas', 'Salidas', 'Stock Actual', 'Stock Mín.',
+            'Precio Venta', 'Precio Compra', 'Valor Inventario',
+            'Última Factura', 'Estado',
+        ])
+
+        for p in self.get_queryset().filter(activo=True).order_by('medida', 'modelo'):
+            entradas = p.entradas.aggregate(t=Sum('cantidad'))['t'] or 0
+            salidas = p.salidas.aggregate(t=Sum('cantidad'))['t'] or 0
+            stock = entradas - salidas
+            ultimo_precio = (
+                p.entradas.order_by('-fecha_compra', '-created_at')
+                .values_list('precio_compra', flat=True).first()
+            )
+            ultima_factura = (
+                p.entradas.order_by('-fecha_compra', '-created_at')
+                .values_list('numero_factura', flat=True).first()
+            )
+            if stock <= 0:
+                estado = 'Agotado'
+            elif stock <= p.stock_minimo:
+                estado = 'Stock Bajo'
+            else:
+                estado = 'Disponible'
+
+            writer.writerow([
+                p.codigo, p.medida, p.marca.nombre, p.modelo,
+                f"{p.indice_carga}{p.indice_velocidad}",
+                entradas, salidas, stock, p.stock_minimo,
+                float(p.precio_venta),
+                float(ultimo_precio) if ultimo_precio else '',
+                round(float(ultimo_precio or 0) * stock, 2),
+                ultima_factura or '',
+                estado,
+            ])
+
+        return response
+
 
 class EntradaInventarioViewSet(viewsets.ModelViewSet):
-    queryset = EntradaInventario.objects.select_related('producto', 'proveedor', 'created_by').all()
+    queryset = EntradaInventario.objects.select_related('producto', 'producto__marca', 'proveedor', 'created_by').all()
     serializer_class = EntradaInventarioSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['proveedor', 'en_inventario', 'factura_consumida', 'fecha_compra']
-    search_fields = ['producto__codigo', 'numero_factura']
-    ordering_fields = ['fecha_compra']
-    
+    filterset_fields = ['proveedor', 'en_inventario', 'factura_consumida', 'estado']
+    search_fields = ['producto__codigo', 'numero_factura', 'producto__medida', 'producto__modelo']
+    ordering_fields = ['fecha_compra', 'created_at']
+    ordering = ['-fecha_compra', '-created_at']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        fecha_inicio = self.request.query_params.get('fecha_inicio')
+        fecha_fin = self.request.query_params.get('fecha_fin')
+        if fecha_inicio:
+            qs = qs.filter(fecha_compra__gte=fecha_inicio)
+        if fecha_fin:
+            qs = qs.filter(fecha_compra__lte=fecha_fin)
+        return qs
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
 
 class SalidaInventarioViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Las salidas se crean automáticamente desde el módulo de ventas
+    Las salidas se crean automáticamente desde el módulo de ventas.
+    Solo lectura — para historial y reportes.
     """
-    queryset = SalidaInventario.objects.select_related('producto', 'venta').all()
+    queryset = SalidaInventario.objects.select_related('producto', 'producto__marca', 'venta').all()
     serializer_class = SalidaInventarioSerializer
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['fecha_venta', 'producto']
-    ordering_fields = ['fecha_venta']
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['producto']
+    search_fields = ['producto__codigo', 'producto__medida', 'venta__folio']
+    ordering_fields = ['fecha_venta', 'created_at']
+    ordering = ['-fecha_venta', '-created_at']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        fecha_inicio = self.request.query_params.get('fecha_inicio')
+        fecha_fin = self.request.query_params.get('fecha_fin')
+        if fecha_inicio:
+            qs = qs.filter(fecha_venta__gte=fecha_inicio)
+        if fecha_fin:
+            qs = qs.filter(fecha_venta__lte=fecha_fin)
+        return qs

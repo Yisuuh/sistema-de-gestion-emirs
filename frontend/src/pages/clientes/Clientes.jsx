@@ -9,7 +9,7 @@ import {
   UserIcon,
 } from '@heroicons/react/24/outline';
 
-const API = 'http://localhost:8000/api/clientes';
+const API = '/api/clientes';
 const headers = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -201,19 +201,20 @@ export default function Clientes() {
 
   // ─── Render ─────────────────────────────────────────────────────────────
   return (
-    <div className="p-6">
+    <div className="p-3 sm:p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-start sm:items-center justify-between mb-4 sm:mb-6 gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Clientes</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Clientes</h1>
           <p className="text-sm text-gray-500 mt-1">{clientes.length} clientes registrados</p>
         </div>
         <button
           onClick={abrirModalNuevoCliente}
-          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 sm:px-4 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap text-sm sm:text-base"
         >
           <PlusIcon className="w-5 h-5" />
-          Nuevo Cliente
+          <span className="hidden xs:inline">Nuevo Cliente</span>
+          <span className="xs:hidden">Nuevo</span>
         </button>
       </div>
 
@@ -230,7 +231,7 @@ export default function Clientes() {
         </div>
       )}
 
-      <div className="flex gap-6">
+      <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
         {/* ── Lista de clientes ── */}
         <div className="flex-1 min-w-0">
           {/* Buscador */}
@@ -253,8 +254,8 @@ export default function Clientes() {
               <p>No se encontraron clientes</p>
             </div>
           ) : (
-            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+              <table className="w-full text-sm min-w-[500px]">
                 <thead className="bg-gray-50 text-gray-600 uppercase text-xs">
                   <tr>
                     <th className="text-left px-4 py-3">Nombre</th>
@@ -312,7 +313,7 @@ export default function Clientes() {
 
         {/* ── Panel de vehículos ── */}
         {clienteSeleccionado && (
-          <div className="w-80 shrink-0">
+          <div className="w-full lg:w-80 lg:shrink-0">
             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               {/* Encabezado panel */}
               <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-start justify-between">

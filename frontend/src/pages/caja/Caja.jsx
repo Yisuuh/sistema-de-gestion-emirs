@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CurrencyDollarIcon,
   ArrowUpIcon,
@@ -18,13 +18,13 @@ import {
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 
-const API_CAJA = 'http://localhost:8000/api/caja';
+const API_CAJA = '/api/caja';
 const tok = () => localStorage.getItem('token');
 const hdrs = () => ({ Authorization: `Bearer ${tok()}` });
 const jsonHdrs = () => ({ ...hdrs(), 'Content-Type': 'application/json' });
 const fmt = (n) => Number(n || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-// ─── Denominaciones MXN ───────────────────────────────────────────────────────
+// --- Denominaciones MXN -------------------------------------------------------
 const BILLETES = [1000, 500, 200, 100, 50, 20];
 const MONEDAS  = [20, 10, 5, 2, 1, 0.5];
 const DENOM_INITIAL = Object.fromEntries([...BILLETES, ...MONEDAS].map((d) => [d, '']));
@@ -36,7 +36,7 @@ function calcTotalArqueo(arqueo) {
   );
 }
 
-// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function Badge({ text, color = 'gray' }) {
   const map = {
     green: 'bg-green-100 text-green-800',
@@ -72,7 +72,7 @@ function StatCard({ icon: Icon, label, value, color = 'blue', sub }) {
   );
 }
 
-// â”€â”€â”€ Modal Apertura â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Modal Apertura ──────────────────────────────────────────────────────────
 function ModalApertura({ empleados, onGuardado, onClose }) {
   const [form, setForm] = useState({ empleado_apertura: '', monto_inicial: '', notas_apertura: '' });
   const [loading, setLoading] = useState(false);
@@ -90,7 +90,7 @@ function ModalApertura({ empleados, onGuardado, onClose }) {
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || JSON.stringify(data)); return; }
       onGuardado(data);
-    } catch { setErr('Error de conexión.'); }
+    } catch { setErr('Error de conexi�n.'); }
     finally { setLoading(false); }
   };
 
@@ -141,7 +141,7 @@ function ModalApertura({ empleados, onGuardado, onClose }) {
   );
 }
 
-// â”€â”€â”€ Modal Cierre â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Modal Cierre ────────────────────────────────────────────────────────────
 function ModalCierre({ caja, empleados, onGuardado, onClose }) {
   const [paso, setPaso] = useState(1); // 1=arqueo, 2=confirmar
   const [arqueo, setArqueo] = useState(DENOM_INITIAL);
@@ -171,7 +171,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || JSON.stringify(data)); return; }
       onGuardado(data);
-    } catch { setErr('Error de conexión.'); }
+    } catch { setErr('Error de conexi�n.'); }
     finally { setLoading(false); }
   };
 
@@ -185,7 +185,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             <div>
               <h2 className="text-lg font-bold text-gray-900">Cerrar Caja {caja.folio}</h2>
               <p className="text-xs text-gray-500">
-                {paso === 1 ? 'Paso 1 de 2 — Arqueo de efectivo' : 'Paso 2 de 2 — Confirmar cierre'}
+                {paso === 1 ? 'Paso 1 de 2 � Arqueo de efectivo' : 'Paso 2 de 2 � Confirmar cierre'}
               </p>
             </div>
           </div>
@@ -201,12 +201,12 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             <span className="font-semibold text-gray-800">{fmt(caja.saldo_esperado)}</span>
           </div>
           <div>
-            <span className="text-gray-500">Ventas del día:</span>{' '}
+            <span className="text-gray-500">Ventas del d�a:</span>{' '}
             <span className="font-semibold text-gray-800">{caja.num_ventas}</span>
           </div>
         </div>
 
-        {/* ─── Paso 1: Arqueo ─────────────────────────────────────────── */}
+        {/* --- Paso 1: Arqueo ------------------------------------------- */}
         {paso === 1 && (
           <div className="px-6 py-4 space-y-5">
             {/* Billetes */}
@@ -298,7 +298,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
           </div>
         )}
 
-        {/* ─── Paso 2: Confirmar cierre ────────────────────────────────── */}
+        {/* --- Paso 2: Confirmar cierre ---------------------------------- */}
         {paso === 2 && (
           <form onSubmit={submit} className="px-6 py-4 space-y-4">
             <div className="rounded-lg border overflow-hidden text-sm">
@@ -345,7 +345,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             <div className="flex gap-3">
               <button type="button" onClick={() => setPaso(1)}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
-                ← Regresar
+                ? Regresar
               </button>
               <button type="submit" disabled={loading}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2">
@@ -360,7 +360,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
   );
 }
 
-// â”€â”€â”€ Modal Movimiento â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Modal Movimiento ────────────────────────────────────────────────────────
 function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
   const [form, setForm] = useState({ caja: cajaId, tipo: 'ingreso', concepto: '', descripcion: '', monto: '', empleado: '', categoria: '' });
   const [loading, setLoading] = useState(false);
@@ -378,7 +378,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || JSON.stringify(data)); return; }
       onGuardado(data);
-    } catch { setErr('Error de conexión.'); }
+    } catch { setErr('Error de conexi�n.'); }
     finally { setLoading(false); }
   };
 
@@ -398,7 +398,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
                 className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${form.tipo === t
                   ? t === 'ingreso' ? 'bg-green-600 text-white border-green-600' : 'bg-red-600 text-white border-red-600'
                   : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
-                {t === 'ingreso' ? '↑ Ingreso' : '↓ Egreso'}
+                {t === 'ingreso' ? '? Ingreso' : '? Egreso'}
               </button>
             ))}
           </div>
@@ -424,7 +424,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Categoría (opcional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Categor�a (opcional)</label>
             <input type="text" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}
               placeholder="Operativo, Servicios, etc."
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
@@ -442,7 +442,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
   );
 }
 
-// â”€â”€â”€ Panel Caja Activa â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Panel Caja Activa ────────────────────────────────────────────────────────
 function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal }) {
   const metodoPagoColor = { efectivo: 'green', tarjeta: 'blue', transferencia: 'purple', mixto: 'orange' };
   const metodoPagoLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', mixto: 'Mixto' };
@@ -460,8 +460,8 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
             <h2 className="text-xl font-bold text-gray-900">{caja.folio}</h2>
             <p className="text-sm text-gray-500">
               Apertura: <span className="font-medium">{caja.fecha_apertura_formateada}</span>
-              {' · '}{caja.empleado_apertura_nombre}
-              {' · '}Inicial: <span className="font-medium">{fmt(caja.monto_inicial)}</span>
+              {' � '}{caja.empleado_apertura_nombre}
+              {' � '}Inicial: <span className="font-medium">{fmt(caja.monto_inicial)}</span>
             </p>
           </div>
         </div>
@@ -486,12 +486,12 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
         <StatCard icon={ShoppingCartIcon} label="Ventas registradas" value={caja.num_ventas ?? 0} color="blue" />
         <StatCard icon={CurrencyDollarIcon} label="Total ventas" value={fmt(caja.total_ventas)} color="green" />
         <StatCard icon={BanknotesIcon} label="Efectivo" value={fmt(caja.total_ventas_efectivo)} color="orange"
-          sub={`Electrónico: ${fmt(caja.total_ventas_electronico)}`} />
+          sub={`Electr�nico: ${fmt(caja.total_ventas_electronico)}`} />
         <StatCard icon={CalculatorIcon} label="Saldo esperado" value={fmt(caja.saldo_esperado)} color="purple"
           sub={`Egresos: ${fmt(caja.total_egresos)}`} />
       </div>
 
-      {/* Ventas del día */}
+      {/* Ventas del d�a */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
           <ShoppingCartIcon className="h-5 w-5 text-gray-400" />
@@ -500,7 +500,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
         </div>
         {ventas.length === 0 ? (
           <div className="text-center py-10 text-gray-400 text-sm">
-            Sin ventas registradas en esta caja aún.
+            Sin ventas registradas en esta caja a�n.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -510,10 +510,10 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Folio</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hora</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleado</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">M�todo</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Art.</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Efectivo</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Electrónico</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Electr�nico</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
                 </tr>
               </thead>
@@ -568,7 +568,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hora</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Concepto</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Categor�a</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
                 </tr>
               </thead>
@@ -577,11 +577,11 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <tr key={m.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{m.fecha_formateada}</td>
                     <td className="px-4 py-2">
-                      <Badge text={m.tipo === 'ingreso' ? '↑ Ingreso' : '↓ Egreso'}
+                      <Badge text={m.tipo === 'ingreso' ? '? Ingreso' : '? Egreso'}
                         color={m.tipo === 'ingreso' ? 'green' : 'red'} />
                     </td>
                     <td className="px-4 py-2 text-gray-700">{m.concepto}</td>
-                    <td className="px-4 py-2 text-gray-500 text-xs">{m.categoria || '—'}</td>
+                    <td className="px-4 py-2 text-gray-500 text-xs">{m.categoria || '�'}</td>
                     <td className={`px-4 py-2 text-right font-semibold font-mono ${m.tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'}`}>
                       {m.tipo === 'ingreso' ? '+' : '-'}{fmt(m.monto)}
                     </td>
@@ -596,7 +596,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
   );
 }
 
-// â”€â”€â”€ Panel Historial â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Panel Historial ──────────────────────────────────────────────────────────
 function Historial() {
   const [periodo, setPeriodo] = useState('hoy');
   const [fechaInicio, setFechaInicio] = useState('');
@@ -658,7 +658,7 @@ function Historial() {
           <div className="flex gap-2 items-center ml-2">
             <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
-            <span className="text-gray-400">–</span>
+            <span className="text-gray-400">�</span>
             <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
           </div>
@@ -676,13 +676,13 @@ function Historial() {
 
       {data && (
         <>
-          {/* Totales período */}
+          {/* Totales per�odo */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard icon={DocumentTextIcon} label="Cajas" value={data.totales.cajas} color="blue" />
             <StatCard icon={ShoppingCartIcon} label="Ventas totales" value={fmt(data.totales.monto_ventas)} color="green"
               sub={`${data.totales.ventas} venta(s)`} />
             <StatCard icon={BanknotesIcon} label="Efectivo" value={fmt(data.totales.efectivo)} color="orange"
-              sub={`Electrónico: ${fmt(data.totales.electronico)}`} />
+              sub={`Electr�nico: ${fmt(data.totales.electronico)}`} />
             <StatCard icon={ArrowDownIcon} label="Egresos" value={fmt(data.totales.egresos)} color="red" />
           </div>
 
@@ -690,7 +690,7 @@ function Historial() {
           {data.cajas.length === 0 ? (
             <div className="text-center py-16 text-gray-400">
               <DocumentTextIcon className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p>No hay cajas en este período.</p>
+              <p>No hay cajas en este per�odo.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -749,9 +749,9 @@ function Historial() {
                                 <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Folio</th>
                                 <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Hora</th>
                                 <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Empleado</th>
-                                <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Método</th>
+                                <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">M�todo</th>
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Efectivo</th>
-                                <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Electrónico</th>
+                                <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Electr�nico</th>
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Total</th>
                               </tr>
                             </thead>
@@ -786,7 +786,7 @@ function Historial() {
   );
 }
 
-// â”€â”€â”€ PÃ¡gina principal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Página principal ─────────────────────────────────────────────────────────
 export default function Caja() {
   const [tab, setTab] = useState('activa');
   const [cajaActual, setCajaActual] = useState(null);
@@ -819,7 +819,7 @@ export default function Caja() {
 
   const cargarEmpleados = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/nomina/empleados/?activos=true', { headers: hdrs() });
+      const res = await fetch('/api/nomina/empleados/?activos=true', { headers: hdrs() });
       if (res.ok) { const d = await res.json(); setEmpleados(Array.isArray(d) ? d : d.results ?? []); }
     } catch (e) { console.error(e); }
   }, []);
@@ -834,16 +834,16 @@ export default function Caja() {
   const ok = (msg) => { setExito(msg); setTimeout(() => setExito(null), 5000); };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto">
+      <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Caja</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
           <p className="text-sm text-gray-500 mt-0.5">Control de apertura, ventas, movimientos y cierre diario</p>
         </div>
         <div className="flex items-center gap-3">
           {cajaActual?.estado === 'abierta'
-            ? <Badge text="🟢 Caja abierta" color="green" />
-            : <Badge text="⚫ Sin caja activa" color="gray" />}
+            ? <Badge text="✅ Caja abierta" color="green" />
+            : <Badge text="⛔ Sin caja activa" color="gray" />}
         </div>
       </div>
 
@@ -855,7 +855,7 @@ export default function Caja() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-4 sm:mb-6">
         {[
           { key: 'activa', label: 'Caja Activa', icon: LockOpenIcon },
           { key: 'historial', label: 'Historial', icon: CalendarDaysIcon },

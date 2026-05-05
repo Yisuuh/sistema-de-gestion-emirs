@@ -36,6 +36,10 @@ class Venta(models.Model):
     descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=10, decimal_places=2)
     notas = models.TextField(blank=True)
+    # Facturación
+    facturada = models.BooleanField(default=False)
+    cfdi_uuid = models.CharField(max_length=100, blank=True, help_text='UUID del CFDI emitido')
+    factura_pendiente = models.BooleanField(default=False, help_text='Cliente solicitó factura')
     
     class Meta:
         verbose_name = 'Venta'

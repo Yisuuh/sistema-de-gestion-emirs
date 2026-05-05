@@ -13,6 +13,11 @@ import Adeudos from './pages/inventario/Adeudos'
 import Ventas from './pages/ventas/Ventas'
 import Caja from './pages/caja/Caja'
 import Clientes from './pages/clientes/Clientes'
+import Notificaciones from './pages/notificaciones/Notificaciones'
+import Nomina from './pages/nomina/Nomina'
+import Gastos from './pages/gastos/Gastos'
+import Facturacion from './pages/facturacion/Facturacion'
+import Reportes from './pages/reportes/Reportes'
 
 const queryClient = new QueryClient()
 
@@ -50,6 +55,11 @@ function App() {
             <Route path="ventas" element={<Ventas />} />
             <Route path="caja" element={<Caja />} />
             <Route path="clientes" element={<Clientes />} />
+            <Route path="nomina" element={<Nomina />} />
+            <Route path="gastos" element={<Gastos />} />
+            <Route path="facturacion" element={<Facturacion />} />
+            <Route path="reportes" element={<Reportes />} />
+            <Route path="notificaciones" element={<Notificaciones />} />
           </Route>
 
           {/* Redirección por defecto */}

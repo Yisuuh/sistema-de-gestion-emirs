@@ -1,2 +1,2 @@
 from django.db import models
-# Vistas para reportes y dashboard
+# Este módulo usa vistas agregadas de otros módulos, no necesita modelos propios.

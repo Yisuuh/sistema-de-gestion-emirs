@@ -14,7 +14,7 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/auth/login/', {
+      const response = await fetch('/api/auth/login/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -44,7 +44,7 @@ export default function Login() {
   };
 
   return (
-    <div className="bg-white shadow-md rounded px-8 pt-6 pb-8">
+    <div className="bg-white shadow-md rounded px-5 sm:px-8 pt-6 pb-8">
       <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Iniciar Sesión</h2>
       
       {error && (

@@ -20,7 +20,7 @@ class Marca(models.Model):
         ordering = ['nombre']
     
     def __str__(self):
-        return self.nombre
+        return self.nombre 
 
 
 class Proveedor(models.Model):
@@ -105,12 +105,24 @@ class EntradaInventario(models.Model):
     """
     Registro de entradas de inventario (compras a proveedores)
     """
+    ESTADO_CHOICES = [
+        ('disponible', 'Disponible'),
+        ('en_lista', 'En lista'),
+        ('sin_existencia', 'Sin existencia'),
+        ('consumido', 'Consumido/Vendido'),
+    ]
+
     producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='entradas')
     proveedor = models.ForeignKey(Proveedor, on_delete=models.PROTECT, related_name='entradas')
     cantidad = models.IntegerField()
     precio_compra = models.DecimalField(max_digits=10, decimal_places=2, help_text='Precio unitario de compra')
     fecha_compra = models.DateField()
     numero_factura = models.CharField(max_length=50)
+    estado = models.CharField(
+        max_length=20, choices=ESTADO_CHOICES, default='disponible',
+        help_text='Estado del lote en inventario'
+    )
+    # Campos legacy mantenidos para compatibilidad
     en_inventario = models.BooleanField(default=True, help_text='Si las llantas están en inventario')
     factura_consumida = models.BooleanField(default=False, help_text='Si la factura fue completamente vendida')
     notas = models.TextField(blank=True)

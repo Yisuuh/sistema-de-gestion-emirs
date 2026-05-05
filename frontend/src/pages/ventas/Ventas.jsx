@@ -49,7 +49,7 @@ export default function Ventas() {
 
   const cargarProductos = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/inventario/productos/?activos=true', {
+      const response = await fetch('/api/inventario/productos/?activos=true', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -71,7 +71,7 @@ export default function Ventas() {
 
   const cargarServicios = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/ventas/servicios/?activos=true', {
+      const response = await fetch('/api/ventas/servicios/?activos=true', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -93,7 +93,7 @@ export default function Ventas() {
 
   const cargarClientes = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/clientes/clientes/', {
+      const response = await fetch('/api/clientes/clientes/', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -115,7 +115,7 @@ export default function Ventas() {
 
   const cargarEmpleados = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/nomina/empleados/?activos=true', {
+      const response = await fetch('/api/nomina/empleados/?activos=true', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -276,7 +276,7 @@ export default function Ventas() {
         }))
       };
 
-      const response = await fetch('http://localhost:8000/api/ventas/ventas/', {
+      const response = await fetch('/api/ventas/ventas/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -341,10 +341,10 @@ export default function Ventas() {
   };
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Punto de Venta (POS)</h1>
-        <p className="text-gray-600">Sistema de ventas rápido</p>
+    <div className="p-3 sm:p-6">
+      <div className="mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Punto de Venta (POS)</h1>
+        <p className="text-gray-600 text-sm sm:text-base">Sistema de ventas rápido</p>
       </div>
 
       {/* Mostrar error si existe */}
@@ -370,7 +370,7 @@ export default function Ventas() {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Panel izquierdo - Búsqueda y productos */}
         <div className="lg:col-span-2 space-y-4">
           {/* Búsqueda */}
