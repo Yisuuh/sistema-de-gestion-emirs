@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useMemo, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   DocumentCheckIcon, ClockIcon, MagnifyingGlassIcon, XMarkIcon,
   CheckCircleIcon,
@@ -21,63 +22,61 @@ const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { style: 'currency', c
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
 export default function Facturacion() {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState('pendientes'); // pendientes | todas
-  const [ventas, setVentas] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [busq, setBusq] = useState('');
   const [error, setError] = useState(null);
   const [exito, setExito] = useState(null);
   const [modalFacturar, setModalFacturar] = useState(null); // venta seleccionada
   const [cfdiInput, setCfdiInput] = useState('');
-  const [saving, setSaving] = useState(false);
 
   const showExito = (msg) => { setExito(msg); setTimeout(() => setExito(null), 3000); };
 
-  useEffect(() => { cargar(); }, [tab]);
-
-  const cargar = async () => {
-    setLoading(true);
-    try {
-      let url;
-      if (tab === 'pendientes') {
-        url = `${API}/pendientes_facturar/`;
-      } else {
-        url = `${API}/?search=${busq}`;
-      }
+  const { data: ventas = [], isLoading: loading, error: queryError } = useQuery({
+    queryKey: ['facturacion-ventas', tab, tab === 'todas' ? busq : ''],
+    queryFn: async () => {
+      const url = tab === 'pendientes'
+        ? `${API}/pendientes_facturar/`
+        : `${API}/?search=${encodeURIComponent(busq)}`;
       const data = await $fetch(url);
-      setVentas(data.results ?? data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data.results ?? data;
+    },
+  });
 
-  const marcarFacturada = async () => {
-    if (!modalFacturar) return;
-    setSaving(true);
-    try {
-      await $fetch(`${API}/${modalFacturar.id}/marcar_facturada/`, {
+  const marcarFacturadaMut = useMutation({
+    mutationFn: async ({ venta, cfdi }) => {
+      await $fetch(`${API}/${venta.id}/marcar_facturada/`, {
         method: 'PATCH',
-        body: JSON.stringify({ cfdi_uuid: cfdiInput }),
+        body: JSON.stringify({ cfdi_uuid: cfdi }),
       });
-      showExito(`Venta ${modalFacturar.folio} marcada como facturada`);
+      return venta;
+    },
+    onSuccess: (venta) => {
+      showExito(`Venta ${venta.folio} marcada como facturada`);
       setModalFacturar(null);
       setCfdiInput('');
-      cargar();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+      queryClient.invalidateQueries({ queryKey: ['facturacion-ventas'] });
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const marcarFacturada = () => {
+    if (!modalFacturar) return;
+    marcarFacturadaMut.mutate({ venta: modalFacturar, cfdi: cfdiInput });
   };
 
-  const ventasFiltradas = ventas.filter((v) =>
-    !busq || v.folio?.toLowerCase().includes(busq.toLowerCase()) ||
-    v.cliente_nombre?.toLowerCase().includes(busq.toLowerCase())
+  const ventasFiltradas = useMemo(
+    () => ventas.filter((v) =>
+      !busq || v.folio?.toLowerCase().includes(busq.toLowerCase()) ||
+      v.cliente_nombre?.toLowerCase().includes(busq.toLowerCase())
+    ),
+    [ventas, busq]
   );
 
-  const totalPendientes = ventasFiltradas.reduce((s, v) => s + parseFloat(v.total || 0), 0);
+  const totalPendientes = useMemo(
+    () => ventasFiltradas.reduce((s, v) => s + parseFloat(v.total || 0), 0),
+    [ventasFiltradas]
+  );
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto">
@@ -87,9 +86,9 @@ export default function Facturacion() {
         <p className="text-sm text-gray-500 mt-0.5">Control de ventas facturadas y pendientes de CFDI</p>
       </div>
 
-      {error && (
+      {(error || queryError) && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex justify-between">
-          {error}
+          {error || 'Error al cargar ventas'}
           <button onClick={() => setError(null)}><XMarkIcon className="w-4 h-4" /></button>
         </div>
       )}
@@ -219,9 +218,9 @@ export default function Facturacion() {
                   className="flex-1 py-2.5 border border-gray-300 rounded-xl text-sm hover:bg-gray-50">
                   Cancelar
                 </button>
-                <button onClick={marcarFacturada} disabled={saving}
+                <button onClick={marcarFacturada} disabled={marcarFacturadaMut.isPending}
                   className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-50">
-                  {saving ? 'Guardando…' : 'Confirmar'}
+                  {marcarFacturadaMut.isPending ? 'Guardando…' : 'Confirmar'}
                 </button>
               </div>
             </div>

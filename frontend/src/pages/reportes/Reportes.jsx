@@ -1,6 +1,9 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+﻿import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { FileText, TrendingUp, Users, TrendingDown, Download } from 'lucide-react'
+import { apiClient } from '../../lib/apiClient'
 
+// tok() kept only for PDF download (blob response, not JSON)
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` })
 const fmt = (n, d = 2) =>
   Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: d, maximumFractionDigits: d })
@@ -83,20 +86,12 @@ function PeriodoSelector({ inicio, fin, onInicio, onFin }) {
 
 // ─── Tab Ventas ─────────────────────────────────────────────────────────────
 function TabVentas({ inicio, fin }) {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const { data, isPending } = useQuery({
+    queryKey: ['reporte-ventas', inicio, fin],
+    queryFn: () => apiClient.get(`/api/reportes/ventas/?fecha_inicio=${inicio}&fecha_fin=${fin}`),
+  })
 
-  const cargar = useCallback(async () => {
-    setLoading(true)
-    try {
-      const r = await fetch(`/api/reportes/ventas/?fecha_inicio=${inicio}&fecha_fin=${fin}`, { headers: tok() })
-      if (r.ok) setData(await r.json())
-    } finally { setLoading(false) }
-  }, [inicio, fin])
-
-  useEffect(() => { cargar() }, [cargar])
-
-  if (loading) return <Spinner />
+  if (isPending) return <Spinner />
   if (!data) return null
 
   const t = data.totales
@@ -128,7 +123,7 @@ function TabVentas({ inicio, fin }) {
             </thead>
             <tbody>
               {data.por_empleado.map((v, i) => (
-                <tr key={i} className="border-t border-gray-50 hover:bg-gray-50">
+                <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2">{v.nombre || '—'}</td>
                   <td className="px-4 py-2">{v.cantidad}</td>
                   <td className="px-4 py-2 font-medium">${fmt(v.total)}</td>
@@ -158,7 +153,7 @@ function TabVentas({ inicio, fin }) {
             </thead>
             <tbody>
               {data.por_dia.map((d, i) => (
-                <tr key={i} className="border-t border-gray-50 hover:bg-gray-50">
+                <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2">{d.dia}</td>
                   <td className="px-4 py-2">{d.cantidad}</td>
                   <td className="px-4 py-2 font-medium">${fmt(d.total)}</td>
@@ -177,20 +172,12 @@ function TabVentas({ inicio, fin }) {
 
 // ─── Tab Comisiones ──────────────────────────────────────────────────────────
 function TabComisiones({ inicio, fin }) {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const { data, isPending } = useQuery({
+    queryKey: ['reporte-comisiones', inicio, fin],
+    queryFn: () => apiClient.get(`/api/reportes/comisiones/?fecha_inicio=${inicio}&fecha_fin=${fin}`),
+  })
 
-  const cargar = useCallback(async () => {
-    setLoading(true)
-    try {
-      const r = await fetch(`/api/reportes/comisiones/?fecha_inicio=${inicio}&fecha_fin=${fin}`, { headers: tok() })
-      if (r.ok) setData(await r.json())
-    } finally { setLoading(false) }
-  }, [inicio, fin])
-
-  useEffect(() => { cargar() }, [cargar])
-
-  if (loading) return <Spinner />
+  if (isPending) return <Spinner />
   if (!data) return null
 
   const totalComisiones = data.vendedores.reduce((s, v) => s + v.comision_calculada, 0)
@@ -218,7 +205,7 @@ function TabComisiones({ inicio, fin }) {
             </thead>
             <tbody>
               {data.vendedores.map((v, i) => (
-                <tr key={i} className="border-t border-gray-50 hover:bg-gray-50">
+                <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium">{v.nombre}</td>
                   <td className="px-4 py-2">{v.num_ventas}</td>
                   <td className="px-4 py-2">${fmt(v.total_ventas)}</td>
@@ -239,20 +226,12 @@ function TabComisiones({ inicio, fin }) {
 
 // ─── Tab Gastos ──────────────────────────────────────────────────────────────
 function TabGastos({ inicio, fin }) {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const { data, isPending } = useQuery({
+    queryKey: ['reporte-gastos', inicio, fin],
+    queryFn: () => apiClient.get(`/api/reportes/gastos/?fecha_inicio=${inicio}&fecha_fin=${fin}`),
+  })
 
-  const cargar = useCallback(async () => {
-    setLoading(true)
-    try {
-      const r = await fetch(`/api/reportes/gastos/?fecha_inicio=${inicio}&fecha_fin=${fin}`, { headers: tok() })
-      if (r.ok) setData(await r.json())
-    } finally { setLoading(false) }
-  }, [inicio, fin])
-
-  useEffect(() => { cargar() }, [cargar])
-
-  if (loading) return <Spinner />
+  if (isPending) return <Spinner />
   if (!data) return null
 
   const t = data.totales
@@ -283,7 +262,7 @@ function TabGastos({ inicio, fin }) {
             </thead>
             <tbody>
               {data.por_categoria.map((c, i) => (
-                <tr key={i} className="border-t border-gray-50 hover:bg-gray-50">
+                <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium">{c.categoria}</td>
                   <td className="px-4 py-2">{c.cantidad}</td>
                   <td className="px-4 py-2 font-semibold text-red-600">${fmt(c.total)}</td>
@@ -313,7 +292,7 @@ function TabGastos({ inicio, fin }) {
             </thead>
             <tbody>
               {data.detalle.map((g, i) => (
-                <tr key={i} className="border-t border-gray-50 hover:bg-gray-50">
+                <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-3 py-2 whitespace-nowrap">{g.fecha}</td>
                   <td className="px-3 py-2">{g.concepto}</td>
                   <td className="px-3 py-2">{g.categoria}</td>

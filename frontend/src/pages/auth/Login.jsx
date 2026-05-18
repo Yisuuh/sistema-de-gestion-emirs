@@ -42,8 +42,8 @@ export default function Login() {
     <div>
       {/* Encabezado del formulario */}
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-white">Bienvenido</h2>
-        <p className="text-gray-500 text-sm mt-1">Ingresa tus credenciales para continuar</p>
+        <h2 className="font-display font-bold text-white" style={{ fontSize: '28px', letterSpacing: '0.01em', lineHeight: 1 }}>Bienvenido</h2>
+        <p className="text-gray-500 mt-1" style={{ fontSize: '13px' }}>Ingresa tus credenciales para continuar</p>
       </div>
 
       {/* Error */}
@@ -57,7 +57,7 @@ export default function Login() {
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Usuario */}
         <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2" htmlFor="username">
+          <label className="block font-display font-semibold text-gray-400 uppercase mb-2" style={{ fontSize: '10px', letterSpacing: '0.13em' }} htmlFor="username">
             Usuario
           </label>
           <input
@@ -77,7 +77,7 @@ export default function Login() {
 
         {/* Contraseña */}
         <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2" htmlFor="password">
+          <label className="block font-display font-semibold text-gray-400 uppercase mb-2" style={{ fontSize: '10px', letterSpacing: '0.13em' }} htmlFor="password">
             Contraseña
           </label>
           <div className="relative">

@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MagnifyingGlassIcon,
   ExclamationTriangleIcon,
@@ -41,24 +42,17 @@ function Spinner() {
 
 // ─── Vista Consolidado ────────────────────────────────────────────────────────
 function TabConsolidado({ onVerKardex }) {
-  const [data, setData]         = useState(null);
-  const [loading, setLoading]   = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('todos');
   const [filtroMarca, setFiltroMarca]   = useState('');
 
-  const cargar = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, isLoading: loading, refetch } = useQuery({
+    queryKey: ['inventario-consolidado'],
+    queryFn: async () => {
       const r = await fetch('/api/inventario/productos/consolidado/', { headers: tok() });
-      const d = await r.json();
-      setData(d);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { cargar(); }, [cargar]);
+      return r.json();
+    },
+  });
 
   const exportarCSV = async () => {
     try {
@@ -76,16 +70,22 @@ function TabConsolidado({ onVerKardex }) {
     }
   };
 
-  const marcas = data ? [...new Set(data.productos.map(p => p.marca))] : [];
+  const marcas = useMemo(
+    () => data ? [...new Set(data.productos.map(p => p.marca))] : [],
+    [data]
+  );
 
-  const filas = (data?.productos ?? []).filter(p => {
-    const q = busqueda.toLowerCase();
-    const matchQ = !q || p.codigo.toLowerCase().includes(q) || p.medida.toLowerCase().includes(q)
-      || p.marca.toLowerCase().includes(q) || p.modelo.toLowerCase().includes(q);
-    const matchE = filtroEstado === 'todos' || p.estado_stock === filtroEstado;
-    const matchM = !filtroMarca || p.marca === filtroMarca;
-    return matchQ && matchE && matchM;
-  });
+  const filas = useMemo(
+    () => (data?.productos ?? []).filter(p => {
+      const q = busqueda.toLowerCase();
+      const matchQ = !q || p.codigo.toLowerCase().includes(q) || p.medida.toLowerCase().includes(q)
+        || p.marca.toLowerCase().includes(q) || p.modelo.toLowerCase().includes(q);
+      const matchE = filtroEstado === 'todos' || p.estado_stock === filtroEstado;
+      const matchM = !filtroMarca || p.marca === filtroMarca;
+      return matchQ && matchE && matchM;
+    }),
+    [data, busqueda, filtroEstado, filtroMarca]
+  );
 
   const totales = data?.totales;
 
@@ -131,7 +131,7 @@ function TabConsolidado({ onVerKardex }) {
           <option value="">Todas las marcas</option>
           {marcas.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
-        <button onClick={cargar} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50" title="Recargar">
+        <button onClick={refetch} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50" title="Recargar">
           <ArrowPathIcon className="h-5 w-5 text-gray-500" />
         </button>
         <button onClick={exportarCSV}
@@ -195,8 +195,7 @@ function TabConsolidado({ onVerKardex }) {
 
 // ─── Vista Entradas ───────────────────────────────────────────────────────────
 function TabEntradas({ proveedores, productos }) {
-  const [entradas, setEntradas] = useState([]);
-  const [loading, setLoading]   = useState(true);
+  const queryClient = useQueryClient();
   const [modal, setModal]       = useState(false);
   const [msg, setMsg]           = useState(null);
   const [filtros, setFiltros]   = useState({ fecha_inicio: '', fecha_fin: '', proveedor: '', estado: '' });
@@ -206,54 +205,65 @@ function TabEntradas({ proveedores, productos }) {
     numero_factura: '', estado: 'disponible', notas: '',
   });
 
-  const cargar = useCallback(async () => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (filtros.fecha_inicio) params.set('fecha_inicio', filtros.fecha_inicio);
-    if (filtros.fecha_fin)    params.set('fecha_fin',    filtros.fecha_fin);
-    if (filtros.proveedor)    params.set('proveedor',    filtros.proveedor);
-    if (filtros.estado)       params.set('estado',       filtros.estado);
-    try {
+  const { data: entradas = [], isLoading: loading } = useQuery({
+    queryKey: ['inventario-entradas', filtros],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filtros.fecha_inicio) params.set('fecha_inicio', filtros.fecha_inicio);
+      if (filtros.fecha_fin)    params.set('fecha_fin',    filtros.fecha_fin);
+      if (filtros.proveedor)    params.set('proveedor',    filtros.proveedor);
+      if (filtros.estado)       params.set('estado',       filtros.estado);
       const r = await fetch(`/api/inventario/entradas/?${params}`, { headers: tok() });
       const d = await r.json();
-      setEntradas(Array.isArray(d) ? d : (d.results ?? []));
-    } finally { setLoading(false); }
-  }, [filtros]);
+      return Array.isArray(d) ? d : (d.results ?? []);
+    },
+  });
 
-  useEffect(() => { cargar(); }, [cargar]);
-
-  const guardar = async (e) => {
-    e.preventDefault();
-    const r = await fetch('/api/inventario/entradas/', {
-      method: 'POST',
-      headers: { ...tok(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    if (r.ok) {
+  const guardarMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch('/api/inventario/entradas/', {
+        method: 'POST',
+        headers: { ...tok(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail ?? JSON.stringify(d)); }
+      return r.json();
+    },
+    onSuccess: () => {
       setMsg({ tipo: 'ok', txt: 'Entrada registrada correctamente.' });
       setModal(false);
       setForm({ producto: '', proveedor: '', cantidad: 1, precio_compra: '',
         fecha_compra: new Date().toISOString().split('T')[0],
         numero_factura: '', estado: 'disponible', notas: '' });
-      cargar();
-    } else {
-      const d = await r.json();
-      setMsg({ tipo: 'err', txt: d.detail ?? JSON.stringify(d) });
-    }
-    setTimeout(() => setMsg(null), 4000);
-  };
+      queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] });
+      setTimeout(() => setMsg(null), 4000);
+    },
+    onError: (e) => { setMsg({ tipo: 'err', txt: e.message }); setTimeout(() => setMsg(null), 4000); },
+  });
 
-  const cambiarEstado = async (id, estado) => {
-    await fetch(`/api/inventario/entradas/${id}/`, {
-      method: 'PATCH',
-      headers: { ...tok(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ estado }),
-    });
-    cargar();
-  };
+  const guardar = (e) => { e.preventDefault(); guardarMut.mutate(); };
 
-  const totalPiezas = entradas.reduce((s, e) => s + (e.cantidad ?? 0), 0);
-  const totalCosto  = entradas.reduce((s, e) => s + (e.cantidad ?? 0) * parseFloat(e.precio_compra ?? 0), 0);
+  const cambiarEstadoMut = useMutation({
+    mutationFn: async ({ id, estado }) => {
+      await fetch(`/api/inventario/entradas/${id}/`, {
+        method: 'PATCH',
+        headers: { ...tok(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado }),
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] }),
+  });
+
+  const cambiarEstado = (id, estado) => cambiarEstadoMut.mutate({ id, estado });
+
+  const totalPiezas = useMemo(
+    () => entradas.reduce((s, e) => s + (e.cantidad ?? 0), 0),
+    [entradas]
+  );
+  const totalCosto = useMemo(
+    () => entradas.reduce((s, e) => s + (e.cantidad ?? 0) * parseFloat(e.precio_compra ?? 0), 0),
+    [entradas]
+  );
 
   const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]';
 
@@ -283,7 +293,7 @@ function TabEntradas({ proveedores, productos }) {
           {Object.entries(ESTADO_LABELS).map(([v, l]) => <option key={v} value={v}>{l.label}</option>)}
         </select>
         <button onClick={() => setModal(true)}
-          className="ml-auto flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+          className="w-full sm:w-auto ml-auto flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
           + Nueva entrada
         </button>
       </div>
@@ -340,8 +350,8 @@ function TabEntradas({ proveedores, productos }) {
 
       {/* Modal nueva entrada */}
       {modal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-lg mx-4 shadow-xl">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg my-4 shadow-xl">
             <h2 className="text-lg font-bold text-gray-900 mb-4">Registrar entrada de inventario</h2>
             <form onSubmit={guardar} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
@@ -400,37 +410,45 @@ function TabEntradas({ proveedores, productos }) {
 
 // ─── Vista Salidas ────────────────────────────────────────────────────────────
 function TabSalidas() {
-  const [salidas, setSalidas] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [filtros, setFiltros] = useState({ fecha_inicio: '', fecha_fin: '', busqueda: '' });
 
-  const cargar = useCallback(async () => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (filtros.fecha_inicio) params.set('fecha_inicio', filtros.fecha_inicio);
-    if (filtros.fecha_fin)    params.set('fecha_fin',    filtros.fecha_fin);
-    try {
+  const { data: salidas = [], isLoading: loading, refetch } = useQuery({
+    queryKey: ['inventario-salidas', filtros.fecha_inicio, filtros.fecha_fin],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filtros.fecha_inicio) params.set('fecha_inicio', filtros.fecha_inicio);
+      if (filtros.fecha_fin)    params.set('fecha_fin',    filtros.fecha_fin);
       const r = await fetch(`/api/inventario/salidas/?${params}`, { headers: tok() });
       const d = await r.json();
-      setSalidas(Array.isArray(d) ? d : (d.results ?? []));
-    } finally { setLoading(false); }
-  }, [filtros]);
+      return Array.isArray(d) ? d : (d.results ?? []);
+    },
+  });
 
-  useEffect(() => { cargar(); }, [cargar]);
+  const filtered = useMemo(
+    () => filtros.busqueda
+      ? salidas.filter(s => {
+          const q = filtros.busqueda.toLowerCase();
+          return s.producto_codigo?.toLowerCase().includes(q) ||
+                 s.producto_medida?.toLowerCase().includes(q) ||
+                 s.marca_nombre?.toLowerCase().includes(q) ||
+                 s.venta_folio?.toLowerCase().includes(q);
+        })
+      : salidas,
+    [salidas, filtros.busqueda]
+  );
 
-  const filtered = filtros.busqueda
-    ? salidas.filter(s => {
-        const q = filtros.busqueda.toLowerCase();
-        return s.producto_codigo?.toLowerCase().includes(q) ||
-               s.producto_medida?.toLowerCase().includes(q) ||
-               s.marca_nombre?.toLowerCase().includes(q) ||
-               s.venta_folio?.toLowerCase().includes(q);
-      })
-    : salidas;
-
-  const totalPiezas   = filtered.reduce((s, x) => s + (x.cantidad ?? 0), 0);
-  const totalVentas   = filtered.reduce((s, x) => s + parseFloat(x.total_venta ?? 0), 0);
-  const totalUtilidad = filtered.reduce((s, x) => s + parseFloat(x.utilidad ?? 0), 0);
+  const totalPiezas = useMemo(
+    () => filtered.reduce((s, x) => s + (x.cantidad ?? 0), 0),
+    [filtered]
+  );
+  const totalVentas = useMemo(
+    () => filtered.reduce((s, x) => s + parseFloat(x.total_venta ?? 0), 0),
+    [filtered]
+  );
+  const totalUtilidad = useMemo(
+    () => filtered.reduce((s, x) => s + parseFloat(x.utilidad ?? 0), 0),
+    [filtered]
+  );
 
   return (
     <div>
@@ -445,7 +463,7 @@ function TabSalidas() {
             onChange={e => setFiltros(f => ({...f, busqueda: e.target.value}))}
             className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm" />
         </div>
-        <button onClick={cargar} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+        <button onClick={refetch} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50">
           <ArrowPathIcon className="h-5 w-5 text-gray-500" />
         </button>
       </div>
@@ -498,29 +516,30 @@ function TabSalidas() {
 
 // ─── Vista Kardex ─────────────────────────────────────────────────────────────
 function TabKardex({ productoInicial }) {
-  const [productos, setProductos] = useState([]);
-  const [selId, setSelId]         = useState(productoInicial?.id ?? '');
-  const [kardex, setKardex]       = useState(null);
-  const [loading, setLoading]     = useState(false);
+  const [selId, setSelId] = useState(productoInicial?.id ?? '');
 
-  useEffect(() => {
-    fetch('/api/inventario/productos/', { headers: tok() })
-      .then(r => r.json())
-      .then(d => setProductos(Array.isArray(d) ? d : (d.results ?? [])));
-  }, []);
+  const { data: productos = [] } = useQuery({
+    queryKey: ['inventario-productos'],
+    queryFn: async () => {
+      const r = await fetch('/api/inventario/productos/', { headers: tok() });
+      const d = await r.json();
+      return Array.isArray(d) ? d : (d.results ?? []);
+    },
+    staleTime: 5 * 60 * 1000,
+  });
 
   useEffect(() => {
     if (productoInicial) { setSelId(productoInicial.id); }
   }, [productoInicial]);
 
-  useEffect(() => {
-    if (!selId) { setKardex(null); return; }
-    setLoading(true);
-    fetch(`/api/inventario/productos/${selId}/kardex/`, { headers: tok() })
-      .then(r => r.json())
-      .then(d => setKardex(d))
-      .finally(() => setLoading(false));
-  }, [selId]);
+  const { data: kardex, isLoading: loading } = useQuery({
+    queryKey: ['inventario-kardex', selId],
+    queryFn: async () => {
+      const r = await fetch(`/api/inventario/productos/${selId}/kardex/`, { headers: tok() });
+      return r.json();
+    },
+    enabled: !!selId,
+  });
 
   return (
     <div>
@@ -650,7 +669,7 @@ function TabXml({ onImportado }) {
         <div className="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 bg-purple-50 border-b border-purple-100">
             <h3 className="text-lg font-semibold text-purple-900 flex items-center gap-2"><DocumentTextIcon className="h-6 w-6" />Vista previa de la factura</h3>
-            <div className="mt-3 grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 text-sm">
               <div className="flex gap-2"><span className="text-gray-500">Proveedor:</span><strong className="flex items-center gap-1"><BuildingStorefrontIcon className="h-4 w-4 text-purple-500" />{xmlPreview.proveedor?.nombre}</strong></div>
               <div className="flex gap-2"><span className="text-gray-500">RFC:</span><span className="font-mono">{xmlPreview.proveedor?.rfc}</span></div>
               <div className="flex gap-2"><span className="text-gray-500">Factura:</span><span className="font-mono">{xmlPreview.numero_factura}</span></div>
@@ -702,24 +721,32 @@ function TabXml({ onImportado }) {
 // ─── Componente principal ─────────────────────────────────────────────────────
 export default function Inventario() {
   const [tab, setTab]               = useState('consolidado');
-  const [proveedores, setProveedores] = useState([]);
-  const [productos, setProductos]   = useState([]);
   const [kardexProducto, setKardexProducto] = useState(null);
-  const [alertas, setAlertas]       = useState({ agotados: 0, stock_bajo: 0 });
 
-  useEffect(() => {
-    fetch('/api/inventario/proveedores/?activo=true', { headers: tok() })
-      .then(r => r.json()).then(d => setProveedores(Array.isArray(d) ? d : (d.results ?? [])));
-    fetch('/api/inventario/productos/', { headers: tok() })
-      .then(r => r.json()).then(d => {
-        const arr = Array.isArray(d) ? d : (d.results ?? []);
-        setProductos(arr);
-        setAlertas({
-          agotados:  arr.filter(p => p.stock_agotado).length,
-          stock_bajo: arr.filter(p => p.tiene_stock_bajo && !p.stock_agotado).length,
-        });
-      });
-  }, []);
+  const { data: proveedores = [] } = useQuery({
+    queryKey: ['inventario-proveedores'],
+    queryFn: async () => {
+      const r = await fetch('/api/inventario/proveedores/?activo=true', { headers: tok() });
+      const d = await r.json();
+      return Array.isArray(d) ? d : (d.results ?? []);
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const { data: productosData = [] } = useQuery({
+    queryKey: ['inventario-productos'],
+    queryFn: async () => {
+      const r = await fetch('/api/inventario/productos/', { headers: tok() });
+      const d = await r.json();
+      return Array.isArray(d) ? d : (d.results ?? []);
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const alertas = useMemo(() => ({
+    agotados:   productosData.filter(p => p.stock_agotado).length,
+    stock_bajo: productosData.filter(p => p.tiene_stock_bajo && !p.stock_agotado).length,
+  }), [productosData]);
 
   const irKardex = (p) => { setKardexProducto(p); setTab('kardex'); };
 
@@ -769,7 +796,7 @@ export default function Inventario() {
       </div>
 
       {tab === 'consolidado' && <TabConsolidado onVerKardex={irKardex} />}
-      {tab === 'entradas'    && <TabEntradas proveedores={proveedores} productos={productos} />}
+      {tab === 'entradas'    && <TabEntradas proveedores={proveedores} productos={productosData} />}
       {tab === 'salidas'     && <TabSalidas />}
       {tab === 'kardex'      && <TabKardex productoInicial={kardexProducto} />}
       {tab === 'xml'         && <TabXml onImportado={() => {}} />}

@@ -1,4 +1,7 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '../../lib/apiClient';
+import { useConfirm } from '../../lib/confirm';
 import {
   PlusIcon, TrashIcon, PencilIcon, XMarkIcon,
   FunnelIcon, BanknotesIcon,
@@ -35,15 +38,9 @@ const METODOS = [
 ];
 
 export default function Gastos() {
-  const [gastos, setGastos] = useState([]);
-  const [categorias, setCategorias] = useState([]);
-  const [empleados, setEmpleados] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const confirm = useConfirm();
   const [error, setError] = useState(null);
   const [exito, setExito] = useState(null);
-
-  // Resumen
-  const [resumen, setResumen] = useState(null);
 
   // Filtros
   const [filtros, setFiltros] = useState({
@@ -55,7 +52,6 @@ export default function Gastos() {
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState(GASTO_VACIO);
   const [editando, setEditando] = useState(null);
-  const [saving, setSaving] = useState(false);
 
   // Categorías CRUD
   const [modalCategorias, setModalCategorias] = useState(false);
@@ -71,54 +67,67 @@ export default function Gastos() {
 
   const showExito = (msg) => { setExito(msg); setTimeout(() => setExito(null), 3000); };
 
-  useEffect(() => {
-    cargarCatalogos();
-    cargarResumen();
-  }, []);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    cargarGastos();
-  }, [filtros]);
-
-  const cargarCatalogos = async () => {
-    try {
-      const [cats, emps] = await Promise.all([
-        $fetch(`${API}/categorias/`),
-        $fetch('/api/nomina/empleados/?activo=true&page_size=100'),
-      ]);
-      setCategorias(cats.results ?? cats);
-      setEmpleados(emps.results ?? emps);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const cargarGastos = async () => {
-    setLoading(true);
-    try {
+  // ── Queries ────────────────────────────────────────────────────────────────────────────
+  const { data: _gastosData, isPending: loading } = useQuery({
+    queryKey: ['gastos-lista', filtros],
+    queryFn: () => {
       const params = new URLSearchParams();
       if (filtros.fecha_inicio) params.set('fecha_inicio', filtros.fecha_inicio);
-      if (filtros.fecha_fin) params.set('fecha_fin', filtros.fecha_fin);
-      if (filtros.categoria) params.set('categoria', filtros.categoria);
-      if (filtros.metodo_pago) params.set('metodo_pago', filtros.metodo_pago);
-      if (filtros.responsable) params.set('responsable', filtros.responsable);
-      const data = await $fetch(`${API}/gastos/?${params}`);
-      setGastos(data.results ?? data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (filtros.fecha_fin)    params.set('fecha_fin',    filtros.fecha_fin);
+      if (filtros.categoria)    params.set('categoria',    filtros.categoria);
+      if (filtros.metodo_pago)  params.set('metodo_pago',  filtros.metodo_pago);
+      if (filtros.responsable)  params.set('responsable',  filtros.responsable);
+      return apiClient.get(`${API}/gastos/?${params}`);
+    },
+  });
+  const gastos = _gastosData?.results ?? _gastosData ?? [];
 
-  const cargarResumen = async () => {
-    try {
-      const data = await $fetch(`${API}/gastos/resumen/`);
-      setResumen(data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  const { data: resumen } = useQuery({
+    queryKey: ['gastos-resumen'],
+    queryFn: () => apiClient.get(`${API}/gastos/resumen/`),
+  });
+
+  const { data: _catalogos } = useQuery({
+    queryKey: ['gastos-catalogos'],
+    queryFn: () => Promise.all([
+      apiClient.get(`${API}/categorias/`),
+      apiClient.get('/api/nomina/empleados/?activo=true&page_size=100'),
+    ]).then(([cats, emps]) => ({
+      categorias: cats.results ?? cats,
+      empleados:  emps.results ?? emps,
+    })),
+    staleTime: 1000 * 60 * 10,
+  });
+  const categorias = _catalogos?.categorias ?? [];
+  const empleados  = _catalogos?.empleados  ?? [];
+
+  // ── Mutations ──────────────────────────────────────────────────────────────────────────
+  const guardarMutation = useMutation({
+    mutationFn: ({ editandoId, fd }) => editandoId
+      ? apiClient.patch(`${API}/gastos/${editandoId}/`, fd)
+      : apiClient.post(`${API}/gastos/`, fd),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['gastos-lista'] });
+      queryClient.invalidateQueries({ queryKey: ['gastos-resumen'] });
+      showExito(variables.editandoId ? 'Gasto actualizado' : 'Gasto registrado');
+      setModal(false);
+      setEvidenciaFile(null);
+    },
+    onError: (e) => setError(e.message),
+  });
+  const saving = guardarMutation.isPending;
+
+  const eliminarMutation = useMutation({
+    mutationFn: (id) => apiClient.del(`${API}/gastos/${id}/`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['gastos-lista'] });
+      queryClient.invalidateQueries({ queryKey: ['gastos-resumen'] });
+      showExito('Gasto eliminado');
+    },
+    onError: (e) => setError(e.message),
+  });
 
   const abrirModal = (gasto = null) => {
     if (gasto) {
@@ -149,52 +158,29 @@ export default function Gastos() {
     } catch { /* silencio */ }
   };
 
-  const guardar = async (e) => {
+  const guardar = (e) => {
     e.preventDefault();
-    setSaving(true);
-    try {
-      const fd = new FormData();
-      fd.append('fecha', form.fecha);
-      fd.append('concepto', form.concepto);
-      fd.append('monto', parseFloat(form.monto));
-      fd.append('metodo_pago', form.metodo_pago);
-      if (form.categoria) fd.append('categoria', form.categoria);
-      if (form.responsable) fd.append('responsable', form.responsable);
-      if (form.caja) fd.append('caja', form.caja);
-      if (form.notas) fd.append('notas', form.notas);
-      if (evidenciaFile) fd.append('evidencia', evidenciaFile);
-      const res = await fetch(
-        editando ? `${API}/gastos/${editando}/` : `${API}/gastos/`,
-        {
-          method: editando ? 'PATCH' : 'POST',
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-          body: fd,
-        }
-      );
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || d.detail || JSON.stringify(d));
-      }
-      showExito(editando ? 'Gasto actualizado' : 'Gasto registrado');
-      setModal(false);
-      setEvidenciaFile(null);
-      await Promise.all([cargarGastos(), cargarResumen()]);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+    const fd = new FormData();
+    fd.append('fecha', form.fecha);
+    fd.append('concepto', form.concepto);
+    fd.append('monto', parseFloat(form.monto));
+    fd.append('metodo_pago', form.metodo_pago);
+    if (form.categoria) fd.append('categoria', form.categoria);
+    if (form.responsable) fd.append('responsable', form.responsable);
+    if (form.caja) fd.append('caja', form.caja);
+    if (form.notas) fd.append('notas', form.notas);
+    if (evidenciaFile) fd.append('evidencia', evidenciaFile);
+    guardarMutation.mutate({ editandoId: editando, fd });
   };
 
   const eliminar = async (id) => {
-    if (!window.confirm('¿Eliminar este gasto?')) return;
-    try {
-      await $fetch(`${API}/gastos/${id}/`, { method: 'DELETE' });
-      showExito('Gasto eliminado');
-      await Promise.all([cargarGastos(), cargarResumen()]);
-    } catch (e) {
-      setError(e.message);
-    }
+    const ok = await confirm({
+      title: '¿Eliminar gasto?',
+      message: 'Esta acción es permanente y no se puede deshacer.',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    eliminarMutation.mutate(id);
   };
 
   // ── CRUD Categorías ────────────────────────────────────────────
@@ -216,12 +202,8 @@ export default function Gastos() {
     try {
       const url = catEditando ? `${API}/categorias/${catEditando}/` : `${API}/categorias/`;
       const method = catEditando ? 'PUT' : 'POST';
-      const saved = await $fetch(url, { method, body: JSON.stringify(catForm) });
-      if (catEditando) {
-        setCategorias((prev) => prev.map((c) => (c.id === catEditando ? saved : c)));
-      } else {
-        setCategorias((prev) => [...prev, saved]);
-      }
+      await $fetch(url, { method, body: JSON.stringify(catForm) });
+      queryClient.invalidateQueries({ queryKey: ['gastos-catalogos'] });
       setCatEditando(null);
       setCatForm({ nombre: '', descripcion: '', tipo: 'operativo' });
       showExito(catEditando ? 'Categoría actualizada' : 'Categoría creada');
@@ -233,17 +215,25 @@ export default function Gastos() {
   };
 
   const eliminarCategoria = async (id) => {
-    if (!window.confirm('¿Eliminar esta categoría?')) return;
+    const ok = await confirm({
+      title: '¿Eliminar categoría?',
+      message: 'Solo se puede eliminar si no tiene gastos asociados.',
+      variant: 'danger',
+    });
+    if (!ok) return;
     try {
       await $fetch(`${API}/categorias/${id}/`, { method: 'DELETE' });
-      setCategorias((prev) => prev.filter((c) => c.id !== id));
+      queryClient.invalidateQueries({ queryKey: ['gastos-catalogos'] });
       showExito('Categoría eliminada');
     } catch (e) {
       setError('No se puede eliminar (tiene gastos asociados)');
     }
   };
 
-  const totalFiltrado = gastos.reduce((s, g) => s + parseFloat(g.monto || 0), 0);
+  const totalFiltrado = useMemo(
+    () => gastos.reduce((s, g) => s + parseFloat(g.monto || 0), 0),
+    [gastos]
+  );
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto">

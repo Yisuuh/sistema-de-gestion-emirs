@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   PlusIcon, TrashIcon, MagnifyingGlassIcon, ShoppingCartIcon,
   WrenchScrewdriverIcon, PencilIcon, CheckIcon, XMarkIcon,
@@ -17,26 +18,25 @@ function Spinner({ sm }) {
 
 // ─── Tab Servicios ───────────────────────────────────────────────────────────
 function TabServicios() {
-  const [servicios, setServicios] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ nombre: '', descripcion: '', precio: '', activo: true });
   const [errors, setErrors] = useState({});
-  const [saving, setSaving] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [soloActivos, setSoloActivos] = useState(true);
 
-  const cargar = useCallback(async () => {
-    setLoading(true);
-    const r = await fetch(`/api/ventas/servicios/?activos=${soloActivos}`, { headers: tok() });
-    if (r.ok) {
+  const { data: servicios = [], isLoading: loading } = useQuery({
+    queryKey: ['ventas-servicios', soloActivos],
+    queryFn: async () => {
+      const url = soloActivos
+        ? '/api/ventas/servicios/?activos=true'
+        : '/api/ventas/servicios/?activos=false';
+      const r = await fetch(url, { headers: tok() });
+      if (!r.ok) return [];
       const d = await r.json();
-      setServicios(Array.isArray(d) ? d : (d.results || []));
-    }
-    setLoading(false);
-  }, [soloActivos]);
-
-  useEffect(() => { cargar(); }, [cargar]);
+      return Array.isArray(d) ? d : (d.results || []);
+    },
+  });
 
   const abrirNuevo = () => {
     setForm({ nombre: '', descripcion: '', precio: '', activo: true });
@@ -58,49 +58,71 @@ function TabServicios() {
     return Object.keys(e).length === 0;
   };
 
-  const guardar = async () => {
-    if (!validar()) return;
-    setSaving(true);
-    const body = {
-      nombre: form.nombre.trim(),
-      descripcion: form.descripcion.trim(),
-      precio: parseFloat(form.precio),
-      activo: form.activo,
-    };
-    const esEdicion = modal !== 'nuevo';
-    const url = esEdicion ? `/api/ventas/servicios/${modal.id}/` : '/api/ventas/servicios/';
-    const method = esEdicion ? 'PUT' : 'POST';
-    const r = await fetch(url, {
-      method,
-      headers: { ...tok(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (r.ok) {
+  const guardarMut = useMutation({
+    mutationFn: async () => {
+      const esEdicion = modal !== 'nuevo';
+      const url = esEdicion ? `/api/ventas/servicios/${modal.id}/` : '/api/ventas/servicios/';
+      const method = esEdicion ? 'PUT' : 'POST';
+      const body = {
+        nombre: form.nombre.trim(),
+        descripcion: form.descripcion.trim(),
+        precio: parseFloat(form.precio),
+        activo: form.activo,
+      };
+      const r = await fetch(url, {
+        method,
+        headers: { ...tok(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { const err = await r.json(); throw new Error(Object.values(err).flat().join(' ')); }
+      return r.json();
+    },
+    onSuccess: () => {
       setModal(null);
-      cargar();
-    } else {
-      const err = await r.json();
-      setErrors({ _general: Object.values(err).flat().join(' ') });
-    }
-    setSaving(false);
+      queryClient.invalidateQueries({ queryKey: ['ventas-servicios'] });
+    },
+    onError: (e) => setErrors({ _general: e.message }),
+  });
+
+  const toggleActivoMut = useMutation({
+    mutationFn: async (s) => {
+      const r = await fetch(`/api/ventas/servicios/${s.id}/`, {
+        method: 'PATCH',
+        headers: { ...tok(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo: !s.activo }),
+      });
+      if (!r.ok) throw new Error('Error al actualizar el servicio');
+      return r.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ventas-servicios'] }),
+    onError: (e) => setErrors({ _general: e.message }),
+  });
+
+  const guardar = () => {
+    if (!validar()) return;
+    guardarMut.mutate();
   };
 
-  const toggleActivo = async (s) => {
-    await fetch(`/api/ventas/servicios/${s.id}/`, {
-      method: 'PATCH',
-      headers: { ...tok(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activo: !s.activo }),
-    });
-    cargar();
-  };
+  const toggleActivo = (s) => toggleActivoMut.mutate(s);
 
-  const filtrados = servicios.filter(s =>
-    s.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    (s.descripcion || '').toLowerCase().includes(busqueda.toLowerCase())
+  const filtrados = useMemo(
+    () => servicios.filter(s =>
+      s.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+      (s.descripcion || '').toLowerCase().includes(busqueda.toLowerCase())
+    ),
+    [servicios, busqueda]
   );
 
   return (
     <div className="space-y-4">
+      {errors._general && (
+        <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
+          <span className="flex-1">{errors._general}</span>
+          <button onClick={() => setErrors(e => ({ ...e, _general: undefined }))} className="text-red-400 hover:text-red-600">
+            <XMarkIcon className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       {/* Toolbar */}
       <div className="flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center gap-3">
@@ -109,7 +131,7 @@ function TabServicios() {
             <input
               type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
               placeholder="Buscar servicio..."
-              className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a] focus:border-transparent w-56"
+              className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a] focus:border-transparent w-full sm:w-56"
             />
           </div>
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
@@ -131,8 +153,8 @@ function TabServicios() {
 
       {/* Tabla */}
       {loading ? <Spinner /> : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+          <table className="w-full text-sm min-w-[480px]">
             <thead className="bg-gray-50">
               <tr>
                 {['Nombre', 'Descripción', 'Precio', 'Estado', 'Acciones'].map(h => (
@@ -162,11 +184,11 @@ function TabServicios() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button onClick={() => abrirEditar(s)} title="Editar"
-                        className="p-1 text-gray-400 hover:text-[#df000a] transition-colors">
+                        className="p-2 text-gray-400 hover:text-[#df000a] transition-colors rounded">
                         <PencilIcon className="w-4 h-4" />
                       </button>
                       <button onClick={() => toggleActivo(s)}
-                        className={`text-xs px-2 py-0.5 rounded border transition-colors
+                        className={`text-xs px-2.5 py-1 rounded border transition-colors
                           ${s.activo ? 'border-red-200 text-red-500 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}>
                         {s.activo ? 'Desactivar' : 'Activar'}
                       </button>
@@ -240,9 +262,9 @@ function TabServicios() {
                 className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors">
                 Cancelar
               </button>
-              <button onClick={guardar} disabled={saving}
+              <button onClick={guardar} disabled={guardarMut.isPending}
                 className="px-5 py-2 bg-[#df000a] hover:bg-[#c4000a] disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
-                {saving && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {guardarMut.isPending && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 {modal === 'nuevo' ? 'Crear' : 'Guardar'}
               </button>
             </div>
@@ -255,10 +277,7 @@ function TabServicios() {
 
 // ─── Tab POS ─────────────────────────────────────────────────────────────────
 function TabPOS() {
-  const [productos, setProductos] = useState([]);
-  const [servicios, setServicios] = useState([]);
-  const [clientes, setClientes] = useState([]);
-  const [empleados, setEmpleados] = useState([]);
+  const queryClient = useQueryClient();
   const [busqueda, setBusqueda] = useState('');
   const [carrito, setCarrito] = useState([]);
   const [empleadoSel, setEmpleadoSel] = useState('');
@@ -271,28 +290,34 @@ function TabPOS() {
   const [descuento, setDescuento] = useState('');
   const [notas, setNotas] = useState('');
   const [tabItems, setTabItems] = useState('productos');
-  const [loadingData, setLoadingData] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [ventaOk, setVentaOk] = useState(null);
 
-  useEffect(() => {
-    const cargar = async () => {
-      setLoadingData(true);
-      const headers = tok();
-      const [rP, rS, rC, rE] = await Promise.all([
-        fetch('/api/inventario/productos/?activos=true', { headers }),
-        fetch('/api/ventas/servicios/?activos=true', { headers }),
-        fetch('/api/clientes/clientes/', { headers }),
-        fetch('/api/nomina/empleados/?activos=true', { headers }),
-      ]);
-      const toArr = async r => r.ok ? r.json().then(d => Array.isArray(d) ? d : (d.results || [])) : [];
-      const [p, s, c, e] = await Promise.all([toArr(rP), toArr(rS), toArr(rC), toArr(rE)]);
-      setProductos(p); setServicios(s); setClientes(c); setEmpleados(e);
-      setLoadingData(false);
-    };
-    cargar();
-  }, []);
+  const toArr = async r => r.ok ? r.json().then(d => Array.isArray(d) ? d : (d.results || [])) : [];
+
+  const { data: productos = [], isLoading: loadingProductos } = useQuery({
+    queryKey: ['pos-productos'],
+    queryFn: () => fetch('/api/inventario/productos/?activos=true', { headers: tok() }).then(toArr),
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: servicios = [], isLoading: loadingServicios } = useQuery({
+    queryKey: ['pos-servicios'],
+    queryFn: () => fetch('/api/ventas/servicios/?activos=true', { headers: tok() }).then(toArr),
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: clientes = [], isLoading: loadingClientes } = useQuery({
+    queryKey: ['pos-clientes'],
+    queryFn: () => fetch('/api/clientes/clientes/', { headers: tok() }).then(toArr),
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: empleados = [], isLoading: loadingEmpleados } = useQuery({
+    queryKey: ['pos-empleados'],
+    queryFn: () => fetch('/api/nomina/empleados/?activos=true', { headers: tok() }).then(toArr),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const loadingData = loadingProductos || loadingServicios || loadingClientes || loadingEmpleados;
 
   const itemsFiltrados = tabItems === 'productos'
     ? productos.filter(p =>
@@ -420,10 +445,12 @@ function TabPOS() {
         const venta = await r.json();
         setVentaOk(venta);
         if (venta.productos_actualizados?.length) {
-          setProductos(prev => prev.map(p => {
-            const u = venta.productos_actualizados.find(x => x.id === p.id);
-            return u ? { ...p, stock_actual: u.stock_actual } : p;
-          }));
+          queryClient.setQueryData(['pos-productos'], prev =>
+            (prev || []).map(p => {
+              const u = venta.productos_actualizados.find(x => x.id === p.id);
+              return u ? { ...p, stock_actual: u.stock_actual } : p;
+            })
+          );
         }
         limpiar();
       } else {
@@ -446,7 +473,7 @@ function TabPOS() {
   if (loadingData) return <Spinner />;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 
       {ventaOk && (
         <div className="lg:col-span-3 bg-green-50 border border-green-300 text-green-800 rounded-xl px-4 py-3 flex items-center justify-between">
@@ -463,7 +490,7 @@ function TabPOS() {
       )}
 
       {/* ── Catálogo ── */}
-      <div className="lg:col-span-2 space-y-3">
+      <div className="md:col-span-1 lg:col-span-2 space-y-3">
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <div className="flex gap-2">
             {[{ id: 'productos', label: 'Productos' }, { id: 'servicios', label: 'Servicios' }].map(t => (
@@ -548,7 +575,7 @@ function TabPOS() {
                       <TrashIcon className="w-4 h-4" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-3 gap-1 text-xs">
+                  <div className="grid grid-cols-3 gap-1.5 text-xs">
                     <div>
                       <label className="text-gray-400 block mb-0.5">Cant.</label>
                       <input type="number" min="1" max={item.stock_max} value={item.cantidad}
@@ -709,13 +736,13 @@ export default function Ventas() {
         </div>
       </div>
 
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5 w-fit">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5 overflow-x-auto">
         {[
           { id: 'pos', label: 'Punto de Venta', icon: ShoppingCartIcon },
           { id: 'servicios', label: 'Servicios', icon: WrenchScrewdriverIcon },
         ].map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex-shrink-0
               ${tab === id ? 'bg-white shadow text-[#df000a]' : 'text-gray-500 hover:text-gray-700'}`}>
             <Icon className="w-4 h-4" />{label}
           </button>

@@ -31,15 +31,20 @@ class ServicioViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """
-        Filtrar servicios activos por defecto
+        Filtrar servicios activos por defecto en listados.
+        En acciones de detalle (retrieve, update, partial_update, destroy)
+        no se filtra para que los inactivos también sean accesibles.
         """
         queryset = super().get_queryset()
-        
-        # Filtrar solo activos si no se especifica lo contrario
+
+        # No filtrar en acciones de detalle para evitar 404 en inactivos
+        if self.action in ('retrieve', 'update', 'partial_update', 'destroy'):
+            return queryset
+
         solo_activos = self.request.query_params.get('activos', 'true')
         if solo_activos.lower() == 'true':
             queryset = queryset.filter(activo=True)
-        
+
         return queryset
 
 

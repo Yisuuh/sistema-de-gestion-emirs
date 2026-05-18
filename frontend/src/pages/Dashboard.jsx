@@ -1,55 +1,55 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useQuery } from '@tanstack/react-query';
 import {
   ShoppingCartIcon, BanknotesIcon, ExclamationTriangleIcon,
   UserGroupIcon, CurrencyDollarIcon, ArrowTrendingUpIcon,
   ReceiptPercentIcon, WalletIcon,
 } from '@heroicons/react/24/outline';
+import { apiClient } from '../lib/apiClient';
 
-const hdrs = () => ({
-  Authorization: `Bearer ${localStorage.getItem('token')}`,
-});
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const fmtN = (n) => Number(n ?? 0).toLocaleString('es-MX');
 
 function KPI({ icon: Icon, label, value, sub, color = 'blue', loading }) {
   const colors = {
-    blue: 'bg-red-50 text-[#df000a]',
-    green: 'bg-green-50 text-green-600',
-    red: 'bg-red-50 text-red-600',
+    blue:   'bg-red-50 text-[#df000a]',
+    green:  'bg-green-50 text-green-600',
+    red:    'bg-red-50 text-red-600',
     orange: 'bg-orange-50 text-orange-600',
     purple: 'bg-purple-50 text-purple-600',
     yellow: 'bg-yellow-50 text-yellow-700',
   };
   return (
     <div className="bg-white rounded-xl shadow-sm border p-4 flex items-start gap-3">
-      <div className={`p-2 rounded-lg ${colors[color]}`}>
-        <Icon className="w-5 h-5" />
+      <div className={`p-2.5 rounded-lg flex-shrink-0 ${colors[color]}`}>
+        <Icon className="w-4 h-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{label}</p>
+        <p className="font-display font-semibold uppercase text-gray-500"
+          style={{ fontSize: '11px', letterSpacing: '0.10em' }}>
+          {label}
+        </p>
         {loading ? (
-          <div className="h-7 w-24 bg-gray-200 rounded animate-pulse mt-1" />
+          <div className="h-7 w-28 bg-gray-200 rounded animate-pulse mt-1" />
         ) : (
-          <p className="text-2xl font-bold text-gray-900 leading-tight mt-0.5">{value}</p>
+          <p className="font-data font-medium text-gray-900 leading-tight mt-0.5"
+            style={{ fontSize: '22px' }}>
+            {value}
+          </p>
         )}
-        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+        {sub && (
+          <p className="mt-0.5 text-gray-400" style={{ fontSize: '11px' }}>{sub}</p>
+        )}
       </div>
     </div>
   );
 }
 
 export default function Dashboard() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    fetch('/api/reportes/resumen/', { headers: hdrs() })
-      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(setData)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, []);
+  const { data, isPending: loading, error: queryError } = useQuery({
+    queryKey: ['dashboard-resumen'],
+    queryFn: () => apiClient.get('/api/reportes/resumen/'),
+  });
+  const error = queryError?.message ?? null;
 
   const v = data?.ventas;
   const c = data?.caja;
@@ -58,10 +58,21 @@ export default function Dashboard() {
   const inv = data?.inventario;
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-gray-500 mt-0.5">{new Date().toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 page-in">
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="font-display font-bold text-gray-900" style={{ fontSize: '32px', letterSpacing: '0.01em', lineHeight: 1 }}>
+            Dashboard
+          </h1>
+          <p className="mt-1 text-gray-500" style={{ fontSize: '13px' }}>
+            {new Date().toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          </p>
+        </div>
+        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+          style={{ background: 'rgba(223,0,10,0.10)', border: '1px solid rgba(223,0,10,0.20)' }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--c-red)', boxShadow: '0 0 4px var(--c-red)' }} />
+          <span className="font-display font-semibold" style={{ fontSize: '11px', letterSpacing: '0.08em', color: 'var(--c-red)' }}>EN VIVO</span>
+        </div>
       </div>
 
       {error && (
@@ -97,7 +108,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Métodos de pago hoy */}
         <div className="bg-white rounded-xl shadow-sm border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Ventas por método de pago (hoy)</h3>
+          <h3 className="font-display font-bold text-gray-700 mb-3" style={{ fontSize: '14px', letterSpacing: '0.03em' }}>Ventas por método de pago (hoy)</h3>
           {loading ? (
             <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-8 bg-gray-100 rounded animate-pulse" />)}</div>
           ) : v?.por_metodo_hoy?.length > 0 ? (
@@ -112,8 +123,8 @@ export default function Dashboard() {
                     {m.metodo_pago}
                   </span>
                   <div className="text-right">
-                    <p className="font-semibold">{fmt(m.total)}</p>
-                    <p className="text-xs text-gray-400">{m.cantidad} venta{m.cantidad !== 1 ? 's' : ''}</p>
+                    <p className="font-data font-medium" style={{ fontSize: '13px' }}>{fmt(m.total)}</p>
+                    <p className="text-gray-400" style={{ fontSize: '11px' }}>{m.cantidad} venta{m.cantidad !== 1 ? 's' : ''}</p>
                   </div>
                 </div>
               ))}
@@ -123,7 +134,7 @@ export default function Dashboard() {
 
         {/* Top vendedores del mes */}
         <div className="bg-white rounded-xl shadow-sm border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Top vendedores (mes)</h3>
+          <h3 className="font-display font-bold text-gray-700 mb-3" style={{ fontSize: '14px', letterSpacing: '0.03em' }}>Top vendedores (mes)</h3>
           {loading ? (
             <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-8 bg-gray-100 rounded animate-pulse" />)}</div>
           ) : v?.por_vendedor?.length > 0 ? (
@@ -135,8 +146,8 @@ export default function Dashboard() {
                     <span className="text-gray-700">{vend.nombre}</span>
                   </div>
                   <div className="text-right">
-                    <p className="font-semibold">{fmt(vend.total)}</p>
-                    <p className="text-xs text-gray-400">{vend.cantidad} venta{vend.cantidad !== 1 ? 's' : ''}</p>
+                    <p className="font-data font-medium" style={{ fontSize: '13px' }}>{fmt(vend.total)}</p>
+                    <p className="text-gray-400" style={{ fontSize: '11px' }}>{vend.cantidad} venta{vend.cantidad !== 1 ? 's' : ''}</p>
                   </div>
                 </div>
               ))}
@@ -146,7 +157,7 @@ export default function Dashboard() {
 
         {/* Nómina activa */}
         <div className="bg-white rounded-xl shadow-sm border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Nómina en curso</h3>
+          <h3 className="font-display font-bold text-gray-700 mb-3" style={{ fontSize: '14px', letterSpacing: '0.03em' }}>Nómina en curso</h3>
           {loading ? (
             <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-8 bg-gray-100 rounded animate-pulse" />)}</div>
           ) : n ? (
@@ -157,19 +168,19 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Total nómina</span>
-                <span className="font-bold text-gray-900">{fmt(n.total_general)}</span>
+                <span className="font-data font-medium text-gray-900" style={{ fontSize: '13px' }}>{fmt(n.total_general)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Efectivo</span>
-                <span className="font-semibold text-green-700">{fmt(n.total_efectivo)}</span>
+                <span className="font-data font-medium text-green-700" style={{ fontSize: '13px' }}>{fmt(n.total_efectivo)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Transferencia</span>
-                <span className="font-semibold text-[#df000a]">{fmt(n.total_transferencia)}</span>
+                <span className="font-data font-medium text-[#df000a]" style={{ fontSize: '13px' }}>{fmt(n.total_transferencia)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Comisiones</span>
-                <span className="font-semibold text-purple-700">{fmt(n.total_comisiones)}</span>
+                <span className="font-data font-medium text-purple-700" style={{ fontSize: '13px' }}>{fmt(n.total_comisiones)}</span>
               </div>
               <div className="mt-2">
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium
@@ -187,12 +198,12 @@ export default function Dashboard() {
       {/* Gastos por categoría */}
       {!loading && g?.por_categoria?.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Gastos por categoría (mes)</h3>
+          <h3 className="font-display font-bold text-gray-700 mb-3" style={{ fontSize: '14px', letterSpacing: '0.03em' }}>Gastos por categoría (mes)</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {g.por_categoria.map((cat, idx) => (
               <div key={idx} className="text-center p-3 bg-gray-50 rounded-xl">
-                <p className="text-xs text-gray-500 font-medium truncate">{cat.categoria__nombre ?? 'Sin categoría'}</p>
-                <p className="text-lg font-bold text-red-600 mt-1">{fmt(cat.total)}</p>
+                <p className="text-gray-500 font-medium truncate" style={{ fontSize: '11px' }}>{cat.categoria__nombre ?? 'Sin categoría'}</p>
+                <p className="font-data font-medium text-red-600 mt-1" style={{ fontSize: '16px' }}>{fmt(cat.total)}</p>
               </div>
             ))}
           </div>
@@ -202,7 +213,7 @@ export default function Dashboard() {
       {/* Top productos */}
       {!loading && v?.top_productos?.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Productos más vendidos (mes)</h3>
+          <h3 className="font-display font-bold text-gray-700 mb-3" style={{ fontSize: '14px', letterSpacing: '0.03em' }}>Productos más vendidos (mes)</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -216,8 +227,8 @@ export default function Dashboard() {
                 {v.top_productos.map((p, idx) => (
                   <tr key={idx} className="hover:bg-gray-50">
                     <td className="py-2 text-gray-700">{p.descripcion ?? '—'}</td>
-                    <td className="py-2 text-right tabular-nums text-gray-600">{fmtN(p.cantidad)}</td>
-                    <td className="py-2 text-right tabular-nums font-medium">{fmt(p.total)}</td>
+                  <td className="py-2 text-right text-gray-600 font-data" style={{ fontSize: '13px' }}>{fmtN(p.cantidad)}</td>
+                  <td className="py-2 text-right font-data font-medium" style={{ fontSize: '13px' }}>{fmt(p.total)}</td>
                   </tr>
                 ))}
               </tbody>

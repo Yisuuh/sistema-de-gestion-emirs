@@ -73,8 +73,8 @@ export default function AuthLayout() {
 
           {/* Tagline */}
           <div className="text-center mb-10">
-            <p className="text-gray-300 text-base font-medium tracking-wide">Sistema integral de gestión</p>
-            <p className="text-gray-600 text-sm mt-1">ventas · inventario · caja · reportes</p>
+            <p className="font-display font-semibold text-gray-300" style={{ fontSize: '18px', letterSpacing: '0.05em' }}>Sistema integral de gestión</p>
+            <p className="text-gray-600 mt-1" style={{ fontSize: '13px', letterSpacing: '0.12em' }}>VENTAS · INVENTARIO · CAJA · REPORTES</p>
           </div>
 
           {/* Línea divisora */}
@@ -116,7 +116,7 @@ export default function AuthLayout() {
           <p className="text-gray-500 text-sm">Sistema de Gestión</p>
         </div>
 
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-sm page-in">
           <Outlet />
         </div>
 

@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useCallback, useRef } from 'react';
+﻿import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CurrencyDollarIcon,
   ArrowUpIcon,
@@ -90,7 +91,7 @@ function ModalApertura({ empleados, onGuardado, onClose }) {
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || JSON.stringify(data)); return; }
       onGuardado(data);
-    } catch { setErr('Error de conexi�n.'); }
+    } catch { setErr('Error de conexión.'); }
     finally { setLoading(false); }
   };
 
@@ -171,7 +172,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || JSON.stringify(data)); return; }
       onGuardado(data);
-    } catch { setErr('Error de conexi�n.'); }
+    } catch { setErr('Error de conexión.'); }
     finally { setLoading(false); }
   };
 
@@ -185,7 +186,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             <div>
               <h2 className="text-lg font-bold text-gray-900">Cerrar Caja {caja.folio}</h2>
               <p className="text-xs text-gray-500">
-                {paso === 1 ? 'Paso 1 de 2 � Arqueo de efectivo' : 'Paso 2 de 2 � Confirmar cierre'}
+                {paso === 1 ? 'Paso 1 de 2 — Arqueo de efectivo' : 'Paso 2 de 2 — Confirmar cierre'}
               </p>
             </div>
           </div>
@@ -201,7 +202,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             <span className="font-semibold text-gray-800">{fmt(caja.saldo_esperado)}</span>
           </div>
           <div>
-            <span className="text-gray-500">Ventas del d�a:</span>{' '}
+            <span className="text-gray-500">Ventas del día:</span>{' '}
             <span className="font-semibold text-gray-800">{caja.num_ventas}</span>
           </div>
         </div>
@@ -215,7 +216,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 <BanknotesIcon className="h-4 w-4 text-gray-500" />
                 Billetes
               </h3>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {BILLETES.map((d) => (
                   <div key={d} className="flex flex-col">
                     <label className="text-xs text-gray-500 mb-0.5 font-medium">${d}</label>
@@ -248,7 +249,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 <CurrencyDollarIcon className="h-4 w-4 text-gray-500" />
                 Monedas
               </h3>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {MONEDAS.map((d) => (
                   <div key={d} className="flex flex-col">
                     <label className="text-xs text-gray-500 mb-0.5 font-medium">${d}</label>
@@ -378,13 +379,13 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || JSON.stringify(data)); return; }
       onGuardado(data);
-    } catch { setErr('Error de conexi�n.'); }
+    } catch { setErr('Error de conexión.'); }
     finally { setLoading(false); }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-gray-900">Registrar Movimiento</h2>
           <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" /></button>
@@ -424,7 +425,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Categor�a (opcional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Categoría (opcional)</label>
             <input type="text" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}
               placeholder="Operativo, Servicios, etc."
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
@@ -465,8 +466,8 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
             <h2 className="text-xl font-bold text-gray-900">{caja.folio}</h2>
             <p className="text-sm text-gray-500">
               Apertura: <span className="font-medium">{caja.fecha_apertura_formateada}</span>
-              {' � '}{caja.empleado_apertura_nombre}
-              {' � '}Inicial: <span className="font-medium">{fmt(caja.monto_inicial)}</span>
+              {' · '}{caja.empleado_apertura_nombre}
+              {' · '}Inicial: <span className="font-medium">{fmt(caja.monto_inicial)}</span>
             </p>
           </div>
         </div>
@@ -487,16 +488,16 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={ShoppingCartIcon} label="Ventas registradas" value={caja.num_ventas ?? 0} color="blue" />
         <StatCard icon={CurrencyDollarIcon} label="Total ventas" value={fmt(caja.total_ventas)} color="green" />
         <StatCard icon={BanknotesIcon} label="Efectivo" value={fmt(caja.total_ventas_efectivo)} color="orange"
-          sub={`Electr�nico: ${fmt(caja.total_ventas_electronico)}`} />
+          sub={`Electrónico: ${fmt(caja.total_ventas_electronico)}`} />
         <StatCard icon={CalculatorIcon} label="Saldo esperado" value={fmt(caja.saldo_esperado)} color="purple"
           sub={`Egresos: ${fmt(caja.total_egresos)}`} />
       </div>
 
-      {/* Ventas del d�a */}
+      {/* Ventas del día */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
           <ShoppingCartIcon className="h-5 w-5 text-gray-400" />
@@ -505,7 +506,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
         </div>
         {ventas.length === 0 ? (
           <div className="text-center py-10 text-gray-400 text-sm">
-            Sin ventas registradas en esta caja a�n.
+            Sin ventas registradas en esta caja aún.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -515,14 +516,14 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Folio</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hora</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empleado</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">M�todo</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Art.</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Efectivo</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Electr�nico</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Electrónico</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-white/[0.05]">
                 {ventas.map((v) => (
                   <tr key={v.id} className="hover:bg-red-50">
                     <td className="px-4 py-3 font-mono font-semibold text-gray-800">{v.folio}</td>
@@ -573,20 +574,20 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hora</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Concepto</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Categor�a</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-white/[0.05]">
                 {movimientos.map((m) => (
                   <tr key={m.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{m.fecha_formateada}</td>
                     <td className="px-4 py-2">
-                      <Badge text={m.tipo === 'ingreso' ? '? Ingreso' : '? Egreso'}
+                      <Badge text={m.tipo === 'ingreso' ? '↑ Ingreso' : '↓ Egreso'}
                         color={m.tipo === 'ingreso' ? 'green' : 'red'} />
                     </td>
                     <td className="px-4 py-2 text-gray-700">{m.concepto}</td>
-                    <td className="px-4 py-2 text-gray-500 text-xs">{m.categoria || '�'}</td>
+                    <td className="px-4 py-2 text-gray-500 text-xs">{m.categoria || '—'}</td>
                     <td className={`px-4 py-2 text-right font-semibold font-mono ${m.tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'}`}>
                       {m.tipo === 'ingreso' ? '+' : '-'}{fmt(m.monto)}
                     </td>
@@ -606,25 +607,21 @@ function Historial() {
   const [periodo, setPeriodo] = useState('hoy');
   const [fechaInicio, setFechaInicio] = useState('');
   const [fechaFin, setFechaFin] = useState('');
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [submitted, setSubmitted] = useState({ periodo: 'hoy', fechaInicio: '', fechaFin: '' });
   const [cajasAbiertas, setCajasAbiertas] = useState({});
   const [ventasCaja, setVentasCaja] = useState({});
 
-  const cargar = useCallback(async (p, fi, ff) => {
-    setLoading(true); setError(null);
-    try {
-      let url = `${API_CAJA}/cajas/historial/?periodo=${p}`;
-      if (p === 'rango') url += `&fecha_inicio=${fi}&fecha_fin=${ff}`;
+  const { data, isLoading: loading, error: queryError } = useQuery({
+    queryKey: ['historial-cajas', submitted.periodo, submitted.fechaInicio, submitted.fechaFin],
+    queryFn: async () => {
+      let url = `${API_CAJA}/cajas/historial/?periodo=${submitted.periodo}`;
+      if (submitted.periodo === 'rango') url += `&fecha_inicio=${submitted.fechaInicio}&fecha_fin=${submitted.fechaFin}`;
       const res = await fetch(url, { headers: hdrs() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setData(await res.json());
-    } catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { cargar('hoy', '', ''); }, [cargar]);
+      return res.json();
+    },
+  });
+  const error = queryError ? String(queryError) : null;
 
   const toggleCaja = async (cajaId) => {
     const abierto = cajasAbiertas[cajaId];
@@ -663,12 +660,12 @@ function Historial() {
           <div className="flex gap-2 items-center ml-2">
             <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
-            <span className="text-gray-400">�</span>
+            <span className="text-gray-400">—</span>
             <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
           </div>
         )}
-        <button onClick={() => cargar(periodo, fechaInicio, fechaFin)}
+        <button onClick={() => setSubmitted({ periodo, fechaInicio, fechaFin })}
           className="ml-2 px-4 py-1.5 bg-[#df000a] text-white rounded-full text-sm font-medium hover:bg-[#c4000a] flex items-center gap-1.5">
           {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : null}
           Buscar
@@ -681,13 +678,13 @@ function Historial() {
 
       {data && (
         <>
-          {/* Totales per�odo */}
+          {/* Totales período */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard icon={DocumentTextIcon} label="Cajas" value={data.totales.cajas} color="blue" />
             <StatCard icon={ShoppingCartIcon} label="Ventas totales" value={fmt(data.totales.monto_ventas)} color="green"
               sub={`${data.totales.ventas} venta(s)`} />
             <StatCard icon={BanknotesIcon} label="Efectivo" value={fmt(data.totales.efectivo)} color="orange"
-              sub={`Electr�nico: ${fmt(data.totales.electronico)}`} />
+              sub={`Electrónico: ${fmt(data.totales.electronico)}`} />
             <StatCard icon={ArrowDownIcon} label="Egresos" value={fmt(data.totales.egresos)} color="red" />
           </div>
 
@@ -695,7 +692,7 @@ function Historial() {
           {data.cajas.length === 0 ? (
             <div className="text-center py-16 text-gray-400">
               <DocumentTextIcon className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p>No hay cajas en este per�odo.</p>
+              <p>No hay cajas en este período.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -754,13 +751,13 @@ function Historial() {
                                 <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Folio</th>
                                 <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Hora</th>
                                 <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Empleado</th>
-                                <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">M�todo</th>
+                                <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Método</th>
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Efectivo</th>
-                                <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Electr�nico</th>
+                                <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Electrónico</th>
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Total</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-50">
+                            <tbody className="divide-y divide-white/[0.05]">
                               {(vc.ventas || []).map((v) => (
                                 <tr key={v.id} className="hover:bg-red-50">
                                   <td className="px-4 py-2 font-mono font-semibold text-gray-800">{v.folio}</td>
@@ -793,48 +790,43 @@ function Historial() {
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function Caja() {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState('activa');
-  const [cajaActual, setCajaActual] = useState(null);
-  const [ventas, setVentas] = useState([]);
-  const [movimientos, setMovimientos] = useState([]);
-  const [empleados, setEmpleados] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [exito, setExito] = useState(null);
   const [modal, setModal] = useState(null); // 'apertura' | 'cierre' | 'movimiento'
-  const autoRefreshRef = useRef(null);
 
-  const cargarCaja = useCallback(async () => {
-    try {
+  const { data: cajaData, isLoading: loading } = useQuery({
+    queryKey: ['caja-activa'],
+    queryFn: async () => {
       const res = await fetch(`${API_CAJA}/cajas/caja_actual/`, { headers: hdrs() });
-      if (res.ok) {
-        const caja = await res.json();
-        setCajaActual(caja);
-        const [resV, resM] = await Promise.all([
-          fetch(`${API_CAJA}/cajas/${caja.id}/ventas_caja/`, { headers: hdrs() }),
-          fetch(`${API_CAJA}/movimientos/?caja=${caja.id}`, { headers: hdrs() }),
-        ]);
-        if (resV.ok) { const d = await resV.json(); setVentas(d.ventas ?? []); }
-        if (resM.ok) { const d = await resM.json(); setMovimientos(Array.isArray(d) ? d : d.results ?? []); }
-      } else {
-        setCajaActual(null); setVentas([]); setMovimientos([]);
-      }
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, []);
+      if (!res.ok) return { cajaActual: null, ventas: [], movimientos: [] };
+      const caja = await res.json();
+      if (!caja || caja.estado !== 'abierta') return { cajaActual: caja, ventas: [], movimientos: [] };
+      const [resV, resM] = await Promise.all([
+        fetch(`${API_CAJA}/cajas/${caja.id}/ventas_caja/`, { headers: hdrs() }),
+        fetch(`${API_CAJA}/movimientos/?caja=${caja.id}`, { headers: hdrs() }),
+      ]);
+      const ventasData = resV.ok ? await resV.json() : {};
+      const movData = resM.ok ? await resM.json() : [];
+      return { cajaActual: caja, ventas: ventasData.ventas ?? [], movimientos: Array.isArray(movData) ? movData : movData.results ?? [] };
+    },
+    refetchInterval: 45000,
+    refetchIntervalInBackground: false,
+  });
+  const cajaActual = cajaData?.cajaActual ?? null;
+  const ventas = cajaData?.ventas ?? [];
+  const movimientos = cajaData?.movimientos ?? [];
 
-  const cargarEmpleados = useCallback(async () => {
-    try {
+  const { data: empleados = [] } = useQuery({
+    queryKey: ['caja-empleados'],
+    queryFn: async () => {
       const res = await fetch('/api/nomina/empleados/?activos=true', { headers: hdrs() });
-      if (res.ok) { const d = await res.json(); setEmpleados(Array.isArray(d) ? d : d.results ?? []); }
-    } catch (e) { console.error(e); }
-  }, []);
-
-  useEffect(() => {
-    cargarCaja();
-    cargarEmpleados();
-    autoRefreshRef.current = setInterval(cargarCaja, 45000);
-    return () => clearInterval(autoRefreshRef.current);
-  }, [cargarCaja, cargarEmpleados]);
+      if (!res.ok) return [];
+      const d = await res.json();
+      return Array.isArray(d) ? d : d.results ?? [];
+    },
+    staleTime: 10 * 60 * 1000,
+  });
 
   const ok = (msg) => { setExito(msg); setTimeout(() => setExito(null), 5000); };
 
@@ -886,7 +878,7 @@ export default function Caja() {
             ventas={ventas}
             movimientos={movimientos}
             empleados={empleados}
-            onRefresh={cargarCaja}
+            onRefresh={() => queryClient.invalidateQueries({ queryKey: ['caja-activa'] })}
             setModal={setModal}
           />
         ) : (
@@ -912,7 +904,7 @@ export default function Caja() {
       {modal === 'apertura' && (
         <ModalApertura
           empleados={empleados}
-          onGuardado={(data) => { setCajaActual(data); setModal(null); ok(`Caja ${data.folio} abierta exitosamente.`); cargarCaja(); }}
+          onGuardado={(data) => { setModal(null); ok(`Caja ${data.folio} abierta exitosamente.`); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
           onClose={() => setModal(null)}
         />
       )}
@@ -920,7 +912,7 @@ export default function Caja() {
         <ModalCierre
           caja={cajaActual}
           empleados={empleados}
-          onGuardado={(data) => { setCajaActual(data); setModal(null); ok(`Caja ${data.folio} cerrada. Diferencia: ${fmt(data.diferencia ?? 0)}`); cargarCaja(); }}
+          onGuardado={(data) => { setModal(null); ok(`Caja ${data.folio} cerrada. Diferencia: ${fmt(data.diferencia ?? 0)}`); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
           onClose={() => setModal(null)}
         />
       )}
@@ -928,7 +920,7 @@ export default function Caja() {
         <ModalMovimiento
           cajaId={cajaActual.id}
           empleados={empleados}
-          onGuardado={() => { setModal(null); ok('Movimiento registrado.'); cargarCaja(); }}
+          onGuardado={() => { setModal(null); ok('Movimiento registrado.'); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
           onClose={() => setModal(null)}
         />
       )}

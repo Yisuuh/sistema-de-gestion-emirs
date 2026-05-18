@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
+import { useConfirm } from '../../lib/confirm';
 import {
   EnvelopeIcon,
   PlusIcon,
@@ -72,6 +73,7 @@ function Badge({ text, color = 'gray' }) {
 }
 
 export default function Notificaciones() {
+  const confirm = useConfirm();
   const [tab, setTab] = useState('plantillas'); // 'plantillas' | 'recordatorios' | 'historial'
 
   // ─── Plantillas ──────────────────────────────────────────────────────────
@@ -206,7 +208,12 @@ export default function Notificaciones() {
   };
 
   const eliminarPlantilla = async (id) => {
-    if (!window.confirm('¿Eliminar esta plantilla?')) return;
+    const confirmed = await confirm({
+      title: '¿Eliminar plantilla?',
+      message: 'Se eliminará permanentemente. No se puede deshacer.',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     const res = await apiFetch(`${API}/plantillas/${id}/`, { method: 'DELETE' });
     if (res.ok || res.status === 204) {
       ok('Plantilla eliminada.');
@@ -264,7 +271,13 @@ export default function Notificaciones() {
   };
 
   const ejecutarAhora = async (id, nombre) => {
-    if (!window.confirm(`¿Enviar "${nombre}" ahora a todos los clientes con email?`)) return;
+    const confirmed = await confirm({
+      title: '¿Enviar ahora?',
+      message: `Se enviará "${nombre}" a todos los clientes con email registrado.`,
+      variant: 'send',
+      confirmLabel: 'Enviar',
+    });
+    if (!confirmed) return;
     setEjecutandoRec(id);
     try {
       const res = await apiFetch(`${API}/recordatorios/${id}/ejecutar_ahora/`, { method: 'POST' });

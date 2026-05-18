@@ -1,25 +1,44 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ConfirmProvider } from './lib/confirm'
 
-// Layouts
+// Layouts — pequeños, siempre necesarios (eager)
 import MainLayout from './layouts/MainLayout'
 import AuthLayout from './layouts/AuthLayout'
 
-// Pages
-import Login from './pages/auth/Login'
-import Dashboard from './pages/Dashboard'
-import Inventario from './pages/inventario/Inventario'
-import Adeudos from './pages/inventario/Adeudos'
-import Ventas from './pages/ventas/Ventas'
-import Caja from './pages/caja/Caja'
-import Clientes from './pages/clientes/Clientes'
-import Notificaciones from './pages/notificaciones/Notificaciones'
-import Nomina from './pages/nomina/Nomina'
-import Gastos from './pages/gastos/Gastos'
-import Facturacion from './pages/facturacion/Facturacion'
-import Reportes from './pages/reportes/Reportes'
+// Páginas — lazy para code splitting por ruta
+const Login        = lazy(() => import('./pages/auth/Login'))
+const Dashboard    = lazy(() => import('./pages/Dashboard'))
+const Inventario   = lazy(() => import('./pages/inventario/Inventario'))
+const Adeudos      = lazy(() => import('./pages/inventario/Adeudos'))
+const Ventas       = lazy(() => import('./pages/ventas/Ventas'))
+const Caja         = lazy(() => import('./pages/caja/Caja'))
+const Clientes     = lazy(() => import('./pages/clientes/Clientes'))
+const Notificaciones = lazy(() => import('./pages/notificaciones/Notificaciones'))
+const Nomina       = lazy(() => import('./pages/nomina/Nomina'))
+const Gastos       = lazy(() => import('./pages/gastos/Gastos'))
+const Facturacion  = lazy(() => import('./pages/facturacion/Facturacion'))
+const Reportes     = lazy(() => import('./pages/reportes/Reportes'))
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 2,    // 2 min sin re-fetch
+      gcTime: 1000 * 60 * 5,       // 5 min caché inactiva
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+})
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center min-h-[50vh]">
+      <div className="w-8 h-8 border-4 border-[#df000a] border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
 
 // Componente para proteger rutas
 function ProtectedRoute({ children }) {
@@ -35,7 +54,9 @@ function ProtectedRoute({ children }) {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ConfirmProvider>
       <BrowserRouter>
+        <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Auth Routes */}
           <Route path="/auth" element={<AuthLayout />}>
@@ -65,7 +86,9 @@ function App() {
           {/* Redirección por defecto */}
           <Route path="*" element={<Navigate to="/auth/login" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
+      </ConfirmProvider>
     </QueryClientProvider>
   )
 }

@@ -83,8 +83,8 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
         <h2 className="text-xl font-bold mb-1">Registrar Pago</h2>
         <p className="text-sm text-gray-500 mb-4">
           Proveedor: <span className="font-medium text-gray-800">{proveedor.proveedor_nombre}</span>
@@ -96,7 +96,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
           </div>
         )}
         <form onSubmit={submit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto *</label>
               <input
@@ -375,7 +375,7 @@ function FilaProveedor({ resumen, onPago }) {
       {/* Fila resumen */}
       <button
         onClick={cargarDetalle}
-        className="w-full flex items-center gap-4 px-6 py-4 hover:bg-gray-50 text-left"
+        className="w-full flex flex-wrap items-center gap-3 px-4 sm:px-6 py-4 hover:bg-gray-50 text-left"
       >
         {cargando ? (
           <ArrowPathIcon className="h-5 w-5 text-gray-400 animate-spin flex-shrink-0" />
@@ -386,7 +386,7 @@ function FilaProveedor({ resumen, onPago }) {
         )}
 
         {/* Proveedor */}
-        <div className="w-52 min-w-[180px]">
+        <div className="flex-1 min-w-0 sm:w-52 sm:flex-none sm:min-w-[180px]">
           <div className="font-semibold text-gray-900 flex items-center gap-2">
             <BuildingStorefrontIcon className="h-4 w-4 text-gray-400" />
             {resumen.proveedor_nombre}

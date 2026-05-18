@@ -1,4 +1,6 @@
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useConfirm } from '../../lib/confirm';
 import {
   BanknotesIcon,
   CalendarDaysIcon,
@@ -115,17 +117,16 @@ const EMP_VACIO = {
   curp: '', rfc: '', nss: '', banco: '', cuenta_bancaria: '', notas: '',
 };
 export default function Nomina() {
+  const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const [vista, setVista] = useState('periodos'); // 'periodos' | 'captura' | 'empleados'
   const [exito, setExito] = useState(null);
   const [error, setError] = useState(null);
   const showExito = (msg) => { setExito(msg); setTimeout(() => setExito(null), 3500); };
 
   // ── Estado periodos ───────────────────────────────────────────────────────
-  const [periodos, setPeriodos] = useState([]);
-  const [loadingPeriodos, setLoadingPeriodos] = useState(true);
   const [modalPeriodo, setModalPeriodo] = useState(false);
   const [periodoForm, setPeriodoForm] = useState({ fecha_inicio: '', fecha_fin: '', observaciones: '' });
-  const [savingPeriodo, setSavingPeriodo] = useState(false);
 
   // ── Estado captura ────────────────────────────────────────────────────────
   const [periodoActivo, setPeriodoActivo] = useState(null);
@@ -137,19 +138,10 @@ export default function Nomina() {
   const [autoCalcLoading, setAutoCalcLoading] = useState(false);
 
   // ── Estado empleados ──────────────────────────────────────────────────────
-  const [empleados, setEmpleados] = useState([]);
-  const [loadingEmp, setLoadingEmp] = useState(true);
   const [modalEmp, setModalEmp] = useState(false);
   const [empEditando, setEmpEditando] = useState(null);
   const [empForm, setEmpForm] = useState(EMP_VACIO);
-  const [savingEmp, setSavingEmp] = useState(false);
   const [busqEmp, setBusqEmp] = useState('');
-
-  // ── Carga inicial ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    cargarPeriodos();
-    cargarEmpleados();
-  }, []);
 
   // Default week dates
   useEffect(() => {
@@ -162,39 +154,63 @@ export default function Nomina() {
   }, []);
 
   // ── Periodos API ──────────────────────────────────────────────────────────
-  const cargarPeriodos = async () => {
-    setLoadingPeriodos(true);
-    try {
+  const { data: periodos = [], isLoading: loadingPeriodos } = useQuery({
+    queryKey: ['nomina-periodos'],
+    queryFn: async () => {
       const data = await $fetch(`${API}/periodos/`);
-      setPeriodos(Array.isArray(data) ? data : data.results ?? []);
-    } catch (e) { setError(e.message); }
-    finally { setLoadingPeriodos(false); }
-  };
+      return Array.isArray(data) ? data : data.results ?? [];
+    },
+  });
 
-  const crearPeriodo = async (e) => {
-    e.preventDefault();
-    setSavingPeriodo(true);
-    setError(null);
-    try {
-      const nuevo = await $fetch(`${API}/periodos/`, { method: 'POST', body: JSON.stringify(periodoForm) });
-      setPeriodos((prev) => [nuevo, ...prev]);
+  const { data: empleados = [], isLoading: loadingEmp } = useQuery({
+    queryKey: ['nomina-empleados'],
+    queryFn: async () => {
+      const data = await $fetch(`${API}/empleados/`);
+      return Array.isArray(data) ? data : data.results ?? [];
+    },
+  });
+
+  const crearPeriodoMut = useMutation({
+    mutationFn: async () =>
+      $fetch(`${API}/periodos/`, { method: 'POST', body: JSON.stringify(periodoForm) }),
+    onSuccess: (nuevo) => {
+      queryClient.invalidateQueries({ queryKey: ['nomina-periodos'] });
       setModalPeriodo(false);
       showExito('Período creado con empleados activos pre-cargados');
       abrirCaptura(nuevo);
-    } catch (e) { setError(e.message); }
-    finally { setSavingPeriodo(false); }
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const eliminarPeriodoMut = useMutation({
+    mutationFn: async (id) => {
+      await $fetch(`${API}/periodos/${id}/`, { method: 'DELETE' });
+      return id;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nomina-periodos'] });
+      showExito('Período eliminado');
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  // ── Captura ───────────────────────────────────────────────────────────────
+  const crearPeriodo = (e) => {
+    e.preventDefault();
+    setError(null);
+    crearPeriodoMut.mutate();
   };
 
   const eliminarPeriodo = async (id) => {
-    if (!window.confirm('¿Eliminar este período? Se borrarán todas las líneas.')) return;
-    try {
-      await $fetch(`${API}/periodos/${id}/`, { method: 'DELETE' });
-      setPeriodos((prev) => prev.filter((p) => p.id !== id));
-      showExito('Período eliminado');
-    } catch (e) { setError(e.message); }
+    const ok = await confirm({
+      title: '¿Eliminar período?',
+      message: 'Se borrarán todas las líneas de nómina asociadas. Esta acción es irreversible.',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    eliminarPeriodoMut.mutate(id);
   };
 
-  // ── Captura ───────────────────────────────────────────────────────────────
   const abrirCaptura = async (periodo) => {
     setLoadingCaptura(true);
     setVista('captura');
@@ -238,7 +254,7 @@ export default function Nomina() {
       if (cambioPendiente) await guardarLineas();
       const updated = await $fetch(`${API}/periodos/${periodoActivo.id}/cerrar/`, { method: 'POST' });
       setPeriodoActivo(updated);
-      setPeriodos((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      queryClient.invalidateQueries({ queryKey: ['nomina-periodos'] });
       showExito('Período cerrado exitosamente');
     } catch (e) { setError(e.message); }
     finally { setConfirmAction(null); }
@@ -249,7 +265,7 @@ export default function Nomina() {
     try {
       const updated = await $fetch(`${API}/periodos/${periodoActivo.id}/marcar_pagada/`, { method: 'POST' });
       setPeriodoActivo(updated);
-      setPeriodos((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      queryClient.invalidateQueries({ queryKey: ['nomina-periodos'] });
       showExito('Período marcado como pagado');
     } catch (e) { setError(e.message); }
     finally { setConfirmAction(null); }
@@ -260,7 +276,7 @@ export default function Nomina() {
     try {
       const updated = await $fetch(`${API}/periodos/${periodoActivo.id}/reabrir/`, { method: 'POST' });
       setPeriodoActivo(updated);
-      setPeriodos((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      queryClient.invalidateQueries({ queryKey: ['nomina-periodos'] });
       showExito('Período reabierto');
     } catch (e) { setError(e.message); }
     finally { setConfirmAction(null); }
@@ -303,18 +319,49 @@ export default function Nomina() {
   };
 
   // ── Empleados API ─────────────────────────────────────────────────────────
-  const cargarEmpleados = async (q = '') => {
-    setLoadingEmp(true);
-    try {
-      const params = q ? `?search=${encodeURIComponent(q)}` : '';
-      const data = await $fetch(`${API}/empleados/${params}`);
-      setEmpleados(Array.isArray(data) ? data : data.results ?? []);
-    } catch (e) { setError(e.message); }
-    finally { setLoadingEmp(false); }
+  const guardarEmpMut = useMutation({
+    mutationFn: async (form) => {
+      const url = empEditando ? `${API}/empleados/${empEditando}/` : `${API}/empleados/`;
+      const method = empEditando ? 'PUT' : 'POST';
+      return $fetch(url, { method, body: JSON.stringify(form) });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nomina-empleados'] });
+      setModalEmp(false);
+      showExito(empEditando ? 'Empleado actualizado' : 'Empleado registrado');
+    },
+    onError: (e) => setError('Error al guardar: ' + e.message),
+  });
+
+  const eliminarEmpMut = useMutation({
+    mutationFn: async (id) => {
+      await $fetch(`${API}/empleados/${id}/`, { method: 'DELETE' });
+      return id;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nomina-empleados'] });
+      showExito('Empleado eliminado');
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const guardarEmp = (ev) => {
+    ev.preventDefault();
+    setError(null);
+    guardarEmpMut.mutate(empForm);
   };
 
-  const abrirNuevoEmp = () => { setEmpEditando(null); setEmpForm(EMP_VACIO); setModalEmp(true); };
-  const abrirEditarEmp = (e) => {
+  const eliminarEmp = async (id) => {
+    const ok = await confirm({
+      title: '¿Eliminar empleado?',
+      message: 'El empleado se removerá del sistema. No afecta a nóminas ya registradas.',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    eliminarEmpMut.mutate(id);
+  };
+
+  const editarEmp = (e) => {
     setEmpEditando(e.id);
     setEmpForm({
       nombre: e.nombre, apellido: e.apellido, telefono: e.telefono ?? '',
@@ -332,29 +379,10 @@ export default function Nomina() {
     setModalEmp(true);
   };
 
-  const guardarEmp = async (ev) => {
-    ev.preventDefault();
-    setSavingEmp(true); setError(null);
-    try {
-      const url = empEditando ? `${API}/empleados/${empEditando}/` : `${API}/empleados/`;
-      const method = empEditando ? 'PUT' : 'POST';
-      const saved = await $fetch(url, { method, body: JSON.stringify(empForm) });
-      setEmpleados((prev) =>
-        empEditando ? prev.map((e) => (e.id === empEditando ? saved : e)) : [...prev, saved]
-      );
-      setModalEmp(false);
-      showExito(empEditando ? 'Empleado actualizado' : 'Empleado registrado');
-    } catch (e) { setError('Error al guardar: ' + e.message); }
-    finally { setSavingEmp(false); }
-  };
-
-  const eliminarEmp = async (id) => {
-    if (!window.confirm('¿Eliminar este empleado?')) return;
-    try {
-      await $fetch(`${API}/empleados/${id}/`, { method: 'DELETE' });
-      setEmpleados((prev) => prev.filter((e) => e.id !== id));
-      showExito('Empleado eliminado');
-    } catch (e) { setError(e.message); }
+  const abrirNuevoEmp = () => {
+    setEmpEditando(null);
+    setEmpForm(EMP_VACIO);
+    setModalEmp(true);
   };
 
   // ── Totales de la captura ─────────────────────────────────────────────────
@@ -389,7 +417,7 @@ export default function Nomina() {
 
   // ═══ RENDER ════════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-100">
       {/* ── Alertas ── */}
       {(exito || error) && (
         <div className="fixed top-4 right-4 z-50 space-y-2 max-w-sm">
@@ -435,8 +463,16 @@ export default function Nomina() {
         <div className="max-w-7xl mx-auto px-4 md:px-6 flex items-center gap-1 h-14">
           {vista === 'captura' && (
             <button
-              onClick={() => {
-                if (cambioPendiente && !window.confirm('Tienes cambios sin guardar. ¿Salir?')) return;
+              onClick={async () => {
+                if (cambioPendiente) {
+                  const ok = await confirm({
+                    title: 'Cambios sin guardar',
+                    message: 'Tienes cambios pendientes en la nómina. ¿Salir de todas formas?',
+                    variant: 'leave',
+                    confirmLabel: 'Salir',
+                  });
+                  if (!ok) return;
+                }
                 setVista('periodos');
               }}
               className="flex items-center gap-1 text-gray-500 hover:text-gray-900 mr-3 text-sm"
@@ -794,7 +830,7 @@ export default function Nomina() {
                 type="text"
                 placeholder="Buscar empleado…"
                 value={busqEmp}
-                onChange={(e) => { setBusqEmp(e.target.value); cargarEmpleados(e.target.value); }}
+                onChange={(e) => setBusqEmp(e.target.value)}
                 className="w-full border border-gray-300 rounded-xl pl-4 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#df000a]"
               />
             </div>
@@ -844,7 +880,7 @@ export default function Nomina() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-center gap-2">
-                            <button onClick={() => abrirEditarEmp(e)}
+                            <button onClick={() => editarEmp(e)}
                               className="p-1.5 text-gray-400 hover:text-[#df000a] hover:bg-red-50 rounded transition-colors">
                               <PencilIcon className="w-4 h-4" />
                             </button>
@@ -898,9 +934,9 @@ export default function Nomina() {
                   className="flex-1 py-2.5 border border-gray-300 rounded-xl text-sm hover:bg-gray-50">
                   Cancelar
                 </button>
-                <button type="submit" disabled={savingPeriodo}
+                <button type="submit" disabled={crearPeriodoMut.isPending}
                   className="flex-1 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] disabled:opacity-50">
-                  {savingPeriodo ? 'Creando…' : 'Crear período'}
+                  {crearPeriodoMut.isPending ? 'Creando…' : 'Crear período'}
                 </button>
               </div>
             </form>
@@ -961,8 +997,8 @@ export default function Nomina() {
               </details>
               <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => setModalEmp(false)} className="flex-1 py-2.5 border border-gray-300 rounded-xl text-sm hover:bg-gray-50">Cancelar</button>
-                <button type="submit" disabled={savingEmp} className="flex-1 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] disabled:opacity-50">
-                  {savingEmp ? 'Guardando…' : empEditando ? 'Actualizar' : 'Registrar'}
+                <button type="submit" disabled={guardarEmpMut.isPending} className="flex-1 py-2.5 bg-[#df000a] text-white rounded-xl text-sm font-medium hover:bg-[#c4000a] disabled:opacity-50">
+                  {guardarEmpMut.isPending ? 'Guardando…' : empEditando ? 'Actualizar' : 'Registrar'}
                 </button>
               </div>
             </form>

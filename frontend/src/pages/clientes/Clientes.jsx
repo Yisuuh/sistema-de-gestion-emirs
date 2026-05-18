@@ -1,4 +1,6 @@
-﻿import { useState, useEffect } from 'react';
+﻿import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useConfirm } from '../../lib/confirm';
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -20,9 +22,9 @@ const CLIENTE_VACIO = { nombre: '', telefono: '', email: '', rfc: '', direccion:
 const VEHICULO_VACIO = { marca: '', modelo: '', año: new Date().getFullYear(), placas: '', medida_llantas: '' };
 
 export default function Clientes() {
-  const [clientes, setClientes] = useState([]);
+  const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const [busqueda, setBusqueda] = useState('');
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exito, setExito] = useState(null);
 
@@ -30,22 +32,13 @@ export default function Clientes() {
   const [modalCliente, setModalCliente] = useState(false);
   const [clienteForm, setClienteForm] = useState(CLIENTE_VACIO);
   const [clienteEditando, setClienteEditando] = useState(null);
-  const [savingCliente, setSavingCliente] = useState(false);
 
   // Panel lateral
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
   const [panelTab, setPanelTab] = useState('vehiculos');
-  const [compras, setCompras] = useState([]);
-  const [loadingCompras, setLoadingCompras] = useState(false);
   const [modalVehiculo, setModalVehiculo] = useState(false);
   const [vehiculoForm, setVehiculoForm] = useState(VEHICULO_VACIO);
   const [vehiculoEditando, setVehiculoEditando] = useState(null);
-  const [savingVehiculo, setSavingVehiculo] = useState(false);
-
-  // ─── Carga inicial ──────────────────────────────────────────────────────
-  useEffect(() => {
-    cargarClientes();
-  }, []);
 
   const mostrarExito = (msg) => {
     setExito(msg);
@@ -53,28 +46,53 @@ export default function Clientes() {
   };
 
   // ─── Clientes ───────────────────────────────────────────────────────────
-  const cargarClientes = async (q = '') => {
-    setLoading(true);
-    setError(null);
-    try {
-      const url = q
-        ? `${API}/clientes/?search=${encodeURIComponent(q)}`
+  const { data: clientes = [], isLoading: loading, error: queryError } = useQuery({
+    queryKey: ['clientes', busqueda],
+    queryFn: async () => {
+      const url = busqueda
+        ? `${API}/clientes/?search=${encodeURIComponent(busqueda)}`
         : `${API}/clientes/`;
       const res = await fetch(url, { headers: headers() });
       if (!res.ok) throw new Error('Error al cargar clientes');
       const data = await res.json();
-      setClientes(Array.isArray(data) ? data : data.results || []);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return Array.isArray(data) ? data : data.results || [];
+    },
+  });
 
-  const handleBusqueda = (e) => {
-    setBusqueda(e.target.value);
-    cargarClientes(e.target.value);
-  };
+  const handleBusqueda = (e) => setBusqueda(e.target.value);
+
+  const guardarClienteMut = useMutation({
+    mutationFn: async (formData) => {
+      const url = clienteEditando
+        ? `${API}/clientes/${clienteEditando}/`
+        : `${API}/clientes/`;
+      const method = clienteEditando ? 'PUT' : 'POST';
+      const res = await fetch(url, { method, headers: headers(), body: JSON.stringify(formData) });
+      if (!res.ok) { const err = await res.json(); throw new Error(JSON.stringify(err)); }
+      return res.json();
+    },
+    onSuccess: (saved) => {
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      if (clienteSeleccionado?.id === clienteEditando) setClienteSeleccionado(saved);
+      setModalCliente(false);
+      mostrarExito(clienteEditando ? 'Cliente actualizado' : 'Cliente creado');
+    },
+    onError: (e) => setError('Error al guardar cliente: ' + e.message),
+  });
+
+  const eliminarClienteMut = useMutation({
+    mutationFn: async (id) => {
+      const res = await fetch(`${API}/clientes/${id}/`, { method: 'DELETE', headers: headers() });
+      if (!res.ok) throw new Error();
+      return id;
+    },
+    onSuccess: (id) => {
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      if (clienteSeleccionado?.id === id) setClienteSeleccionado(null);
+      mostrarExito('Cliente eliminado');
+    },
+    onError: () => setError('Error al eliminar cliente'),
+  });
 
   const abrirModalNuevoCliente = () => {
     setClienteEditando(null);
@@ -95,47 +113,38 @@ export default function Clientes() {
     setModalCliente(true);
   };
 
-  const guardarCliente = async (e) => {
+  const guardarCliente = (e) => {
     e.preventDefault();
-    setSavingCliente(true);
-    try {
-      const url = clienteEditando
-        ? `${API}/clientes/${clienteEditando}/`
-        : `${API}/clientes/`;
-      const method = clienteEditando ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers: headers(), body: JSON.stringify(clienteForm) });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(JSON.stringify(err));
-      }
-      const saved = await res.json();
-      if (clienteEditando) {
-        setClientes((prev) => prev.map((c) => (c.id === clienteEditando ? saved : c)));
-        if (clienteSeleccionado?.id === clienteEditando) setClienteSeleccionado(saved);
-      } else {
-        setClientes((prev) => [...prev, saved]);
-      }
-      setModalCliente(false);
-      mostrarExito(clienteEditando ? 'Cliente actualizado' : 'Cliente creado');
-    } catch (e) {
-      setError('Error al guardar cliente: ' + e.message);
-    } finally {
-      setSavingCliente(false);
-    }
+    guardarClienteMut.mutate(clienteForm);
   };
 
   const eliminarCliente = async (id) => {
-    if (!window.confirm('¿Eliminar este cliente? También se eliminarán sus vehículos.')) return;
-    try {
-      const res = await fetch(`${API}/clientes/${id}/`, { method: 'DELETE', headers: headers() });
-      if (!res.ok) throw new Error();
-      setClientes((prev) => prev.filter((c) => c.id !== id));
-      if (clienteSeleccionado?.id === id) setClienteSeleccionado(null);
-      mostrarExito('Cliente eliminado');
-    } catch {
-      setError('Error al eliminar cliente');
-    }
+    const ok = await confirm({
+      title: '¿Eliminar cliente?',
+      message: 'También se eliminarán todos sus vehículos registrados.',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    eliminarClienteMut.mutate(id);
   };
+
+  // ─── Selección de cliente ────────────────────────────────────────────────
+  const seleccionarCliente = (cliente) => {
+    setClienteSeleccionado(cliente);
+    setPanelTab('vehiculos');
+  };
+
+  // ─── Historial de compras ────────────────────────────────────────────────
+  const { data: compras = [], isLoading: loadingCompras } = useQuery({
+    queryKey: ['compras-cliente', clienteSeleccionado?.id],
+    queryFn: async () => {
+      const res = await fetch(`${API}/clientes/${clienteSeleccionado.id}/ventas/`, { headers: headers() });
+      if (!res.ok) throw new Error('Error al cargar compras');
+      const data = await res.json();
+      return Array.isArray(data) ? data : data.results || [];
+    },
+    enabled: !!clienteSeleccionado && panelTab === 'compras',
+  });
 
   // ─── Vehículos ───────────────────────────────────────────────────────────
   const abrirModalNuevoVehiculo = () => {
@@ -157,10 +166,8 @@ export default function Clientes() {
     setModalVehiculo(true);
   };
 
-  const guardarVehiculo = async (e) => {
-    e.preventDefault();
-    setSavingVehiculo(true);
-    try {
+  const guardarVehiculoMut = useMutation({
+    mutationFn: async (formData) => {
       const url = vehiculoEditando
         ? `${API}/vehiculos/${vehiculoEditando}/`
         : `${API}/vehiculos/`;
@@ -168,38 +175,53 @@ export default function Clientes() {
       const res = await fetch(url, {
         method,
         headers: headers(),
-        body: JSON.stringify({ ...vehiculoForm, cliente: clienteSeleccionado.id }),
+        body: JSON.stringify({ ...formData, cliente: clienteSeleccionado.id }),
       });
       if (!res.ok) throw new Error();
-      const saved = await res.json();
+      return res.json();
+    },
+    onSuccess: (saved) => {
       const updatedVehiculos = vehiculoEditando
         ? clienteSeleccionado.vehiculos.map((v) => (v.id === vehiculoEditando ? saved : v))
         : [...(clienteSeleccionado.vehiculos || []), saved];
       const updatedCliente = { ...clienteSeleccionado, vehiculos: updatedVehiculos };
       setClienteSeleccionado(updatedCliente);
-      setClientes((prev) => prev.map((c) => (c.id === updatedCliente.id ? updatedCliente : c)));
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
       setModalVehiculo(false);
       mostrarExito(vehiculoEditando ? 'Vehículo actualizado' : 'Vehículo agregado');
-    } catch {
-      setError('Error al guardar vehículo');
-    } finally {
-      setSavingVehiculo(false);
-    }
+    },
+    onError: () => setError('Error al guardar vehículo'),
+  });
+
+  const guardarVehiculo = (e) => {
+    e.preventDefault();
+    guardarVehiculoMut.mutate(vehiculoForm);
   };
 
-  const eliminarVehiculo = async (id) => {
-    if (!window.confirm('¿Eliminar este vehículo?')) return;
-    try {
+  const eliminarVehiculoMut = useMutation({
+    mutationFn: async (id) => {
       const res = await fetch(`${API}/vehiculos/${id}/`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
+      return id;
+    },
+    onSuccess: (id) => {
       const updatedVehiculos = clienteSeleccionado.vehiculos.filter((v) => v.id !== id);
       const updatedCliente = { ...clienteSeleccionado, vehiculos: updatedVehiculos };
       setClienteSeleccionado(updatedCliente);
-      setClientes((prev) => prev.map((c) => (c.id === updatedCliente.id ? updatedCliente : c)));
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
       mostrarExito('Vehículo eliminado');
-    } catch {
-      setError('Error al eliminar vehículo');
-    }
+    },
+    onError: () => setError('Error al eliminar vehículo'),
+  });
+
+  const eliminarVehiculo = async (id) => {
+    const ok = await confirm({
+      title: '¿Eliminar vehículo?',
+      message: 'Esta acción no se puede deshacer.',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    eliminarVehiculoMut.mutate(id);
   };
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -216,8 +238,8 @@ export default function Clientes() {
           className="flex items-center gap-2 bg-[#df000a] text-white px-3 py-2 sm:px-4 rounded-lg hover:bg-[#c4000a] transition-colors whitespace-nowrap text-sm sm:text-base"
         >
           <PlusIcon className="w-5 h-5" />
-          <span className="hidden xs:inline">Nuevo Cliente</span>
-          <span className="xs:hidden">Nuevo</span>
+          <span className="hidden sm:inline">Nuevo Cliente</span>
+          <span className="sm:hidden">Nuevo</span>
         </button>
       </div>
 
@@ -227,9 +249,9 @@ export default function Clientes() {
           {exito}
         </div>
       )}
-      {error && (
+      {(error || queryError) && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-800 rounded-lg flex justify-between">
-          {error}
+          {error || 'Error al cargar clientes'}
           <button onClick={() => setError(null)}><XMarkIcon className="w-4 h-4" /></button>
         </div>
       )}
@@ -292,14 +314,14 @@ export default function Clientes() {
                         <div className="flex items-center justify-center gap-2">
                           <button
                             onClick={() => abrirModalEditarCliente(cliente)}
-                            className="p-1.5 text-[#df000a] hover:bg-red-100 rounded"
+                            className="p-2 text-[#df000a] hover:bg-red-100 rounded"
                             title="Editar"
                           >
                             <PencilIcon className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => eliminarCliente(cliente.id)}
-                            className="p-1.5 text-red-600 hover:bg-red-100 rounded"
+                            className="p-2 text-red-600 hover:bg-red-100 rounded"
                             title="Eliminar"
                           >
                             <TrashIcon className="w-4 h-4" />
@@ -316,7 +338,7 @@ export default function Clientes() {
 
         {/* ── Panel de vehículos ── */}
         {clienteSeleccionado && (
-          <div className="w-full lg:w-80 lg:shrink-0">
+          <div className="w-full md:w-80 md:shrink-0">
             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               {/* Encabezado panel */}
               <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-start justify-between">
@@ -351,10 +373,7 @@ export default function Clientes() {
                   Vehículos ({clienteSeleccionado.vehiculos?.length || 0})
                 </button>
                 <button
-                  onClick={() => {
-                    setPanelTab('compras');
-                    if (!compras.length && !loadingCompras) cargarCompras(clienteSeleccionado.id);
-                  }}
+                  onClick={() => setPanelTab('compras')}
                   className={`flex-1 py-2 text-xs font-medium transition-colors ${
                     panelTab === 'compras' ? 'text-[#df000a] border-b-2 border-[#df000a]' : 'text-gray-500 hover:text-gray-700'
                   }`}
@@ -462,7 +481,7 @@ export default function Clientes() {
       {/* ══ Modal Cliente ══════════════════════════════════════════════════ */}
       {modalCliente && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b">
               <h2 className="text-lg font-semibold text-gray-900">
                 {clienteEditando ? 'Editar Cliente' : 'Nuevo Cliente'}
@@ -473,7 +492,7 @@ export default function Clientes() {
             </div>
 
             <form onSubmit={guardarCliente} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Nombre <span className="text-red-500">*</span>
@@ -558,10 +577,10 @@ export default function Clientes() {
                 </button>
                 <button
                   type="submit"
-                  disabled={savingCliente}
+                  disabled={guardarClienteMut.isPending}
                   className="flex-1 bg-[#df000a] text-white py-2 rounded-lg hover:bg-[#c4000a] transition-colors disabled:opacity-50"
                 >
-                  {savingCliente ? 'Guardando...' : clienteEditando ? 'Actualizar' : 'Crear Cliente'}
+                  {guardarClienteMut.isPending ? 'Guardando...' : clienteEditando ? 'Actualizar' : 'Crear Cliente'}
                 </button>
               </div>
             </form>
@@ -572,7 +591,7 @@ export default function Clientes() {
       {/* ══ Modal Vehículo ═════════════════════════════════════════════════ */}
       {modalVehiculo && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b">
               <h2 className="text-lg font-semibold text-gray-900">
                 {vehiculoEditando ? 'Editar Vehículo' : 'Agregar Vehículo'}
@@ -583,7 +602,7 @@ export default function Clientes() {
             </div>
 
             <form onSubmit={guardarVehiculo} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Marca <span className="text-red-500">*</span>
@@ -664,10 +683,10 @@ export default function Clientes() {
                 </button>
                 <button
                   type="submit"
-                  disabled={savingVehiculo}
+                  disabled={guardarVehiculoMut.isPending}
                   className="flex-1 bg-[#df000a] text-white py-2 rounded-lg hover:bg-[#c4000a] transition-colors disabled:opacity-50"
                 >
-                  {savingVehiculo ? 'Guardando...' : vehiculoEditando ? 'Actualizar' : 'Agregar'}
+                  {guardarVehiculoMut.isPending ? 'Guardando...' : vehiculoEditando ? 'Actualizar' : 'Agregar'}
                 </button>
               </div>
             </form>
