@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CurrencyDollarIcon,
   ArrowUpIcon,
@@ -25,7 +26,7 @@ const hdrs = () => ({ Authorization: `Bearer ${tok()}` });
 const jsonHdrs = () => ({ ...hdrs(), 'Content-Type': 'application/json' });
 const fmt = (n) => Number(n || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-// ─── Denominaciones MXN ───────────────────────────────────────────────────────
+// --- Denominaciones MXN -------------------------------------------------------
 const BILLETES = [1000, 500, 200, 100, 50, 20];
 const MONEDAS  = [20, 10, 5, 2, 1, 0.5];
 const DENOM_INITIAL = Object.fromEntries([...BILLETES, ...MONEDAS].map((d) => [d, '']));
@@ -37,13 +38,13 @@ function calcTotalArqueo(arqueo) {
   );
 }
 
-// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function Badge({ text, color = 'gray' }) {
   const map = {
     green: 'bg-green-100 text-green-800',
     red: 'bg-red-100 text-red-800',
     yellow: 'bg-yellow-100 text-yellow-800',
-    blue: 'bg-blue-100 text-blue-800',
+    blue: 'bg-red-100 text-[#a80008]',
     gray: 'bg-gray-100 text-gray-600',
     purple: 'bg-purple-100 text-purple-800',
     orange: 'bg-orange-100 text-orange-800',
@@ -55,7 +56,7 @@ function Badge({ text, color = 'gray' }) {
 
 function StatCard({ icon: Icon, label, value, color = 'blue', sub }) {
   const colors = {
-    blue: 'bg-blue-50 text-blue-600 border-blue-200',
+    blue: 'bg-red-50 text-[#df000a] border-red-200',
     green: 'bg-green-50 text-green-600 border-green-200',
     purple: 'bg-purple-50 text-purple-600 border-purple-200',
     orange: 'bg-orange-50 text-orange-600 border-orange-200',
@@ -73,7 +74,7 @@ function StatCard({ icon: Icon, label, value, color = 'blue', sub }) {
   );
 }
 
-// â”€â”€â”€ Modal Apertura â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Modal Apertura ──────────────────────────────────────────────────────────
 function ModalApertura({ empleados, onGuardado, onClose }) {
   const [form, setForm] = useState({ empleado_apertura: '', monto_inicial: '', notas_apertura: '' });
   const [loading, setLoading] = useState(false);
@@ -142,7 +143,7 @@ function ModalApertura({ empleados, onGuardado, onClose }) {
   );
 }
 
-// â”€â”€â”€ Modal Cierre â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Modal Cierre ────────────────────────────────────────────────────────────
 function ModalCierre({ caja, empleados, onGuardado, onClose }) {
   const [paso, setPaso] = useState(1); // 1=arqueo, 2=confirmar
   const [arqueo, setArqueo] = useState(DENOM_INITIAL);
@@ -207,7 +208,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
           </div>
         </div>
 
-        {/* ─── Paso 1: Arqueo ─────────────────────────────────────────── */}
+        {/* --- Paso 1: Arqueo ------------------------------------------- */}
         {paso === 1 && (
           <div className="px-6 py-4 space-y-5">
             {/* Billetes */}
@@ -216,7 +217,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 <BanknotesIcon className="h-4 w-4 text-gray-500" />
                 Billetes
               </h3>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {BILLETES.map((d) => (
                   <div key={d} className="flex flex-col">
                     <label className="text-xs text-gray-500 mb-0.5 font-medium">${d}</label>
@@ -227,7 +228,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                         value={arqueo[d]}
                         onChange={(e) => setDenom(d, e.target.value)}
                         placeholder="0"
-                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
                       />
                       <span className="px-2 text-xs text-gray-400 bg-gray-50 border-l border-gray-300 h-full flex items-center">
                         pzs
@@ -249,7 +250,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 <CurrencyDollarIcon className="h-4 w-4 text-gray-500" />
                 Monedas
               </h3>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {MONEDAS.map((d) => (
                   <div key={d} className="flex flex-col">
                     <label className="text-xs text-gray-500 mb-0.5 font-medium">${d}</label>
@@ -260,7 +261,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                         value={arqueo[d]}
                         onChange={(e) => setDenom(d, e.target.value)}
                         placeholder="0"
-                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
                       />
                       <span className="px-2 text-xs text-gray-400 bg-gray-50 border-l border-gray-300 h-full flex items-center">
                         pzs
@@ -277,9 +278,9 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             </div>
 
             {/* Total arqueo */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
-              <span className="text-sm font-semibold text-blue-800">Total contado:</span>
-              <span className="text-xl font-bold text-blue-900">{fmt(totalArqueo)}</span>
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-[#a80008]">Total contado:</span>
+              <span className="text-xl font-bold text-[#8c0007]">{fmt(totalArqueo)}</span>
             </div>
 
             <div className="flex gap-3">
@@ -291,7 +292,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 type="button"
                 disabled={totalArqueo === 0}
                 onClick={() => setPaso(2)}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 flex items-center justify-center gap-2">
+                className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-40 flex items-center justify-center gap-2">
                 <CalculatorIcon className="h-4 w-4" />
                 Continuar
               </button>
@@ -299,7 +300,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
           </div>
         )}
 
-        {/* ─── Paso 2: Confirmar cierre ────────────────────────────────── */}
+        {/* --- Paso 2: Confirmar cierre ---------------------------------- */}
         {paso === 2 && (
           <form onSubmit={submit} className="px-6 py-4 space-y-4">
             <div className="rounded-lg border overflow-hidden text-sm">
@@ -346,7 +347,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             <div className="flex gap-3">
               <button type="button" onClick={() => setPaso(1)}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
-                ← Regresar
+                ? Regresar
               </button>
               <button type="submit" disabled={loading}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2">
@@ -361,7 +362,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
   );
 }
 
-// â”€â”€â”€ Modal Movimiento â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Modal Movimiento ────────────────────────────────────────────────────────
 function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
   const [form, setForm] = useState({ caja: cajaId, tipo: 'ingreso', concepto: '', descripcion: '', monto: '', empleado: '', categoria: '' });
   const [loading, setLoading] = useState(false);
@@ -384,8 +385,8 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-gray-900">Registrar Movimiento</h2>
           <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" /></button>
@@ -399,14 +400,14 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
                 className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${form.tipo === t
                   ? t === 'ingreso' ? 'bg-green-600 text-white border-green-600' : 'bg-red-600 text-white border-red-600'
                   : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
-                {t === 'ingreso' ? '↑ Ingreso' : '↓ Egreso'}
+                {t === 'ingreso' ? '? Ingreso' : '? Egreso'}
               </button>
             ))}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Empleado *</label>
             <select required value={form.empleado} onChange={(e) => setForm({ ...form, empleado: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
               <option value="">Seleccionar empleado</option>
               {empleados.map((e) => <option key={e.id} value={e.id}>{e.nombre} {e.apellido}</option>)}
             </select>
@@ -415,25 +416,30 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Concepto *</label>
               <input required type="text" value={form.concepto} onChange={(e) => setForm({ ...form, concepto: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto *</label>
               <input required type="number" min="0.01" step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })}
                 placeholder="0.00"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Categoría (opcional)</label>
             <input type="text" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}
               placeholder="Operativo, Servicios, etc."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
-          </div>
-          <div className="flex gap-3 pt-2">
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+          </div>          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Descripción (opcional)</label>
+            <textarea rows={2} value={form.descripcion}
+              onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+              placeholder="Detalles adicionales del movimiento"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] resize-none" />
+          </div>          <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancelar</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50">
               {loading ? 'Guardando...' : 'Registrar'}
             </button>
           </div>
@@ -443,7 +449,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
   );
 }
 
-// â”€â”€â”€ Panel Caja Activa â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Panel Caja Activa ────────────────────────────────────────────────────────
 function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal }) {
   const metodoPagoColor = { efectivo: 'green', tarjeta: 'blue', transferencia: 'purple', mixto: 'orange' };
   const metodoPagoLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', mixto: 'Mixto' };
@@ -468,7 +474,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
         </div>
         <div className="sm:ml-auto flex gap-2 flex-wrap">
           <button onClick={() => setModal('movimiento')}
-            className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm flex items-center gap-1.5">
+            className="px-3 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] text-sm flex items-center gap-1.5">
             <PlusIcon className="h-4 w-4" /> Movimiento
           </button>
           <button onClick={onRefresh}
@@ -483,7 +489,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={ShoppingCartIcon} label="Ventas registradas" value={caja.num_ventas ?? 0} color="blue" />
         <StatCard icon={CurrencyDollarIcon} label="Total ventas" value={fmt(caja.total_ventas)} color="green" />
         <StatCard icon={BanknotesIcon} label="Efectivo" value={fmt(caja.total_ventas_efectivo)} color="orange"
@@ -518,9 +524,9 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-white/[0.05]">
                 {ventas.map((v) => (
-                  <tr key={v.id} className="hover:bg-blue-50">
+                  <tr key={v.id} className="hover:bg-red-50">
                     <td className="px-4 py-3 font-mono font-semibold text-gray-800">{v.folio}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{v.fecha_formateada}</td>
                     <td className="px-4 py-3 text-gray-700">{v.empleado_nombre}</td>
@@ -530,7 +536,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                     </td>
                     <td className="px-4 py-3 text-center text-gray-600">{v.total_items}</td>
                     <td className="px-4 py-3 text-right text-green-700 font-mono">{fmt(v.monto_efectivo)}</td>
-                    <td className="px-4 py-3 text-right text-blue-700 font-mono">{fmt(v.monto_electronico)}</td>
+                    <td className="px-4 py-3 text-right text-[#df000a] font-mono">{fmt(v.monto_electronico)}</td>
                     <td className="px-4 py-3 text-right font-bold text-gray-900">{fmt(v.total)}</td>
                   </tr>
                 ))}
@@ -541,7 +547,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <td className="px-4 py-2 text-right font-bold text-green-700">
                     {fmt(ventas.reduce((s, v) => s + parseFloat(v.monto_efectivo || 0), 0))}
                   </td>
-                  <td className="px-4 py-2 text-right font-bold text-blue-700">
+                  <td className="px-4 py-2 text-right font-bold text-[#df000a]">
                     {fmt(ventas.reduce((s, v) => s + parseFloat(v.monto_electronico || 0), 0))}
                   </td>
                   <td className="px-4 py-2 text-right font-bold text-gray-900">
@@ -573,7 +579,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-white/[0.05]">
                 {movimientos.map((m) => (
                   <tr key={m.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{m.fecha_formateada}</td>
@@ -597,30 +603,26 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
   );
 }
 
-// â”€â”€â”€ Panel Historial â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Panel Historial ──────────────────────────────────────────────────────────
 function Historial() {
   const [periodo, setPeriodo] = useState('hoy');
   const [fechaInicio, setFechaInicio] = useState('');
   const [fechaFin, setFechaFin] = useState('');
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [submitted, setSubmitted] = useState({ periodo: 'hoy', fechaInicio: '', fechaFin: '' });
   const [cajasAbiertas, setCajasAbiertas] = useState({});
   const [ventasCaja, setVentasCaja] = useState({});
 
-  const cargar = useCallback(async (p, fi, ff) => {
-    setLoading(true); setError(null);
-    try {
-      let url = `${API_CAJA}/cajas/historial/?periodo=${p}`;
-      if (p === 'rango') url += `&fecha_inicio=${fi}&fecha_fin=${ff}`;
-      const res = await apiFetch(url, { headers: hdrs() });
+  const { data, isLoading: loading, error: queryError } = useQuery({
+    queryKey: ['historial-cajas', submitted.periodo, submitted.fechaInicio, submitted.fechaFin],
+    queryFn: async () => {
+      let url = `${API_CAJA}/cajas/historial/?periodo=${submitted.periodo}`;
+      if (submitted.periodo === 'rango') url += `&fecha_inicio=${submitted.fechaInicio}&fecha_fin=${submitted.fechaFin}`;
+      const res = await fetch(url, { headers: hdrs() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setData(await res.json());
-    } catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { cargar('hoy', '', ''); }, [cargar]);
+      return res.json();
+    },
+  });
+  const error = queryError ? String(queryError) : null;
 
   const toggleCaja = async (cajaId) => {
     const abierto = cajasAbiertas[cajaId];
@@ -650,7 +652,7 @@ function Historial() {
           {periodos.map((p) => (
             <button key={p.key}
               onClick={() => setPeriodo(p.key)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${periodo === p.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${periodo === p.key ? 'bg-[#df000a] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
               {p.label}
             </button>
           ))}
@@ -659,13 +661,13 @@ function Historial() {
           <div className="flex gap-2 items-center ml-2">
             <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
-            <span className="text-gray-400">–</span>
+            <span className="text-gray-400">—</span>
             <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
           </div>
         )}
-        <button onClick={() => cargar(periodo, fechaInicio, fechaFin)}
-          className="ml-2 px-4 py-1.5 bg-blue-600 text-white rounded-full text-sm font-medium hover:bg-blue-700 flex items-center gap-1.5">
+        <button onClick={() => setSubmitted({ periodo, fechaInicio, fechaFin })}
+          className="ml-2 px-4 py-1.5 bg-[#df000a] text-white rounded-full text-sm font-medium hover:bg-[#c4000a] flex items-center gap-1.5">
           {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : null}
           Buscar
         </button>
@@ -756,9 +758,9 @@ function Historial() {
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Total</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-50">
+                            <tbody className="divide-y divide-white/[0.05]">
                               {(vc.ventas || []).map((v) => (
-                                <tr key={v.id} className="hover:bg-blue-50">
+                                <tr key={v.id} className="hover:bg-red-50">
                                   <td className="px-4 py-2 font-mono font-semibold text-gray-800">{v.folio}</td>
                                   <td className="px-4 py-2 text-xs text-gray-500">{v.fecha_formateada}</td>
                                   <td className="px-4 py-2 text-gray-700">{v.empleado_nombre}</td>
@@ -767,7 +769,7 @@ function Historial() {
                                       color={{ efectivo: 'green', tarjeta: 'blue', transferencia: 'purple', mixto: 'orange' }[v.metodo_pago] ?? 'gray'} />
                                   </td>
                                   <td className="px-4 py-2 text-right font-mono text-green-700">{fmt(v.monto_efectivo)}</td>
-                                  <td className="px-4 py-2 text-right font-mono text-blue-700">{fmt(v.monto_electronico)}</td>
+                                  <td className="px-4 py-2 text-right font-mono text-[#df000a]">{fmt(v.monto_electronico)}</td>
                                   <td className="px-4 py-2 text-right font-bold text-gray-900">{fmt(v.total)}</td>
                                 </tr>
                               ))}
@@ -787,64 +789,59 @@ function Historial() {
   );
 }
 
-// â”€â”€â”€ PÃ¡gina principal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Página principal ─────────────────────────────────────────────────────────
 export default function Caja() {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState('activa');
-  const [cajaActual, setCajaActual] = useState(null);
-  const [ventas, setVentas] = useState([]);
-  const [movimientos, setMovimientos] = useState([]);
-  const [empleados, setEmpleados] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [exito, setExito] = useState(null);
   const [modal, setModal] = useState(null); // 'apertura' | 'cierre' | 'movimiento'
-  const autoRefreshRef = useRef(null);
 
-  const cargarCaja = useCallback(async () => {
-    try {
-      const res = await apiFetch(`${API_CAJA}/cajas/caja_actual/`, { headers: hdrs() });
-      if (res.ok) {
-        const caja = await res.json();
-        setCajaActual(caja);
-        const [resV, resM] = await Promise.all([
-          fetch(`${API_CAJA}/cajas/${caja.id}/ventas_caja/`, { headers: hdrs() }),
-          fetch(`${API_CAJA}/movimientos/?caja=${caja.id}`, { headers: hdrs() }),
-        ]);
-        if (resV.ok) { const d = await resV.json(); setVentas(d.ventas ?? []); }
-        if (resM.ok) { const d = await resM.json(); setMovimientos(Array.isArray(d) ? d : d.results ?? []); }
-      } else {
-        setCajaActual(null); setVentas([]); setMovimientos([]);
-      }
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, []);
+  const { data: cajaData, isLoading: loading } = useQuery({
+    queryKey: ['caja-activa'],
+    queryFn: async () => {
+      const res = await fetch(`${API_CAJA}/cajas/caja_actual/`, { headers: hdrs() });
+      if (!res.ok) return { cajaActual: null, ventas: [], movimientos: [] };
+      const caja = await res.json();
+      if (!caja || caja.estado !== 'abierta') return { cajaActual: caja, ventas: [], movimientos: [] };
+      const [resV, resM] = await Promise.all([
+        fetch(`${API_CAJA}/cajas/${caja.id}/ventas_caja/`, { headers: hdrs() }),
+        fetch(`${API_CAJA}/movimientos/?caja=${caja.id}`, { headers: hdrs() }),
+      ]);
+      const ventasData = resV.ok ? await resV.json() : {};
+      const movData = resM.ok ? await resM.json() : [];
+      return { cajaActual: caja, ventas: ventasData.ventas ?? [], movimientos: Array.isArray(movData) ? movData : movData.results ?? [] };
+    },
+    refetchInterval: 45000,
+    refetchIntervalInBackground: false,
+  });
+  const cajaActual = cajaData?.cajaActual ?? null;
+  const ventas = cajaData?.ventas ?? [];
+  const movimientos = cajaData?.movimientos ?? [];
 
-  const cargarEmpleados = useCallback(async () => {
-    try {
-      const res = await apiFetch(`${API_BASE}/api/nomina/empleados/?activos=true`, { headers: hdrs() });
-      if (res.ok) { const d = await res.json(); setEmpleados(Array.isArray(d) ? d : d.results ?? []); }
-    } catch (e) { console.error(e); }
-  }, []);
-
-  useEffect(() => {
-    cargarCaja();
-    cargarEmpleados();
-    autoRefreshRef.current = setInterval(cargarCaja, 45000);
-    return () => clearInterval(autoRefreshRef.current);
-  }, [cargarCaja, cargarEmpleados]);
+  const { data: empleados = [] } = useQuery({
+    queryKey: ['caja-empleados'],
+    queryFn: async () => {
+      const res = await fetch('/api/nomina/empleados/?activos=true', { headers: hdrs() });
+      if (!res.ok) return [];
+      const d = await res.json();
+      return Array.isArray(d) ? d : d.results ?? [];
+    },
+    staleTime: 10 * 60 * 1000,
+  });
 
   const ok = (msg) => { setExito(msg); setTimeout(() => setExito(null), 5000); };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto">
+      <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Caja</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
           <p className="text-sm text-gray-500 mt-0.5">Control de apertura, ventas, movimientos y cierre diario</p>
         </div>
         <div className="flex items-center gap-3">
           {cajaActual?.estado === 'abierta'
-            ? <Badge text="🟢 Caja abierta" color="green" />
-            : <Badge text="⚫ Sin caja activa" color="gray" />}
+            ? <Badge text="✅ Caja abierta" color="green" />
+            : <Badge text="⛔ Sin caja activa" color="gray" />}
         </div>
       </div>
 
@@ -856,13 +853,13 @@ export default function Caja() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-4 sm:mb-6">
         {[
           { key: 'activa', label: 'Caja Activa', icon: LockOpenIcon },
           { key: 'historial', label: 'Historial', icon: CalendarDaysIcon },
         ].map(({ key, label, icon: Icon }) => (
           <button key={key} onClick={() => setTab(key)}
-            className={`px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors ${tab === key ? 'bg-blue-600 text-white shadow-sm' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            className={`px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors ${tab === key ? 'bg-[#df000a] text-white shadow-sm' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
             <Icon className="h-4 w-4" />
             {label}
           </button>
@@ -882,7 +879,7 @@ export default function Caja() {
             ventas={ventas}
             movimientos={movimientos}
             empleados={empleados}
-            onRefresh={cargarCaja}
+            onRefresh={() => queryClient.invalidateQueries({ queryKey: ['caja-activa'] })}
             setModal={setModal}
           />
         ) : (
@@ -908,7 +905,7 @@ export default function Caja() {
       {modal === 'apertura' && (
         <ModalApertura
           empleados={empleados}
-          onGuardado={(data) => { setCajaActual(data); setModal(null); ok(`Caja ${data.folio} abierta exitosamente.`); cargarCaja(); }}
+          onGuardado={(data) => { setModal(null); ok(`Caja ${data.folio} abierta exitosamente.`); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
           onClose={() => setModal(null)}
         />
       )}
@@ -916,7 +913,7 @@ export default function Caja() {
         <ModalCierre
           caja={cajaActual}
           empleados={empleados}
-          onGuardado={(data) => { setCajaActual(data); setModal(null); ok(`Caja ${data.folio} cerrada. Diferencia: ${fmt(data.diferencia ?? 0)}`); cargarCaja(); }}
+          onGuardado={(data) => { setModal(null); ok(`Caja ${data.folio} cerrada. Diferencia: ${fmt(data.diferencia ?? 0)}`); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
           onClose={() => setModal(null)}
         />
       )}
@@ -924,7 +921,7 @@ export default function Caja() {
         <ModalMovimiento
           cajaId={cajaActual.id}
           empleados={empleados}
-          onGuardado={() => { setModal(null); ok('Movimiento registrado.'); cargarCaja(); }}
+          onGuardado={() => { setModal(null); ok('Movimiento registrado.'); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
           onClose={() => setModal(null)}
         />
       )}

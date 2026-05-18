@@ -28,6 +28,8 @@ class ProductoSerializer(serializers.ModelSerializer):
 
 class EntradaInventarioSerializer(serializers.ModelSerializer):
     producto_descripcion = serializers.CharField(source='producto.descripcion_completa', read_only=True)
+    producto_codigo = serializers.CharField(source='producto.codigo', read_only=True)
+    producto_medida = serializers.CharField(source='producto.medida', read_only=True)
     proveedor_nombre = serializers.CharField(source='proveedor.nombre', read_only=True)
     total_compra = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
@@ -40,8 +42,12 @@ class EntradaInventarioSerializer(serializers.ModelSerializer):
 
 class SalidaInventarioSerializer(serializers.ModelSerializer):
     producto_descripcion = serializers.CharField(source='producto.descripcion_completa', read_only=True)
+    producto_codigo = serializers.CharField(source='producto.codigo', read_only=True)
+    producto_medida = serializers.CharField(source='producto.medida', read_only=True)
+    marca_nombre = serializers.CharField(source='producto.marca.nombre', read_only=True)
+    venta_folio = serializers.CharField(source='venta.folio', read_only=True)
     total_venta = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-    
+
     class Meta:
         model = SalidaInventario
         fields = '__all__'

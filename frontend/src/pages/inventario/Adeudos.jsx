@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import {
   BuildingStorefrontIcon,
   BanknotesIcon,
@@ -84,8 +84,8 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
         <h2 className="text-xl font-bold mb-1">Registrar Pago</h2>
         <p className="text-sm text-gray-500 mb-4">
           Proveedor: <span className="font-medium text-gray-800">{proveedor.proveedor_nombre}</span>
@@ -97,14 +97,14 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
           </div>
         )}
         <form onSubmit={submit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto *</label>
               <input
                 type="number" min="0.01" step="0.01" required
                 value={form.monto}
                 onChange={(e) => setForm({ ...form, monto: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
                 placeholder="0.00"
               />
             </div>
@@ -114,7 +114,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
                 type="date" required
                 value={form.fecha}
                 onChange={(e) => setForm({ ...form, fecha: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
               />
             </div>
           </div>
@@ -127,7 +127,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
               value={form.referencia}
               onChange={(e) => setForm({ ...form, referencia: e.target.value })}
               placeholder="No. transferencia, cheque..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
             />
           </div>
           <div>
@@ -138,7 +138,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
               rows={2}
               value={form.notas}
               onChange={(e) => setForm({ ...form, notas: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] text-gray-900"
             />
           </div>
           <div className="flex gap-3 pt-2">
@@ -150,7 +150,7 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
             </button>
             <button
               type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loading ? (
                 <ArrowPathIcon className="h-4 w-4 animate-spin" />
@@ -195,7 +195,7 @@ function DetalleProveedor({ data, onPago }) {
                   ? <ChevronDownIcon className="h-4 w-4 text-gray-500 flex-shrink-0" />
                   : <ChevronRightIcon className="h-4 w-4 text-gray-500 flex-shrink-0" />
                 }
-                <div className="flex-1 grid grid-cols-4 gap-4 text-sm">
+                <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 text-sm">
                   <div>
                     <span className="font-mono font-semibold text-gray-800">{factura.numero_factura}</span>
                     <div className="text-xs text-gray-500">{factura.fecha_compra}</div>
@@ -239,13 +239,13 @@ function DetalleProveedor({ data, onPago }) {
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {factura.items.map((item) => (
-                        <tr key={item.entrada_id} className="hover:bg-blue-50">
+                        <tr key={item.entrada_id} className="hover:bg-red-50">
                           <td className="px-4 py-2 font-mono text-xs text-gray-700">{item.producto_codigo}</td>
                           <td className="px-4 py-2 text-gray-700 max-w-[200px]">
                             <span className="line-clamp-1">{item.producto_descripcion}</span>
                           </td>
                           <td className="px-4 py-2">
-                            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-mono">
+                            <span className="px-1.5 py-0.5 bg-red-100 text-[#df000a] rounded text-xs font-mono">
                               {item.medida}
                             </span>
                           </td>
@@ -376,7 +376,7 @@ function FilaProveedor({ resumen, onPago }) {
       {/* Fila resumen */}
       <button
         onClick={cargarDetalle}
-        className="w-full flex items-center gap-4 px-6 py-4 hover:bg-gray-50 text-left"
+        className="w-full flex flex-wrap items-center gap-3 px-4 sm:px-6 py-4 hover:bg-gray-50 text-left"
       >
         {cargando ? (
           <ArrowPathIcon className="h-5 w-5 text-gray-400 animate-spin flex-shrink-0" />
@@ -387,7 +387,7 @@ function FilaProveedor({ resumen, onPago }) {
         )}
 
         {/* Proveedor */}
-        <div className="w-52 min-w-[180px]">
+        <div className="flex-1 min-w-0 sm:w-52 sm:flex-none sm:min-w-[180px]">
           <div className="font-semibold text-gray-900 flex items-center gap-2">
             <BuildingStorefrontIcon className="h-4 w-4 text-gray-400" />
             {resumen.proveedor_nombre}
@@ -396,7 +396,7 @@ function FilaProveedor({ resumen, onPago }) {
         </div>
 
         {/* Deuda */}
-        <div className="flex-1 grid grid-cols-3 gap-6 text-sm">
+        <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 text-sm">
           <div>
             <div className="text-xs text-gray-400">Deuda total</div>
             <div className="font-semibold text-gray-800">{fmt(resumen.monto_total_deuda)}</div>
@@ -475,11 +475,11 @@ export default function Adeudos() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto">
       {/* Encabezado */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4 sm:mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Adeudos a Proveedores</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Adeudos a Proveedores</h1>
           <p className="text-sm text-gray-500 mt-1">
             Acumulado por factura. Haz clic en un proveedor para ver el detalle.
           </p>
@@ -509,10 +509,10 @@ export default function Adeudos() {
 
       {/* Tarjetas globales */}
       {resumen && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 sm:mb-6">
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <div className="flex items-center gap-3">
-              <DocumentTextIcon className="h-8 w-8 text-blue-500" />
+              <DocumentTextIcon className="h-8 w-8 text-[#df000a]" />
               <div>
                 <p className="text-sm text-gray-500">Deuda total con proveedores</p>
                 <p className="text-2xl font-bold text-gray-900">{fmt(resumen.total_deuda_global)}</p>

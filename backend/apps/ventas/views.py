@@ -31,15 +31,20 @@ class ServicioViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """
-        Filtrar servicios activos por defecto
+        Filtrar servicios activos por defecto en listados.
+        En acciones de detalle (retrieve, update, partial_update, destroy)
+        no se filtra para que los inactivos también sean accesibles.
         """
         queryset = super().get_queryset()
-        
-        # Filtrar solo activos si no se especifica lo contrario
+
+        # No filtrar en acciones de detalle para evitar 404 en inactivos
+        if self.action in ('retrieve', 'update', 'partial_update', 'destroy'):
+            return queryset
+
         solo_activos = self.request.query_params.get('activos', 'true')
         if solo_activos.lower() == 'true':
             queryset = queryset.filter(activo=True)
-        
+
         return queryset
 
 
@@ -244,6 +249,55 @@ class VentaViewSet(viewsets.ModelViewSet):
         ).order_by('-cantidad_total')[:limite]
         
         return Response(list(servicios_vendidos))
+
+    @action(detail=False, methods=['get'])
+    def acumulado_vendedor(self, request):
+        """
+        GET /api/ventas/ventas/acumulado_vendedor/?fecha_inicio=&fecha_fin=
+        Acumulado de ventas agrupado por vendedor.
+        """
+        hoy = timezone.now().date()
+        fecha_inicio = request.query_params.get('fecha_inicio', str(hoy.replace(day=1)))
+        fecha_fin = request.query_params.get('fecha_fin', str(hoy))
+
+        resultado = (
+            self.get_queryset()
+            .filter(fecha__date__range=[fecha_inicio, fecha_fin])
+            .values('empleado__id', 'empleado__nombre', 'empleado__apellido', 'empleado__comision_porcentaje')
+            .annotate(total_ventas=Sum('total'), num_ventas=Count('id'))
+            .order_by('-total_ventas')
+        )
+        data = []
+        for r in resultado:
+            total = float(r['total_ventas'] or 0)
+            pct = float(r['empleado__comision_porcentaje'] or 0)
+            data.append({
+                'empleado_id': r['empleado__id'],
+                'nombre': f"{r['empleado__nombre']} {r['empleado__apellido']}".strip(),
+                'total_ventas': total,
+                'num_ventas': r['num_ventas'],
+                'comision_porcentaje': pct,
+                'comision_calculada': round(total * pct / 100, 2),
+            })
+        return Response({'periodo': {'inicio': fecha_inicio, 'fin': fecha_fin}, 'vendedores': data})
+
+    @action(detail=False, methods=['get'])
+    def pendientes_facturar(self, request):
+        """Ventas con factura_pendiente=True o facturada=False."""
+        ventas = self.get_queryset().filter(factura_pendiente=True, facturada=False)
+        serializer = self.get_serializer(ventas, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['patch'])
+    def marcar_facturada(self, request, pk=None):
+        """PATCH /api/ventas/ventas/{id}/marcar_facturada/ — marca como facturada."""
+        venta = self.get_object()
+        cfdi_uuid = request.data.get('cfdi_uuid', '')
+        venta.facturada = True
+        venta.factura_pendiente = False
+        venta.cfdi_uuid = cfdi_uuid
+        venta.save(update_fields=['facturada', 'factura_pendiente', 'cfdi_uuid'])
+        return Response({'ok': True, 'cfdi_uuid': cfdi_uuid})
 
 
 class DetalleVentaViewSet(viewsets.ReadOnlyModelViewSet):

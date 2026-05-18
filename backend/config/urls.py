@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/nomina/', include('apps.nomina.urls')),
     path('api/clientes/', include('apps.clientes.urls')),
     path('api/reportes/', include('apps.reportes.urls')),
+    path('api/notificaciones/', include('apps.notificaciones.urls')),
 ]
 
 # Servir archivos media en desarrollo

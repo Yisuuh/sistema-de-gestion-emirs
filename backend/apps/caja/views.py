@@ -101,8 +101,16 @@ class CajaViewSet(viewsets.ModelViewSet):
             caja.fecha_cierre = timezone.now()
             caja.estado = 'cerrada'
             caja.save()
-            
-            return Response(CajaSerializer(caja).data)
+
+            diferencia = caja.diferencia
+            advertencia = None
+            if diferencia is not None and abs(float(diferencia)) > 0.01:
+                advertencia = f'Caja cerrada con diferencia de ${diferencia:+.2f}. Requiere revisión.'
+
+            data = CajaSerializer(caja).data
+            if advertencia:
+                data['advertencia'] = advertencia
+            return Response(data)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     

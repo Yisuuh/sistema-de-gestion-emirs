@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'apps.nomina.apps.NominaConfig',
     'apps.clientes.apps.ClientesConfig',
     'apps.reportes.apps.ReportesConfig',
+    'apps.notificaciones.apps.NotificacionesConfig',
 ]
 
 MIDDLEWARE = [
@@ -229,3 +230,18 @@ CELERY_TIMEZONE = 'America/Mexico_City'
 # Backup Configuration
 BACKUP_DIR = BASE_DIR / 'backups'
 BACKUP_RETENTION_DAYS = 30
+
+# ── Email (Gmail SMTP) ────────────────────────────────────────────────────────
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend'  # En dev imprime en consola
+)
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
+
+# Clave secreta para el endpoint /api/notificaciones/cron/
+CRON_SECRET_KEY = os.getenv('CRON_SECRET_KEY', 'cambia-esto-en-produccion')

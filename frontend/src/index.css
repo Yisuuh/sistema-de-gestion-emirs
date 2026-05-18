@@ -1,30 +1,256 @@
 @tailwind base;
+
+@layer base {
+  /* Override Tailwind's default border color to match dark theme */
+  *, ::before, ::after {
+    border-color: rgba(255, 255, 255, 0.07);
+  }
+}
+
 @tailwind components;
 @tailwind utilities;
 
+/* ══════════════════════════════════════════════════════════════
+   DESIGN TOKENS
+   ══════════════════════════════════════════════════════════════ */
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  --c-red:       #df000a;
+  --c-red-dim:   rgba(223, 0, 10, 0.18);
+  --c-yellow:    #f6ed00;
+  --c-orange:    #ef8701;
 
-  color-scheme: light;
-  color: #111827;
-  background-color: #f3f4f6;
+  /* Surfaces */
+  --c-bg:        #0d0f14;
+  --c-card:      #141720;
+  --c-elevated:  #1c1f2b;
+  --c-input:     #181b24;
+  --c-sidebar:   #0a0c10;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  /* Borders */
+  --c-border:    rgba(255, 255, 255, 0.07);
+  --c-border-md: rgba(255, 255, 255, 0.13);
+
+  /* Text */
+  --c-text-1:    #eceef2;
+  --c-text-2:    #8f95a3;
+  --c-text-3:    #4d5263;
+
+  font-family: 'DM Sans', system-ui, sans-serif;
+  color-scheme: dark;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-body {
-  margin: 0;
+html, body {
+  background: var(--c-bg);
+  color: var(--c-text-1);
+}
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+#root { width: 100%; min-height: 100vh; }
+
+/* ══════════════════════════════════════════════════════════════
+   SCROLLBARS
+   ══════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar             { width: 5px; height: 5px; }
+::-webkit-scrollbar-track       { background: transparent; }
+::-webkit-scrollbar-thumb       { background: rgba(255,255,255,0.10); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   PAGE ENTRY ANIMATION
+   ══════════════════════════════════════════════════════════════ */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-in { animation: fade-up 0.22s ease-out both; }
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: scale(0.92) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DARK REMAP — NEUTRAL BACKGROUNDS
+   ══════════════════════════════════════════════════════════════ */
+.bg-white    { background-color: var(--c-card)    !important; }
+.bg-gray-50  { background-color: var(--c-elevated) !important; }
+.bg-gray-100 { background-color: var(--c-bg)       !important; }
+.bg-gray-200 { background-color: #1e2232           !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   DARK REMAP — NEUTRAL TEXT
+   ══════════════════════════════════════════════════════════════ */
+.text-gray-900 { color: var(--c-text-1) !important; }
+.text-gray-800 { color: #d4d8e4         !important; }
+.text-gray-700 { color: #b8bcc8         !important; }
+.text-gray-600 { color: var(--c-text-2) !important; }
+.text-gray-500 { color: var(--c-text-2) !important; }
+.text-gray-400 { color: var(--c-text-3) !important; }
+.text-gray-300 { color: var(--c-text-2) !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   DARK REMAP — NEUTRAL BORDERS
+   ══════════════════════════════════════════════════════════════ */
+.border-gray-100 { border-color: rgba(255,255,255,0.05) !important; }
+.border-gray-200 { border-color: var(--c-border)        !important; }
+.border-gray-300 { border-color: var(--c-border-md)     !important; }
+.border-gray-700 { border-color: rgba(255,255,255,0.12) !important; }
+.border-gray-800 { border-color: rgba(255,255,255,0.08) !important; }
+.border-gray-900 { border-color: rgba(255,255,255,0.05) !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   SEMANTIC TEXT — BRIGHTENED FOR DARK BACKGROUNDS
+   Used for standalone metric values (not badges)
+   ══════════════════════════════════════════════════════════════ */
+.text-green-600, .text-green-700 { color: #22c55e !important; }
+.text-purple-600, .text-purple-700 { color: #a78bfa !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   SHADOWS — DARK APPROPRIATE
+   ══════════════════════════════════════════════════════════════ */
+.shadow-sm { box-shadow: 0 1px 4px rgba(0,0,0,0.5), 0 0 0 1px var(--c-border) !important; }
+.shadow    { box-shadow: 0 4px 14px rgba(0,0,0,0.6), 0 0 0 1px var(--c-border) !important; }
+.shadow-lg { box-shadow: 0 8px 30px rgba(0,0,0,0.7), 0 0 0 1px var(--c-border) !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   LIGHT PASTEL BACKGROUNDS → DARK-THEME FRIENDLY
+   Fixes badges/pills, callout areas, table headers, etc.
+   ══════════════════════════════════════════════════════════════ */
+.bg-green-50   { background-color: rgba(34, 197, 94, 0.07)   !important; }
+.bg-green-100  { background-color: rgba(34, 197, 94, 0.12)   !important; }
+.bg-red-50     { background-color: rgba(239, 68, 68, 0.07)   !important; }
+.bg-red-100    { background-color: rgba(239, 68, 68, 0.12)   !important; }
+.bg-yellow-50  { background-color: rgba(234, 179, 8, 0.07)   !important; }
+.bg-yellow-100 { background-color: rgba(234, 179, 8, 0.12)   !important; }
+.bg-orange-50  { background-color: rgba(249, 115, 22, 0.07)  !important; }
+.bg-orange-100 { background-color: rgba(249, 115, 22, 0.12)  !important; }
+.bg-purple-50  { background-color: rgba(168, 85, 247, 0.07)  !important; }
+.bg-purple-100 { background-color: rgba(168, 85, 247, 0.12)  !important; }
+.bg-blue-50    { background-color: rgba(59, 130, 246, 0.07)  !important; }
+.bg-blue-100   { background-color: rgba(59, 130, 246, 0.12)  !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   HOVER STATES — REMAP LIGHT HOVER TO DARK-APPROPRIATE
+   ══════════════════════════════════════════════════════════════ */
+.hover\:bg-gray-50:hover    { background-color: rgba(255,255,255,0.04) !important; }
+.hover\:bg-gray-100:hover   { background-color: rgba(255,255,255,0.06) !important; }
+.hover\:bg-red-50:hover     { background-color: rgba(239,68,68,0.08)   !important; }
+.hover\:bg-red-100:hover    { background-color: rgba(239,68,68,0.14)   !important; }
+.hover\:bg-green-50:hover   { background-color: rgba(34,197,94,0.07)   !important; }
+.hover\:bg-green-100:hover  { background-color: rgba(34,197,94,0.14)   !important; }
+.hover\:bg-yellow-50:hover  { background-color: rgba(234,179,8,0.08)   !important; }
+.hover\:bg-orange-50:hover  { background-color: rgba(249,115,22,0.08)  !important; }
+.hover\:bg-purple-50:hover  { background-color: rgba(168,85,247,0.08)  !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   TEXT COLORS — SATURATED VARIANTS FOR DARK BACKGROUNDS
+   Covers -600 through -800 so badge labels stay readable
+   ══════════════════════════════════════════════════════════════ */
+.text-green-500                    { color: #4ade80 !important; }
+.text-green-800                    { color: #4ade80 !important; }
+.text-red-500, .text-red-600,
+.text-red-700                      { color: #f87171 !important; }
+.text-red-800                      { color: #fca5a5 !important; }
+.text-yellow-600, .text-yellow-700,
+.text-yellow-800                   { color: #facc15 !important; }
+.text-orange-600, .text-orange-700,
+.text-orange-800                   { color: #fb923c !important; }
+.text-purple-800                   { color: #c084fc !important; }
+.text-blue-600, .text-blue-700,
+.text-blue-800                     { color: #60a5fa !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   FORM ELEMENTS
+   ══════════════════════════════════════════════════════════════ */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  background-color: var(--c-input)     !important;
+  border-color:     var(--c-border-md) !important;
+  color:            var(--c-text-1)    !important;
+}
+input::placeholder, textarea::placeholder {
+  color: var(--c-text-3) !important;
+}
+input:not([type="checkbox"]):not([type="radio"]):focus,
+textarea:focus,
+select:focus {
+  border-color: var(--c-red) !important;
+  outline:      none         !important;
+  box-shadow:   0 0 0 3px var(--c-red-dim) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TABLES
+   ══════════════════════════════════════════════════════════════ */
+.divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+.divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--c-border) !important;
+}
+thead th, thead tr {
+  background-color: var(--c-elevated) !important;
+  color: var(--c-text-2) !important;
+}
+tbody tr:hover {
+  background-color: rgba(255,255,255,0.025) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SIDEBAR NAV LINKS
+   ══════════════════════════════════════════════════════════════ */
+.nav-link {
   display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem 0.5rem 0.625rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--c-text-2);
+  border-left: 2px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease;
+  text-decoration: none;
+  line-height: 1.4;
+}
+.nav-link:hover {
+  background: rgba(255,255,255,0.045);
+  color: var(--c-text-1);
+}
+.nav-link.active {
+  background: rgba(223,0,10,0.12);
+  color: #ff4040;
+  border-left-color: var(--c-red);
+}
+.nav-link.active:hover {
+  background: rgba(223,0,10,0.16);
 }
 
-#root {
+.nav-logout {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--c-text-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
 }
+.nav-logout:hover {
+  background: rgba(220,38,38,0.10);
+  color: #f87171;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MODAL / OVERLAY BACKDROP
+   ══════════════════════════════════════════════════════════════ */
+.bg-black.bg-opacity-50 { background-color: rgba(0,0,0,0.75) !important; }
