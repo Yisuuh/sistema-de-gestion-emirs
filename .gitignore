@@ -78,3 +78,8 @@ celerybeat.pid
 *.sql
 *.sqlite
 *.db
+
+# Agents/skills
+skills-lock.json
+agents/
+skills/
