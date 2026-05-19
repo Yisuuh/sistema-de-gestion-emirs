@@ -138,13 +138,13 @@ setTicketVenta(venta);  // abre el modal de ticket automáticamente
 <ModalTicket venta={ticketVenta} onClose={() => setTicketVenta(null)} />
 ```
 
-### `frontend/src/pages/ventas/Ventas.jsx` — Historial de ventas
+### `frontend/src/pages/caja/` — Historial de ventas
 
-En la tabla donde se listan ventas, agregar una columna/botón de acción que:
+El historial de ventas vive en el módulo de Caja. En la tabla de ventas de ese módulo, agregar un botón de acción por fila que:
 1. Llama `GET /api/ventas/ventas/{id}/ticket/` para obtener los datos completos de la venta.
 2. Abre `ModalTicket` con esos datos.
 
-> La tabla de historial de ventas ya existe en la misma página (`Ventas.jsx`). Si aún no existe, se agrega junto con este cambio.
+`ModalTicket` se importa desde `components/ModalTicket.jsx` y se monta en ese mismo archivo. El estado `ticketVenta` se maneja localmente en el componente de caja que contiene el historial.
 
 ---
 
@@ -155,8 +155,8 @@ En `TicketImpresion.jsx` se declaran como constantes en la parte superior del ar
 ```js
 const NEGOCIO = {
   nombre: 'EmirS Centro Llantero',
-  direccion: '',   // completar antes de producción
-  telefono: '',    // completar antes de producción
+  direccion: 'Calle 42 #282 por 45, Fracc. Francisco de Montejo',
+  telefono: '999 371 8502',
   cierre: '¡Gracias por su preferencia!',
 };
 ```
@@ -194,7 +194,8 @@ El valor se muestra solo si `cambio > 0`.
 | `frontend/src/components/TicketImpresion.jsx` | **Nuevo** |
 | `frontend/src/components/ModalTicket.jsx` | **Nuevo** |
 | `frontend/src/index.css` | Agregar reglas `@media print` |
-| `frontend/src/pages/ventas/Ventas.jsx` | Integrar modal en `TabPOS` + botón en historial |
+| `frontend/src/pages/ventas/Ventas.jsx` | Integrar modal en `TabPOS` + botón "Reimprimir" en banner |
+| `frontend/src/pages/caja/` (archivo con historial de ventas) | Agregar botón de reimprimir por fila + montar `ModalTicket` |
 
 ---
 
