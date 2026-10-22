@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   BuildingStorefrontIcon,
   BanknotesIcon,
@@ -11,6 +11,7 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
+import ModalEditarPagoProveedor from './ModalEditarPagoProveedor';
 
 const API = '/api/inventario';
 const token = () => localStorage.getItem('token');
@@ -166,8 +167,9 @@ function ModalPago({ proveedor, onClose, onGuardado }) {
 }
 
 // ─── Detalle de un proveedor (facturas + pagos) ───────────────────────────────
-function DetalleProveedor({ data, onPago }) {
+function DetalleProveedor({ data, onPago, onRecargar }) {
   const [facturaAbierta, setFacturaAbierta] = useState(null);
+  const [pagoAEditar, setPagoAEditar] = useState(null);
 
   return (
     <div className="mt-4 space-y-4">
@@ -299,19 +301,34 @@ function DetalleProveedor({ data, onPago }) {
             <table className="min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
               <thead className="bg-green-50">
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-green-700">Fecha</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium text-green-700">Monto</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-green-700">Referencia</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-green-700">Notas</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-green-700">Fecha</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-green-700">Monto</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-green-700">Factura</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-green-700">Método</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-green-700">Referencia</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-green-700">Notas</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-green-700">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
                 {data.pagos.map((p) => (
                   <tr key={p.id} className="hover:bg-green-50">
-                    <td className="px-4 py-2 text-gray-700">{p.fecha}</td>
-                    <td className="px-4 py-2 text-right font-semibold text-green-700">{fmt(p.monto)}</td>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-600">{p.referencia || '—'}</td>
-                    <td className="px-4 py-2 text-gray-500 text-xs">{p.notas || '—'}</td>
+                    <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{p.fecha}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-green-700 font-mono">{fmt(p.monto)}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-700">{p.numero_factura || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-600 capitalize">{p.metodo_pago || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-600">{p.referencia || p.numero_referencia || '—'}</td>
+                    <td className="px-3 py-2 text-gray-500 text-xs max-w-xs truncate">{p.notas || '—'}</td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setPagoAEditar({ ...p, proveedor_nombre: data.proveedor_nombre })}
+                        className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                        title="Editar datos de pago"
+                      >
+                        <i className="ri-edit-line text-sm font-bold"></i>
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -323,12 +340,24 @@ function DetalleProveedor({ data, onPago }) {
       <div className="flex justify-end">
         <button
           onClick={onPago}
-          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 text-sm"
+          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 text-sm cursor-pointer shadow-xs"
         >
           <PlusIcon className="h-4 w-4" />
           Registrar Pago
         </button>
       </div>
+
+      {pagoAEditar && (
+        <ModalEditarPagoProveedor
+          isOpen={!!pagoAEditar}
+          pago={pagoAEditar}
+          onClose={() => setPagoAEditar(null)}
+          onGuardado={async () => {
+            setPagoAEditar(null);
+            await onRecargar?.();
+          }}
+        />
+      )}
     </div>
   );
 }

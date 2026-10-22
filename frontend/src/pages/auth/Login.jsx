@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 export default function Login() {
@@ -49,7 +49,7 @@ export default function Login() {
       {/* Error */}
       {error && (
         <div className="flex items-start gap-3 bg-[#1a0000] border border-[#df000a] text-red-300 px-4 py-3 rounded-xl mb-5 text-sm">
-          <span className="text-[#df000a] mt-0.5">✕</span>
+          <i className="ri-error-warning-fill text-[#df000a] text-lg flex-shrink-0 mt-0.5"></i>
           <span>{error}</span>
         </div>
       )}

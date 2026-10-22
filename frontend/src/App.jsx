@@ -20,6 +20,7 @@ const Nomina       = lazy(() => import('./pages/nomina/Nomina'))
 const Gastos       = lazy(() => import('./pages/gastos/Gastos'))
 const Facturacion  = lazy(() => import('./pages/facturacion/Facturacion'))
 const Reportes     = lazy(() => import('./pages/reportes/Reportes'))
+const Rescates     = lazy(() => import('./pages/rescates/Rescates'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -74,6 +75,7 @@ function App() {
             <Route path="inventario" element={<Inventario />} />
             <Route path="adeudos" element={<Adeudos />} />
             <Route path="ventas" element={<Ventas />} />
+            <Route path="rescates" element={<Rescates />} />
             <Route path="caja" element={<Caja />} />
             <Route path="clientes" element={<Clientes />} />
             <Route path="nomina" element={<Nomina />} />

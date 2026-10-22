@@ -40,6 +40,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         // Cachear assets estáticos (JS, CSS, imágenes)
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         // Estrategia network-first para las llamadas a la API

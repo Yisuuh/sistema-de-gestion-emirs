@@ -1,8 +1,10 @@
 """
 Serializers para el módulo de Ventas
 """
+from datetime import timedelta
+from decimal import Decimal
 from rest_framework import serializers
-from .models import Venta, DetalleVenta, Servicio
+from .models import Venta, DetalleVenta, Servicio, Cotizacion, OpcionCotizacion
 from apps.inventario.models import Producto
 from apps.clientes.models import Cliente
 
@@ -60,17 +62,28 @@ class VentaSerializer(serializers.ModelSerializer):
     detalles = DetalleVentaSerializer(many=True)
     empleado_nombre = serializers.CharField(source='empleado.nombre_completo', read_only=True)
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True, allow_null=True)
+    vehiculo_descripcion = serializers.SerializerMethodField()
     fecha_formateada = serializers.DateTimeField(source='fecha', format='%Y-%m-%d %H:%M:%S', read_only=True)
     
     class Meta:
         model = Venta
         fields = [
             'id', 'folio', 'fecha', 'fecha_formateada', 'empleado', 'empleado_nombre',
-            'cliente', 'cliente_nombre', 'caja', 'metodo_pago', 'monto_efectivo',
-            'monto_electronico', 'num_operacion', 'num_referencia',
-            'subtotal', 'descuento', 'total', 'notas', 'detalles'
+            'cliente', 'cliente_nombre', 'vehiculo', 'vehiculo_descripcion', 'kilometraje_actual',
+            'caja', 'metodo_pago', 'tipo_tarjeta',
+            'num_voucher_efectivo', 'num_voucher_tarjeta', 'num_voucher_transferencia',
+            'monto_efectivo', 'monto_electronico', 'num_operacion', 'num_referencia',
+            'subtotal', 'descuento', 'total', 'notas', 'facturada', 'cfdi_uuid',
+            'factura_pendiente', 'detalles'
         ]
         read_only_fields = ['id', 'folio', 'fecha', 'caja']
+
+    def get_vehiculo_descripcion(self, obj):
+        if not obj.vehiculo:
+            return None
+        v = obj.vehiculo
+        placas = f" ({v.placas})" if v.placas else ""
+        return f"{v.marca} {v.modelo} {v.año}{placas}"
     
     def validate_detalles(self, value):
         """
@@ -82,36 +95,75 @@ class VentaSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         """
-        Validar método de pago y montos
+        Validar método de pago, montos, tipo de tarjeta y caja abierta
         """
-        metodo_pago = data.get('metodo_pago')
-        monto_efectivo = data.get('monto_efectivo', 0)
-        monto_electronico = data.get('monto_electronico', 0)
+        from apps.caja.models import Caja
+
+        # Validar existencia de caja abierta
+        if self.instance is None:
+            caja_abierta = Caja.objects.filter(estado='abierta').first()
+            if not caja_abierta:
+                raise serializers.ValidationError({
+                    'caja': 'No existe ninguna caja abierta en este momento. Debe abrir una caja antes de poder registrar ventas.'
+                })
+            data['caja'] = caja_abierta
+        else:
+            if not getattr(self.instance, 'caja', None) and not data.get('caja'):
+                caja_abierta = Caja.objects.filter(estado='abierta').first()
+                if not caja_abierta:
+                    raise serializers.ValidationError({
+                        'caja': 'No existe ninguna caja abierta en este momento. Debe abrir una caja antes de poder registrar ventas.'
+                    })
+                data['caja'] = caja_abierta
+
+        metodo_pago = data.get('metodo_pago', getattr(self.instance, 'metodo_pago', None))
+        monto_efectivo = data.get('monto_efectivo', getattr(self.instance, 'monto_efectivo', 0))
+        monto_electronico = data.get('monto_electronico', getattr(self.instance, 'monto_electronico', 0))
+        tipo_tarjeta = data.get('tipo_tarjeta', getattr(self.instance, 'tipo_tarjeta', None))
+        total = data.get('total', getattr(self.instance, 'total', None))
+
+        total_val = Decimal(str(total)) if total is not None else Decimal('0')
+        monto_efectivo_val = Decimal(str(monto_efectivo)) if monto_efectivo is not None else Decimal('0')
+        monto_electronico_val = Decimal(str(monto_electronico)) if monto_electronico is not None else Decimal('0')
+
+        if tipo_tarjeta and tipo_tarjeta not in ['debito', 'credito']:
+            raise serializers.ValidationError({
+                "tipo_tarjeta": "Tipo de tarjeta inválido. Debe ser 'debito' o 'credito'."
+            })
         
-        if metodo_pago == 'efectivo' and monto_efectivo <= 0:
-            raise serializers.ValidationError(
-                "El monto en efectivo debe ser mayor a 0 para pago en efectivo"
-            )
+        if metodo_pago == 'efectivo':
+            if monto_efectivo_val <= Decimal('0'):
+                raise serializers.ValidationError(
+                    "El monto en efectivo debe ser mayor a 0 para pago en efectivo"
+                )
+            if total is not None and monto_efectivo_val < total_val:
+                raise serializers.ValidationError({
+                    'monto_efectivo': 'El monto en efectivo entregado no puede ser menor al total de la venta.'
+                })
         
-        if metodo_pago in ['tarjeta', 'transferencia'] and monto_electronico <= 0:
+        if metodo_pago in ['tarjeta', 'transferencia'] and monto_electronico_val <= Decimal('0'):
             raise serializers.ValidationError(
                 "El monto electrónico debe ser mayor a 0 para este método de pago"
             )
         
         if metodo_pago == 'mixto':
-            if monto_efectivo <= 0 or monto_electronico <= 0:
+            if monto_efectivo_val <= Decimal('0') or monto_electronico_val <= Decimal('0'):
                 raise serializers.ValidationError(
                     "Para pago mixto, ambos montos deben ser mayores a 0"
                 )
+            if total is not None and (monto_efectivo_val + monto_electronico_val) < total_val:
+                raise serializers.ValidationError({
+                    'monto_efectivo': 'La suma del monto en efectivo y electrónico no puede ser menor al total de la venta.'
+                })
 
         # Validar número de operación para tarjeta
-        if metodo_pago in ['tarjeta', 'mixto'] and not data.get('num_operacion', '').strip():
+        if metodo_pago == 'tarjeta' and not data.get('num_operacion', getattr(self.instance, 'num_operacion', '')).strip():
             raise serializers.ValidationError(
                 "El número de operación es requerido para pagos con tarjeta"
             )
 
         # Validar número de referencia para transferencia
-        if metodo_pago in ['transferencia', 'mixto'] and not data.get('num_referencia', '').strip():
+        if metodo_pago == 'transferencia' and not data.get('num_referencia', getattr(self.instance, 'num_referencia', '')).strip():
             raise serializers.ValidationError(
                 "El número de referencia es requerido para pagos por transferencia"
             )
@@ -120,34 +172,69 @@ class VentaSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """
-        Crear venta con sus detalles
+        Crear venta con sus detalles y actualizar expediente clínico del vehículo si aplica
         """
-        from django.db import transaction
+        from django.db import transaction, models
         from apps.inventario.models import SalidaInventario, EntradaInventario
         from django.utils import timezone
+        from apps.ventas.services import generar_siguiente_folio_atomico
+        from apps.caja.models import Caja as CajaModel
         
         detalles_data = validated_data.pop('detalles')
         
-        # Generar folio automático
-        ultima_venta = Venta.objects.all().order_by('-id').first()
-        if ultima_venta and ultima_venta.folio:
-            try:
-                numero = int(ultima_venta.folio.replace('V-', '')) + 1
-            except:
-                numero = 1
-        else:
-            numero = 1
-        validated_data['folio'] = f'V-{numero:06d}'
-        
         with transaction.atomic():
+            # Generar folio automático atómico
+            validated_data['folio'] = generar_siguiente_folio_atomico('VENTA', Venta, 'V-', 6)
+            
             # Auto-asignar caja abierta
-            from apps.caja.models import Caja as CajaModel
             caja_abierta = CajaModel.objects.filter(estado='abierta').first()
             if caja_abierta:
                 validated_data['caja'] = caja_abierta
 
+            # Correlativos del día
+            hoy = timezone.localdate()
+            ventas_hoy = Venta.objects.filter(fecha__date=hoy)
+
+            metodo = validated_data.get('metodo_pago')
+            m_efectivo = validated_data.get('monto_efectivo', 0)
+            m_electronico = validated_data.get('monto_electronico', 0)
+
+            if (metodo in ['efectivo', 'mixto']) and m_efectivo > 0:
+                max_ef = ventas_hoy.aggregate(m=models.Max('num_voucher_efectivo'))['m'] or 0
+                validated_data['num_voucher_efectivo'] = max_ef + 1
+
+            if metodo == 'tarjeta' and m_electronico > 0:
+                max_tarj = ventas_hoy.aggregate(m=models.Max('num_voucher_tarjeta'))['m'] or 0
+                validated_data['num_voucher_tarjeta'] = max_tarj + 1
+            elif metodo == 'transferencia' and m_electronico > 0:
+                max_trans = ventas_hoy.aggregate(m=models.Max('num_voucher_transferencia'))['m'] or 0
+                validated_data['num_voucher_transferencia'] = max_trans + 1
+            elif metodo == 'mixto' and m_electronico > 0:
+                if validated_data.get('tipo_tarjeta') or validated_data.get('num_operacion'):
+                    max_tarj = ventas_hoy.aggregate(m=models.Max('num_voucher_tarjeta'))['m'] or 0
+                    validated_data['num_voucher_tarjeta'] = max_tarj + 1
+                elif validated_data.get('num_referencia'):
+                    max_trans = ventas_hoy.aggregate(m=models.Max('num_voucher_transferencia'))['m'] or 0
+                    validated_data['num_voucher_transferencia'] = max_trans + 1
+                else:
+                    max_tarj = ventas_hoy.aggregate(m=models.Max('num_voucher_tarjeta'))['m'] or 0
+                    validated_data['num_voucher_tarjeta'] = max_tarj + 1
+
             # Crear venta
             venta = Venta.objects.create(**validated_data)
+
+            # Actualizar expediente clínico del vehículo si viene asociado
+            if venta.vehiculo:
+                vehiculo = venta.vehiculo
+                vehiculo.fecha_ultimo_servicio = hoy
+                vehiculo.fecha_proximo_servicio = hoy + timedelta(days=180)
+                if venta.kilometraje_actual and venta.kilometraje_actual > 0:
+                    vehiculo.kilometraje_ultimo = venta.kilometraje_actual
+                vehiculo.save(update_fields=[
+                    'fecha_ultimo_servicio',
+                    'fecha_proximo_servicio',
+                    'kilometraje_ultimo'
+                ])
             
             # Crear detalles y registrar salidas de inventario
             for detalle_data in detalles_data:
@@ -165,18 +252,16 @@ class VentaSerializer(serializers.ModelSerializer):
                             f"Disponible: {stock_disponible}, Solicitado: {detalle_data['cantidad']}"
                         )
                     
-                    # Calcular precio de costo promedio (PEPS - Primera Entrada Primera Salida)
-                    # Obtener la entrada más antigua con stock disponible
+                    # Calcular precio de costo PEPS
                     entradas = EntradaInventario.objects.filter(
                         producto=producto,
                         en_inventario=True
                     ).order_by('fecha_compra')
                     
-                    # Usar precio promedio de las entradas o el 70% del precio de venta como fallback
                     if entradas.exists():
                         precio_costo = entradas.first().precio_compra
                     else:
-                        precio_costo = detalle_data['precio_unitario'] * 0.70  # Estimado
+                        precio_costo = detalle_data['precio_unitario'] * Decimal('0.70')  # Estimado
                     
                     # Registrar salida
                     SalidaInventario.objects.create(
@@ -185,13 +270,69 @@ class VentaSerializer(serializers.ModelSerializer):
                         cantidad=detalle_data['cantidad'],
                         precio_venta=detalle_data['precio_unitario'],
                         precio_costo=precio_costo,
-                        fecha_venta=timezone.now().date()
+                        fecha_venta=timezone.localdate()
                     )
         
         # Recargar la venta con los detalles para obtener productos actualizados
         venta.refresh_from_db()
         
         return venta
+
+    def update(self, instance, validated_data):
+        """
+        Actualizar venta y sus detalles de forma transaccional
+        """
+        from django.db import transaction
+        from apps.inventario.models import SalidaInventario, EntradaInventario
+        from django.utils import timezone
+
+        detalles_data = validated_data.pop('detalles', None)
+
+        with transaction.atomic():
+            # Si vienen detalles, revertir salidas previas y reemplazar detalles
+            if detalles_data is not None:
+                SalidaInventario.objects.filter(venta=instance).delete()
+                instance.detalles.all().delete()
+
+                for detalle_data in detalles_data:
+                    DetalleVenta.objects.create(venta=instance, **detalle_data)
+
+                    if detalle_data.get('producto'):
+                        producto = detalle_data['producto']
+                        stock_disponible = producto.stock_actual
+                        if stock_disponible < detalle_data['cantidad']:
+                            raise serializers.ValidationError(
+                                f"Stock insuficiente para {producto.descripcion_completa}. "
+                                f"Disponible: {stock_disponible}, Solicitado: {detalle_data['cantidad']}"
+                            )
+
+                        entradas = EntradaInventario.objects.filter(
+                            producto=producto,
+                            en_inventario=True
+                        ).order_by('fecha_compra')
+
+                        if entradas.exists():
+                            precio_costo = entradas.first().precio_compra
+                        else:
+                            precio_costo = detalle_data['precio_unitario'] * Decimal('0.70')
+
+                        SalidaInventario.objects.create(
+                            producto=producto,
+                            venta=instance,
+                            cantidad=detalle_data['cantidad'],
+                            precio_venta=detalle_data['precio_unitario'],
+                            precio_costo=precio_costo,
+                            fecha_venta=instance.fecha.date() if instance.fecha else timezone.localdate()
+                        )
+
+            # Actualizar campos de la venta
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+
+            instance.save()
+
+        instance.refresh_from_db()
+        return instance
     
     def to_representation(self, instance):
         """
@@ -200,7 +341,6 @@ class VentaSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         
         # Incluir productos actualizados con su stock
-        from apps.inventario.serializers import ProductoSerializer
         productos_actualizados = []
         
         for detalle in instance.detalles.all():
@@ -232,6 +372,172 @@ class VentaListSerializer(serializers.ModelSerializer):
         model = Venta
         fields = [
             'id', 'folio', 'fecha', 'fecha_formateada', 'empleado_nombre',
-            'cliente_nombre', 'caja', 'metodo_pago', 'monto_efectivo',
-            'monto_electronico', 'num_operacion', 'num_referencia', 'total', 'total_items'
+            'cliente', 'cliente_nombre', 'vehiculo', 'kilometraje_actual',
+            'caja', 'metodo_pago', 'tipo_tarjeta',
+            'num_voucher_efectivo', 'num_voucher_tarjeta', 'num_voucher_transferencia',
+            'monto_efectivo', 'monto_electronico', 'num_operacion', 'num_referencia',
+            'total', 'total_items', 'facturada', 'factura_pendiente'
         ]
+
+
+class OpcionCotizacionSerializer(serializers.ModelSerializer):
+    """
+    Serializer para opciones comparativas de cotización (con calculadora de margen interna)
+    """
+    proveedor_nombre = serializers.CharField(source='proveedor.nombre', read_only=True, allow_null=True)
+    utilidad_unitaria = serializers.SerializerMethodField()
+    utilidad_total = serializers.SerializerMethodField()
+    precio_unitario_publico = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+
+    class Meta:
+        model = OpcionCotizacion
+        fields = [
+            'id', 'cotizacion', 'gama', 'origen',
+            'producto', 'proveedor', 'proveedor_nombre', 'proveedor_nombre_libre',
+            'marca', 'modelo', 'medida', 'tiempo_entrega',
+            'costo_proveedor', 'tipo_margen', 'valor_margen',
+            'precio_unitario_publico', 'precio_par', 'precio_juego_4',
+            'precio_cantidad_solicitada', 'recomendada',
+            'utilidad_unitaria', 'utilidad_total'
+        ]
+        read_only_fields = ['id', 'cotizacion']
+
+    def get_utilidad_unitaria(self, obj):
+        costo = Decimal(str(obj.costo_proveedor or 0))
+        precio = Decimal(str(obj.precio_unitario_publico or 0))
+        return float(round(precio - costo, 2))
+
+    def get_utilidad_total(self, obj):
+        costo = Decimal(str(obj.costo_proveedor or 0))
+        precio = Decimal(str(obj.precio_unitario_publico or 0))
+        cant = getattr(obj.cotizacion, 'cantidad_requerida', 4) or 4
+        return float(round((precio - costo) * Decimal(str(cant)), 2))
+
+    def validate(self, data):
+        costo = Decimal(str(data.get('costo_proveedor', 0) or 0))
+        tipo_margen = data.get('tipo_margen', 'porcentaje')
+        valor_margen = Decimal(str(data.get('valor_margen', 0) or 0))
+        precio_pub = data.get('precio_unitario_publico')
+
+        if precio_pub is None or Decimal(str(precio_pub)) <= Decimal('0'):
+            if costo > Decimal('0'):
+                if tipo_margen == 'porcentaje':
+                    precio_pub = (costo * (Decimal('1') + (valor_margen / Decimal('100')))).quantize(Decimal('0.01'))
+                else:
+                    precio_pub = (costo + valor_margen).quantize(Decimal('0.01'))
+            else:
+                precio_pub = Decimal('0.00')
+            data['precio_unitario_publico'] = precio_pub
+        else:
+            precio_pub = Decimal(str(precio_pub)).quantize(Decimal('0.01'))
+            data['precio_unitario_publico'] = precio_pub
+
+        if not data.get('precio_par') or Decimal(str(data.get('precio_par', 0))) <= Decimal('0'):
+            data['precio_par'] = (precio_pub * Decimal('2')).quantize(Decimal('0.01'))
+
+        if not data.get('precio_juego_4') or Decimal(str(data.get('precio_juego_4', 0))) <= Decimal('0'):
+            data['precio_juego_4'] = (precio_pub * Decimal('4')).quantize(Decimal('0.01'))
+
+        return data
+
+
+class CotizacionSerializer(serializers.ModelSerializer):
+    """
+    Serializer completo para Cotizaciones Multimarca con creación/edición anidada de opciones
+    """
+    opciones = OpcionCotizacionSerializer(many=True)
+    elaborado_por_nombre = serializers.SerializerMethodField()
+    fecha_formateada = serializers.DateTimeField(source='fecha', format='%Y-%m-%d %H:%M', read_only=True)
+    fecha_vencimiento = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cotizacion
+        fields = [
+            'id', 'folio', 'fecha', 'fecha_formateada', 'vigencia_dias', 'fecha_vencimiento',
+            'cliente', 'vehiculo', 'nombre_cliente', 'telefono_cliente',
+            'vehiculo_referencia', 'medida_solicitada', 'cantidad_requerida',
+            'incluye_montaje', 'incluye_balanceo', 'incluye_valvula', 'incluye_alineacion',
+            'servicios_adicionales',
+            'notas_cliente', 'notas_internas', 'estado',
+            'elaborado_por', 'elaborado_por_nombre', 'opciones'
+        ]
+        read_only_fields = ['id', 'folio', 'fecha', 'elaborado_por']
+
+    def get_elaborado_por_nombre(self, obj):
+        if not obj.elaborado_por:
+            return 'Asesor EmirS'
+        return obj.elaborado_por.get_full_name() or obj.elaborado_por.username
+
+    def get_fecha_vencimiento(self, obj):
+        if not obj.fecha:
+            return None
+        venc = obj.fecha.date() + timedelta(days=obj.vigencia_dias or 5)
+        return str(venc)
+
+    def validate_servicios_adicionales(self, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("servicios_adicionales debe ser una lista de textos.")
+        return [str(item).strip() for item in value if item and str(item).strip()]
+
+    def validate_opciones(self, value):
+        if not value:
+            raise serializers.ValidationError("Debe incluir al menos una opción en la cotización.")
+        return value
+
+    def create(self, validated_data):
+        from django.db import transaction
+        from apps.ventas.services import generar_siguiente_folio_atomico
+
+        opciones_data = validated_data.pop('opciones', [])
+        cliente = validated_data.get('cliente')
+        vehiculo = validated_data.get('vehiculo')
+
+        if cliente:
+            if not validated_data.get('nombre_cliente'):
+                validated_data['nombre_cliente'] = cliente.nombre
+            if not validated_data.get('telefono_cliente'):
+                validated_data['telefono_cliente'] = cliente.telefono
+
+        if vehiculo and not validated_data.get('vehiculo_referencia'):
+            placas = f" ({vehiculo.placas})" if vehiculo.placas else ""
+            validated_data['vehiculo_referencia'] = f"{vehiculo.marca} {vehiculo.modelo} {vehiculo.año}{placas}"
+
+        cant_req = Decimal(str(validated_data.get('cantidad_requerida', 4) or 4))
+
+        with transaction.atomic():
+            validated_data['folio'] = generar_siguiente_folio_atomico('COTIZACION', Cotizacion, 'COT-', 6)
+            cotizacion = Cotizacion.objects.create(**validated_data)
+
+            for op_data in opciones_data:
+                pu = Decimal(str(op_data.get('precio_unitario_publico', 0)))
+                if not op_data.get('precio_cantidad_solicitada') or Decimal(str(op_data.get('precio_cantidad_solicitada', 0))) <= Decimal('0'):
+                    op_data['precio_cantidad_solicitada'] = (pu * cant_req).quantize(Decimal('0.01'))
+                OpcionCotizacion.objects.create(cotizacion=cotizacion, **op_data)
+
+        cotizacion.refresh_from_db()
+        return cotizacion
+
+    def update(self, instance, validated_data):
+        from django.db import transaction
+
+        opciones_data = validated_data.pop('opciones', None)
+
+        with transaction.atomic():
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            instance.save()
+
+            if opciones_data is not None:
+                instance.opciones.all().delete()
+                cant_req = Decimal(str(instance.cantidad_requerida or 4))
+                for op_data in opciones_data:
+                    pu = Decimal(str(op_data.get('precio_unitario_publico', 0)))
+                    if not op_data.get('precio_cantidad_solicitada') or Decimal(str(op_data.get('precio_cantidad_solicitada', 0))) <= Decimal('0'):
+                        op_data['precio_cantidad_solicitada'] = (pu * cant_req).quantize(Decimal('0.01'))
+                    OpcionCotizacion.objects.create(cotizacion=instance, **op_data)
+
+        instance.refresh_from_db()
+        return instance
+

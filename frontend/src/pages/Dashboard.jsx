@@ -1,4 +1,4 @@
-﻿import { useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   ShoppingCartIcon, BanknotesIcon, ExclamationTriangleIcon,
   UserGroupIcon, CurrencyDollarIcon, ArrowTrendingUpIcon,
@@ -97,7 +97,7 @@ export default function Dashboard() {
           value={c ? fmt(c.saldo_esperado) : '— Sin caja'} sub={c ? `Caja ${c.folio}` : 'No hay caja abierta'} color="green" />
         <KPI icon={BanknotesIcon} label="Diferencia Caja" loading={loading}
           value={c?.diferencia != null ? fmt(c.diferencia) : '—'}
-          sub={c?.diferencia != null && Math.abs(c.diferencia) > 0.01 ? '⚠ Revisar arqueo' : 'Sin diferencias'}
+          sub={c?.diferencia != null && Math.abs(c.diferencia) > 0.01 ? 'Revisar arqueo' : 'Sin diferencias'}
           color={c?.diferencia != null && Math.abs(c.diferencia) > 0.01 ? 'red' : 'green'} />
         <KPI icon={ReceiptPercentIcon} label="Gastos Hoy" loading={loading}
           value={fmt(g?.hoy_total)} sub={`${fmtN(g?.hoy_cantidad)} registros`} color="red" />

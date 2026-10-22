@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useConfirm } from '../../lib/confirm';
 import {
@@ -413,7 +413,7 @@ export default function Nomina() {
         document.getElementById(`cell-${nRow}-${nCol}`)?.focus();
       }
     }
-  }, [lineas.length]);
+  }, [lineas.length, EDIT_COLS.length]);
 
   // ═══ RENDER ════════════════════════════════════════════════════════════════
   return (
@@ -604,7 +604,13 @@ export default function Nomina() {
                           : 'bg-gray-100 text-gray-400 cursor-default'
                       }`}
                     >
-                      {guardando ? 'Guardando…' : cambioPendiente ? '● Guardar cambios' : '✓ Sin cambios'}
+                      {guardando ? (
+                        <>Guardando…</>
+                      ) : cambioPendiente ? (
+                        <><i className="ri-save-line"></i> Guardar cambios</>
+                      ) : (
+                        <><i className="ri-check-line font-bold"></i> Sin cambios</>
+                      )}
                     </button>
                   )}
                   {editable && (
@@ -742,7 +748,9 @@ export default function Nomina() {
                               {/* Diferencia */}
                               <td className="px-2 py-1 text-center">
                                 {Math.abs(linea.diff ?? 0) < 0.01 ? (
-                                  <span className="text-green-500 text-xs">✓</span>
+                                  <span className="text-green-500 text-xs inline-flex items-center justify-center">
+                                    <i className="ri-check-line font-bold"></i>
+                                  </span>
                                 ) : (
                                   <span className="text-red-600 text-xs font-semibold" title="Diferencia">
                                     ${fmt(Math.abs(linea.diff))}
@@ -787,8 +795,8 @@ export default function Nomina() {
                             <td className="px-3 py-2 text-right tabular-nums bg-[#8c0007] text-red-200">${fmt(totales.neto)}</td>
                             <td className="px-2 py-2 text-center bg-gray-800">
                               {hayDiferencias
-                                ? <span className="text-red-400">⚠</span>
-                                : <span className="text-green-400">✓</span>}
+                                ? <span className="text-red-400" title="Hay diferencias"><i className="ri-error-warning-line"></i></span>
+                                : <span className="text-green-400" title="Sin diferencias"><i className="ri-check-line font-bold"></i></span>}
                             </td>
                             <td className="px-3 py-2"></td>
                           </tr>

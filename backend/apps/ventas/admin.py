@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Venta, DetalleVenta, Servicio
+from .models import Venta, DetalleVenta, Servicio, SecuenciaFolio
 
 
 class DetalleVentaInline(admin.TabularInline):
@@ -44,3 +44,10 @@ class DetalleVentaAdmin(admin.ModelAdmin):
     list_filter = ['venta__fecha']
     search_fields = ['venta__folio', 'descripcion']
     readonly_fields = ['subtotal']
+
+
+@admin.register(SecuenciaFolio)
+class SecuenciaFolioAdmin(admin.ModelAdmin):
+    list_display = ['codigo', 'prefijo', 'longitud_digitos', 'ultimo_numero', 'updated_at']
+    search_fields = ['codigo', 'prefijo']
+

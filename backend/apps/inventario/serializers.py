@@ -57,8 +57,32 @@ class SalidaInventarioSerializer(serializers.ModelSerializer):
 class PagoProveedorSerializer(serializers.ModelSerializer):
     proveedor_nombre = serializers.CharField(source='proveedor.nombre', read_only=True)
     registrado_por_username = serializers.CharField(source='registrado_por.username', read_only=True)
+    comprobante_url = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = PagoProveedor
         fields = '__all__'
         read_only_fields = ['registrado_por']
+
+    def validate_comprobante(self, value):
+        if value:
+            max_size = 5 * 1024 * 1024  # 5 MB
+            if value.size > max_size:
+                raise serializers.ValidationError('El archivo de comprobante no puede exceder 5 MB.')
+        return value
+
+    def validate(self, attrs):
+        if self.instance is not None:
+            if 'monto' in attrs and attrs['monto'] != self.instance.monto:
+                raise serializers.ValidationError({'monto': 'No se permite modificar el monto de un pago ya registrado.'})
+            if 'proveedor' in attrs and attrs['proveedor'] != self.instance.proveedor:
+                raise serializers.ValidationError({'proveedor': 'No se permite modificar el proveedor de un pago ya registrado.'})
+        return super().validate(attrs)
+
+    def get_comprobante_url(self, obj):
+        if obj.comprobante:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.comprobante.url)
+            return obj.comprobante.url
+        return None

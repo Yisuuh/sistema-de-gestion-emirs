@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../lib/apiClient';
 import { useConfirm } from '../../lib/confirm';
@@ -22,6 +22,10 @@ const $fetch = async (url, opts = {}) => {
 };
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const today = () => new Date().toISOString().slice(0, 10);
+const primerDiaMes = () => {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+};
 
 const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#df000a]';
 const selectCls = inputCls + ' bg-white';
@@ -44,9 +48,9 @@ export default function Gastos() {
 
   // Filtros
   const [filtros, setFiltros] = useState({
-    fecha_inicio: today(), fecha_fin: today(), categoria: '', metodo_pago: '', responsable: '',
+    fecha_inicio: primerDiaMes(), fecha_fin: today(), categoria: '', metodo_pago: '', responsable: '',
   });
-  const [mostrarFiltros, setMostrarFiltros] = useState(false);
+  const [mostrarFiltros, setMostrarFiltros] = useState(true);
 
   // Modal
   const [modal, setModal] = useState(false);
@@ -82,7 +86,7 @@ export default function Gastos() {
       return apiClient.get(`${API}/gastos/?${params}`);
     },
   });
-  const gastos = _gastosData?.results ?? _gastosData ?? [];
+  const gastos = useMemo(() => _gastosData?.results ?? _gastosData ?? [], [_gastosData]);
 
   const { data: resumen } = useQuery({
     queryKey: ['gastos-resumen'],
@@ -297,14 +301,53 @@ export default function Gastos() {
 
       {/* Filtros */}
       <div className="bg-white rounded-xl shadow-sm border p-4 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium text-gray-700">Filtros</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-gray-700">Filtros de Fecha</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                { label: 'Hoy', i: today(), f: today() },
+                {
+                  label: 'Esta semana', i: (() => {
+                    const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1); return d.toISOString().slice(0, 10);
+                  })(), f: today()
+                },
+                { label: 'Este mes', i: primerDiaMes(), f: today() },
+                {
+                  label: 'Mes anterior', i: (() => {
+                    const d = new Date(); return new Date(d.getFullYear(), d.getMonth() - 1, 1).toISOString().slice(0, 10);
+                  })(), f: (() => {
+                    const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 0).toISOString().slice(0, 10);
+                  })()
+                },
+                {
+                  label: 'Todo el año', i: `${new Date().getFullYear()}-01-01`, f: today()
+                }
+              ].map((p) => {
+                const activo = filtros.fecha_inicio === p.i && filtros.fecha_fin === p.f;
+                return (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => setFiltros({ ...filtros, fecha_inicio: p.i, fecha_fin: p.f })}
+                    className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
+                      activo
+                        ? 'bg-[#df000a] text-white border-[#df000a] font-bold shadow-xs'
+                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <button
             onClick={() => setMostrarFiltros(!mostrarFiltros)}
-            className="flex items-center gap-1 text-xs text-[#df000a] hover:text-[#a80008]"
+            className="flex items-center gap-1 text-xs text-[#df000a] hover:text-[#a80008] font-medium"
           >
             <FunnelIcon className="w-4 h-4" />
-            {mostrarFiltros ? 'Ocultar' : 'Mostrar'}
+            {mostrarFiltros ? 'Ocultar filtros avanzados' : 'Mostrar filtros avanzados'}
           </button>
         </div>
         {mostrarFiltros && (
@@ -556,8 +599,8 @@ export default function Gastos() {
                 {catEditando && (
                   <button type="button"
                     onClick={() => { setCatEditando(null); setCatForm({ nombre: '', descripcion: '', tipo: 'operativo' }); }}
-                    className="px-3 py-2 border border-gray-300 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-                    ✕
+                    className="px-3 py-2 border border-gray-300 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center justify-center">
+                    <i className="ri-close-line text-base"></i>
                   </button>
                 )}
               </form>

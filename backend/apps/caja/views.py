@@ -146,33 +146,51 @@ class CajaViewSet(viewsets.ModelViewSet):
 
         Devuelve cajas agrupadas con sus totales de ventas, egresos y saldo.
         """
-        hoy = timezone.now().date()
+        hoy = timezone.localdate()
         periodo = request.query_params.get('periodo', 'hoy')
 
         if periodo == 'hoy':
             inicio = hoy
             fin = hoy
+            cajas = (
+                Caja.objects
+                .filter(Q(fecha_apertura__date=hoy) | Q(estado='abierta'))
+                .select_related('empleado_apertura', 'empleado_cierre')
+                .distinct()
+                .order_by('-fecha_apertura')
+            )
         elif periodo == 'semana':
             inicio = hoy - timedelta(days=hoy.weekday())  # lunes de esta semana
             fin = hoy
+            cajas = (
+                Caja.objects
+                .filter(fecha_apertura__date__gte=inicio, fecha_apertura__date__lte=fin)
+                .select_related('empleado_apertura', 'empleado_cierre')
+                .order_by('-fecha_apertura')
+            )
         elif periodo == 'mes':
             inicio = hoy.replace(day=1)
             fin = hoy
+            cajas = (
+                Caja.objects
+                .filter(fecha_apertura__date__gte=inicio, fecha_apertura__date__lte=fin)
+                .select_related('empleado_apertura', 'empleado_cierre')
+                .order_by('-fecha_apertura')
+            )
         elif periodo == 'rango':
             try:
                 inicio = date.fromisoformat(request.query_params.get('fecha_inicio', str(hoy)))
                 fin = date.fromisoformat(request.query_params.get('fecha_fin', str(hoy)))
             except ValueError:
                 return Response({'error': 'Fechas inválidas. Use formato YYYY-MM-DD.'}, status=400)
+            cajas = (
+                Caja.objects
+                .filter(fecha_apertura__date__gte=inicio, fecha_apertura__date__lte=fin)
+                .select_related('empleado_apertura', 'empleado_cierre')
+                .order_by('-fecha_apertura')
+            )
         else:
             return Response({'error': 'Periodo no válido. Use: hoy, semana, mes, rango.'}, status=400)
-
-        cajas = (
-            Caja.objects
-            .filter(fecha_apertura__date__gte=inicio, fecha_apertura__date__lte=fin)
-            .select_related('empleado_apertura', 'empleado_cierre')
-            .order_by('-fecha_apertura')
-        )
 
         # Construir resumen
         resultado = []
@@ -220,7 +238,7 @@ class CajaViewSet(viewsets.ModelViewSet):
         """
         Estadísticas de caja del día
         """
-        hoy = timezone.now().date()
+        hoy = timezone.localdate()
         
         # Buscar caja del día
         caja_hoy = Caja.objects.filter(
@@ -242,16 +260,14 @@ class CajaViewSet(viewsets.ModelViewSet):
         if caja_hoy.estado == 'cerrada' and caja_hoy.fecha_cierre:
             ventas_hoy = ventas_hoy.filter(fecha__lte=caja_hoy.fecha_cierre)
         
-        stats_ventas = ventas_hoy.aggregate(
-            total_ventas=Count('id'),
-            total_efectivo=Sum('monto_efectivo'),
-            total_electronico=Sum('monto_electronico'),
-            total_general=Sum('total')
-        )
-        
         return Response({
             'caja': CajaSerializer(caja_hoy).data,
-            'ventas': stats_ventas,
+            'ventas': {
+                'total_ventas': caja_hoy.num_ventas,
+                'total_efectivo': float(caja_hoy.total_ventas_efectivo),
+                'total_electronico': float(caja_hoy.total_ventas_electronico),
+                'total_general': float(caja_hoy.total_ventas),
+            },
             'saldo_inicial': caja_hoy.monto_inicial,
             'total_ingresos': caja_hoy.total_ingresos,
             'total_egresos': caja_hoy.total_egresos,
@@ -276,13 +292,6 @@ class CajaViewSet(viewsets.ModelViewSet):
         if caja.fecha_cierre:
             ventas = ventas.filter(fecha__lte=caja.fecha_cierre)
         
-        stats_ventas = ventas.aggregate(
-            total_ventas=Count('id'),
-            total_efectivo=Sum('monto_efectivo'),
-            total_electronico=Sum('monto_electronico'),
-            total_general=Sum('total')
-        )
-        
         # Desglose por método de pago
         ventas_por_metodo = ventas.values('metodo_pago').annotate(
             cantidad=Count('id'),
@@ -291,7 +300,12 @@ class CajaViewSet(viewsets.ModelViewSet):
         
         return Response({
             'caja': CajaSerializer(caja).data,
-            'resumen_ventas': stats_ventas,
+            'resumen_ventas': {
+                'total_ventas': caja.num_ventas,
+                'total_efectivo': float(caja.total_ventas_efectivo),
+                'total_electronico': float(caja.total_ventas_electronico),
+                'total_general': float(caja.total_ventas),
+            },
             'ventas_por_metodo': list(ventas_por_metodo),
             'movimientos': MovimientoCajaSerializer(
                 caja.movimientos.all(), 
@@ -348,17 +362,64 @@ class MovimientoCajaViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Validar que la caja esté abierta antes de crear movimiento"""
+        from rest_framework.exceptions import ValidationError
         caja_id = self.request.data.get('caja')
         try:
             caja = Caja.objects.get(id=caja_id)
             if caja.estado == 'cerrada':
-                raise serializers.ValidationError(
+                raise ValidationError(
                     'No se pueden registrar movimientos en una caja cerrada'
                 )
         except Caja.DoesNotExist:
-            raise serializers.ValidationError('La caja especificada no existe')
+            raise ValidationError('La caja especificada no existe')
         
         serializer.save()
+
+    def update(self, request, *args, **kwargs):
+        """Validar admin y caja abierta al modificar movimiento"""
+        es_admin = (
+            getattr(request.user, 'rol', None) == 'admin' or 
+            getattr(request.user, 'role', None) == 'admin' or 
+            request.user.is_staff or 
+            request.user.is_superuser
+        )
+        if not es_admin:
+            return Response(
+                {'error': 'Solo los administradores pueden modificar movimientos de caja'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        movimiento = self.get_object()
+        if movimiento.caja and movimiento.caja.estado == 'cerrada':
+            return Response(
+                {'error': 'No se pueden modificar movimientos de una caja cerrada'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """Validar admin y caja abierta al eliminar movimiento"""
+        es_admin = (
+            getattr(request.user, 'rol', None) == 'admin' or 
+            getattr(request.user, 'role', None) == 'admin' or 
+            request.user.is_staff or 
+            request.user.is_superuser
+        )
+        if not es_admin:
+            return Response(
+                {'error': 'Solo los administradores pueden eliminar movimientos de caja'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        movimiento = self.get_object()
+        if movimiento.caja and movimiento.caja.estado == 'cerrada':
+            return Response(
+                {'error': 'No se pueden eliminar movimientos de una caja cerrada'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return super().destroy(request, *args, **kwargs)
 
 
 class ArqueoCajaViewSet(viewsets.ModelViewSet):

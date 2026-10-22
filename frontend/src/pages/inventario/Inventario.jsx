@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MagnifyingGlassIcon,
@@ -16,6 +16,7 @@ import {
   ChartBarIcon,
   DocumentArrowUpIcon,
 } from '@heroicons/react/24/outline';
+import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib/medidaUtils';
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 const fmt = (n, d = 2) => Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -75,11 +76,11 @@ function TabConsolidado({ onVerKardex }) {
     [data]
   );
 
+  const medidaDetectada = useMemo(() => detectarMedidaFormateada(busqueda), [busqueda]);
+
   const filas = useMemo(
     () => (data?.productos ?? []).filter(p => {
-      const q = busqueda.toLowerCase();
-      const matchQ = !q || p.codigo.toLowerCase().includes(q) || p.medida.toLowerCase().includes(q)
-        || p.marca.toLowerCase().includes(q) || p.modelo.toLowerCase().includes(q);
+      const matchQ = coincideProductoInteligente(p, busqueda);
       const matchE = filtroEstado === 'todos' || p.estado_stock === filtroEstado;
       const matchM = !filtroMarca || p.marca === filtroMarca;
       return matchQ && matchE && matchM;
@@ -109,15 +110,23 @@ function TabConsolidado({ onVerKardex }) {
       )}
 
       {/* Filtros */}
-      <div className="flex flex-wrap gap-2 mb-3">
-        <div className="relative flex-1 min-w-[180px]">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            placeholder="Buscar código, medida, marca, modelo…"
-            value={busqueda}
-            onChange={e => setBusqueda(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]"
-          />
+      <div className="flex flex-wrap gap-2 mb-3 items-start">
+        <div className="flex-1 min-w-[200px]">
+          <div className="relative">
+            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              placeholder="Buscar código, medida (ej. 2055516), marca, modelo…"
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]"
+            />
+          </div>
+          {medidaDetectada && (
+            <div className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-xs font-bold text-[#df000a]">
+              <i className="ri-focus-3-line"></i>
+              <span>Medida detectada: {medidaDetectada}</span>
+            </div>
+          )}
         </div>
         <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]">
@@ -193,16 +202,136 @@ function TabConsolidado({ onVerKardex }) {
   );
 }
 
+// ─── Modal Vincular Factura ──────────────────────────────────────────────────
+function ModalVincularFactura({ entrada, onGuardado, onClose }) {
+  const [numFactura, setNumFactura] = useState('');
+  const [fechaFactura, setFechaFactura] = useState(new Date().toISOString().split('T')[0]);
+  const [archivo, setArchivo] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const vincular = async (e) => {
+    e.preventDefault();
+    if (!numFactura.trim()) {
+      setErr('El número de factura es obligatorio');
+      return;
+    }
+    setLoading(true);
+    setErr(null);
+    try {
+      const formData = new FormData();
+      formData.append('numero_factura', numFactura.trim());
+      if (fechaFactura) formData.append('fecha_factura', fechaFactura);
+      if (archivo) formData.append('archivo_factura', archivo);
+      formData.append('factura_pendiente', 'false');
+
+      let res = await fetch(`/api/inventario/entradas/${entrada.id}/vincular_factura/`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+
+      if (!res.ok && (res.status === 404 || res.status === 405)) {
+        res = await fetch(`/api/inventario/entradas/${entrada.id}/`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          body: formData,
+        });
+      }
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || d.error || 'Error al vincular factura');
+      }
+
+      onGuardado();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
+        <div className="flex items-center justify-between mb-4 border-b pb-3">
+          <div className="flex items-center gap-2">
+            <DocumentArrowUpIcon className="w-5 h-5 text-[#df000a]" />
+            <h2 className="text-lg font-bold text-gray-900">Vincular Factura Comercial</h2>
+          </div>
+          <button onClick={onClose}><XCircleIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" /></button>
+        </div>
+
+        {/* Resumen lote */}
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs mb-4 space-y-1">
+          <p><strong>Producto:</strong> {entrada.producto_codigo} — {entrada.producto_descripcion}</p>
+          <p><strong>Proveedor:</strong> {entrada.proveedor_nombre}</p>
+          <p><strong>Cantidad:</strong> {entrada.cantidad} pzs — <strong>Importe:</strong> ${fmt(entrada.total_compra)}</p>
+          {entrada.folio_remision && <p><strong>Nota de Remisión:</strong> {entrada.folio_remision}</p>}
+        </div>
+
+        {err && <div className="mb-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>}
+
+        <form onSubmit={vincular} className="space-y-4 text-sm">
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Número de Factura *</label>
+            <input
+              type="text"
+              required
+              placeholder="Ej. FAC-2024-9981"
+              value={numFactura}
+              onChange={e => setNumFactura(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Fecha de Factura</label>
+            <input
+              type="date"
+              value={fechaFactura}
+              onChange={e => setFechaFactura(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Adjuntar Archivo (PDF o XML)</label>
+            <input
+              type="file"
+              accept=".pdf,.xml,application/pdf,text/xml"
+              onChange={e => setArchivo(e.target.files?.[0] || null)}
+              className="w-full text-xs text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 text-sm">
+              Cancelar
+            </button>
+            <button type="submit" disabled={loading} className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50 text-sm font-medium">
+              {loading ? 'Guardando...' : 'Vincular y Facturar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Vista Entradas ───────────────────────────────────────────────────────────
 function TabEntradas({ proveedores, productos }) {
   const queryClient = useQueryClient();
-  const [modal, setModal]       = useState(false);
-  const [msg, setMsg]           = useState(null);
-  const [filtros, setFiltros]   = useState({ fecha_inicio: '', fecha_fin: '', proveedor: '', estado: '' });
+  const [modal, setModal]               = useState(false);
+  const [modalVincular, setModalVincular] = useState(null);
+  const [msg, setMsg]                   = useState(null);
+  const [filtros, setFiltros]           = useState({ fecha_inicio: '', fecha_fin: '', proveedor: '', estado: '' });
   const [form, setForm] = useState({
     producto: '', proveedor: '', cantidad: 1, precio_compra: '',
     fecha_compra: new Date().toISOString().split('T')[0],
-    numero_factura: '', estado: 'disponible', notas: '',
+    numero_factura: '', factura_pendiente: false, folio_remision: '',
+    estado: 'disponible', notas: '',
   });
 
   const { data: entradas = [], isLoading: loading } = useQuery({
@@ -221,10 +350,16 @@ function TabEntradas({ proveedores, productos }) {
 
   const guardarMut = useMutation({
     mutationFn: async () => {
+      const payload = {
+        ...form,
+        factura_pendiente: Boolean(form.factura_pendiente),
+        folio_remision: form.folio_remision.trim(),
+        numero_factura: form.factura_pendiente ? (form.numero_factura?.trim() || '') : form.numero_factura.trim(),
+      };
       const r = await fetch('/api/inventario/entradas/', {
         method: 'POST',
         headers: { ...tok(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       if (!r.ok) { const d = await r.json(); throw new Error(d.detail ?? JSON.stringify(d)); }
       return r.json();
@@ -234,8 +369,10 @@ function TabEntradas({ proveedores, productos }) {
       setModal(false);
       setForm({ producto: '', proveedor: '', cantidad: 1, precio_compra: '',
         fecha_compra: new Date().toISOString().split('T')[0],
-        numero_factura: '', estado: 'disponible', notas: '' });
+        numero_factura: '', factura_pendiente: false, folio_remision: '',
+        estado: 'disponible', notas: '' });
       queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] });
+      queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
       setTimeout(() => setMsg(null), 4000);
     },
     onError: (e) => { setMsg({ tipo: 'err', txt: e.message }); setTimeout(() => setMsg(null), 4000); },
@@ -251,7 +388,10 @@ function TabEntradas({ proveedores, productos }) {
         body: JSON.stringify({ estado }),
       });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] });
+      queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
+    },
   });
 
   const cambiarEstado = (id, estado) => cambiarEstadoMut.mutate({ id, estado });
@@ -310,7 +450,7 @@ function TabEntradas({ proveedores, productos }) {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {['Fecha','Factura','Proveedor','Código','Medida','Marca / Modelo','IC/IV','Cant.','P. Compra','Total','Estado','Notas'].map(h => (
+                {['Fecha','Factura / Remisión','Proveedor','Código','Medida','Marca / Modelo','IC/IV','Cant.','P. Compra','Total','Estado','Acciones'].map(h => (
                   <th key={h} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -322,7 +462,19 @@ function TabEntradas({ proveedores, productos }) {
               {entradas.map(e => (
                 <tr key={e.id} className="hover:bg-gray-50">
                   <td className="px-3 py-3 whitespace-nowrap text-gray-600">{e.fecha_compra}</td>
-                  <td className="px-3 py-3 font-mono text-xs whitespace-nowrap">{e.numero_factura}</td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    {e.factura_pendiente ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300" title="Factura Comercial Pendiente">
+                        <i className="ri-time-line"></i> Pendiente (Rem: {e.folio_remision || 'S/N'})
+                      </span>
+                    ) : e.numero_factura ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <i className="ri-check-line font-bold"></i> Facturada (#{e.numero_factura})
+                      </span>
+                    ) : (
+                      <span className="text-gray-400 text-xs">—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 whitespace-nowrap">{e.proveedor_nombre}</td>
                   <td className="px-3 py-3 font-mono text-xs whitespace-nowrap">{e.producto_codigo}</td>
                   <td className="px-3 py-3 font-mono font-medium text-[#df000a] whitespace-nowrap">{e.producto_medida}</td>
@@ -340,7 +492,20 @@ function TabEntradas({ proveedores, productos }) {
                       {Object.entries(ESTADO_LABELS).map(([v, l]) => <option key={v} value={v}>{l.label}</option>)}
                     </select>
                   </td>
-                  <td className="px-3 py-3 text-xs text-gray-400 max-w-[120px] truncate">{e.notas}</td>
+                  <td className="px-3 py-3 whitespace-nowrap text-center">
+                    {e.factura_pendiente ? (
+                      <button
+                        onClick={() => setModalVincular(e)}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors inline-flex items-center gap-1"
+                        title="Vincular Factura Comercial"
+                      >
+                        <DocumentTextIcon className="w-3.5 h-3.5" />
+                        Vincular Factura
+                      </button>
+                    ) : (
+                      <span className="text-gray-400 text-xs">{e.notas || '—'}</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -381,10 +546,61 @@ function TabEntradas({ proveedores, productos }) {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Fecha compra *</label>
                   <input type="date" value={form.fecha_compra} onChange={e => setForm(f => ({...f, fecha_compra: e.target.value}))} className={inputCls} required />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">No. Factura *</label>
-                  <input type="text" value={form.numero_factura} onChange={e => setForm(f => ({...f, numero_factura: e.target.value}))} className={inputCls} required />
+
+                {/* Checkbox factura pendiente */}
+                <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-amber-900 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.factura_pendiente}
+                      onChange={e => setForm(f => ({ ...f, factura_pendiente: e.target.checked }))}
+                      className="w-4 h-4 text-[#df000a] rounded border-gray-300 focus:ring-[#df000a]"
+                    />
+                    Entrada con factura pendiente (Nota de Remisión)
+                  </label>
+                  <p className="text-xs text-amber-700 mt-1 ml-6">
+                    Marca esta opción si el lote entra con nota de remisión o guía y la factura comercial se recibirá después.
+                  </p>
                 </div>
+
+                {form.factura_pendiente ? (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">No. Remisión / Guía *</label>
+                      <input
+                        type="text"
+                        placeholder="Ej. REM-00429"
+                        value={form.folio_remision}
+                        onChange={e => setForm(f => ({ ...f, folio_remision: e.target.value }))}
+                        className={inputCls}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-1">No. Factura (Opcional)</label>
+                      <input
+                        type="text"
+                        placeholder="Se vinculará después"
+                        value={form.numero_factura}
+                        onChange={e => setForm(f => ({ ...f, numero_factura: e.target.value }))}
+                        className={inputCls}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">No. Factura *</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. FAC-10294"
+                      value={form.numero_factura}
+                      onChange={e => setForm(f => ({ ...f, numero_factura: e.target.value }))}
+                      className={inputCls}
+                      required
+                    />
+                  </div>
+                )}
+
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Estado</label>
                   <select value={form.estado} onChange={e => setForm(f => ({...f, estado: e.target.value}))} className={inputCls}>
@@ -403,6 +619,21 @@ function TabEntradas({ proveedores, productos }) {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal Vincular Factura */}
+      {modalVincular && (
+        <ModalVincularFactura
+          entrada={modalVincular}
+          onGuardado={() => {
+            setModalVincular(null);
+            setMsg({ tipo: 'ok', txt: 'Factura vinculada exitosamente a la entrada.' });
+            queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] });
+            queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
+            setTimeout(() => setMsg(null), 4000);
+          }}
+          onClose={() => setModalVincular(null)}
+        />
       )}
     </div>
   );
@@ -424,13 +655,13 @@ function TabSalidas() {
     },
   });
 
+  const medidaDetectadaSalidas = useMemo(() => detectarMedidaFormateada(filtros.busqueda), [filtros.busqueda]);
+
   const filtered = useMemo(
     () => filtros.busqueda
       ? salidas.filter(s => {
           const q = filtros.busqueda.toLowerCase();
-          return s.producto_codigo?.toLowerCase().includes(q) ||
-                 s.producto_medida?.toLowerCase().includes(q) ||
-                 s.marca_nombre?.toLowerCase().includes(q) ||
+          return coincideProductoInteligente(s, filtros.busqueda) ||
                  s.venta_folio?.toLowerCase().includes(q);
         })
       : salidas,
@@ -452,16 +683,24 @@ function TabSalidas() {
 
   return (
     <div>
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div className="flex flex-wrap gap-2 mb-3 items-start">
         <input type="date" value={filtros.fecha_inicio} onChange={e => setFiltros(f => ({...f, fecha_inicio: e.target.value}))}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
         <input type="date" value={filtros.fecha_fin} onChange={e => setFiltros(f => ({...f, fecha_fin: e.target.value}))}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-        <div className="relative flex-1 min-w-[180px]">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input placeholder="Código, medida, marca, folio…" value={filtros.busqueda}
-            onChange={e => setFiltros(f => ({...f, busqueda: e.target.value}))}
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm" />
+        <div className="flex-1 min-w-[180px]">
+          <div className="relative">
+            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input placeholder="Código, medida (ej. 2055516), marca, folio…" value={filtros.busqueda}
+              onChange={e => setFiltros(f => ({...f, busqueda: e.target.value}))}
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm" />
+          </div>
+          {medidaDetectadaSalidas && (
+            <div className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-xs font-bold text-[#df000a]">
+              <i className="ri-focus-3-line"></i>
+              <span>Medida detectada: {medidaDetectadaSalidas}</span>
+            </div>
+          )}
         </div>
         <button onClick={refetch} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50">
           <ArrowPathIcon className="h-5 w-5 text-gray-500" />

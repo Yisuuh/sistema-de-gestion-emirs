@@ -3,6 +3,7 @@ Modelos para el módulo de Inventario
 """
 from django.db import models
 from django.db.models import Sum
+from django.core.validators import FileExtensionValidator
 
 
 class Marca(models.Model):
@@ -117,7 +118,11 @@ class EntradaInventario(models.Model):
     cantidad = models.IntegerField()
     precio_compra = models.DecimalField(max_digits=10, decimal_places=2, help_text='Precio unitario de compra')
     fecha_compra = models.DateField()
-    numero_factura = models.CharField(max_length=50)
+    numero_factura = models.CharField(max_length=50, blank=True, default='')
+    factura_pendiente = models.BooleanField(default=False)
+    folio_remision = models.CharField(max_length=50, blank=True, default='')
+    fecha_factura = models.DateField(null=True, blank=True)
+    archivo_factura = models.FileField(upload_to='facturas_proveedores/%Y/%m/', null=True, blank=True)
     estado = models.CharField(
         max_length=20, choices=ESTADO_CHOICES, default='disponible',
         help_text='Estado del lote en inventario'
@@ -148,14 +153,33 @@ class PagoProveedor(models.Model):
     Registro de pagos realizados a un proveedor.
     Se aplica para reducir el saldo pendiente acumulado de facturas.
     """
+    METODO_PAGO_CHOICES = [
+        ('efectivo', 'Efectivo'),
+        ('transferencia', 'Transferencia'),
+        ('cheque', 'Cheque'),
+        ('tarjeta', 'Tarjeta'),
+    ]
+
     proveedor = models.ForeignKey(
         Proveedor, on_delete=models.PROTECT, related_name='pagos'
     )
     monto = models.DecimalField(max_digits=10, decimal_places=2)
     fecha = models.DateField()
+    metodo_pago = models.CharField(
+        max_length=20,
+        choices=METODO_PAGO_CHOICES,
+        default='transferencia'
+    )
+    numero_factura = models.CharField(max_length=50, blank=True, default='')
     referencia = models.CharField(
         max_length=100, blank=True,
         help_text='No. de transferencia, cheque, recibo, etc.'
+    )
+    comprobante = models.FileField(
+        upload_to='comprobantes_pagos/%Y/%m/',
+        null=True,
+        blank=True,
+        validators=[FileExtensionValidator(allowed_extensions=['pdf', 'jpg', 'jpeg', 'png', 'webp'])]
     )
     notas = models.TextField(blank=True)
     registrado_por = models.ForeignKey(
@@ -179,7 +203,8 @@ class SalidaInventario(models.Model):
     Se crea automáticamente cuando se realiza una venta
     """
     producto = models.ForeignKey(Producto, on_delete=models.PROTECT, related_name='salidas')
-    venta = models.ForeignKey('ventas.Venta', on_delete=models.CASCADE, null=True, related_name='salidas_inventario')
+    venta = models.ForeignKey('ventas.Venta', on_delete=models.CASCADE, null=True, blank=True, related_name='salidas_inventario')
+    rescate = models.ForeignKey('rescates.Rescate', on_delete=models.CASCADE, null=True, blank=True, related_name='salidas_inventario')
     cantidad = models.IntegerField()
     precio_venta = models.DecimalField(max_digits=10, decimal_places=2, help_text='Precio unitario de venta')
     precio_costo = models.DecimalField(max_digits=10, decimal_places=2, help_text='Precio unitario de costo')

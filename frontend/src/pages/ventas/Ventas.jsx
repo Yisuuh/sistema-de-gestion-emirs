@@ -1,4 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import ModalTicket from '../../components/ModalTicket';
+import TabCotizador from './TabCotizador';
+import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib/medidaUtils';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   PlusIcon, TrashIcon, MagnifyingGlassIcon, ShoppingCartIcon,
@@ -276,13 +279,16 @@ function TabServicios() {
 }
 
 // ─── Tab POS ─────────────────────────────────────────────────────────────────
-function TabPOS() {
+function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
   const queryClient = useQueryClient();
   const [busqueda, setBusqueda] = useState('');
   const [carrito, setCarrito] = useState([]);
   const [empleadoSel, setEmpleadoSel] = useState('');
   const [clienteSel, setClienteSel] = useState('');
+  const [vehiculoSel, setVehiculoSel] = useState('');
+  const [kilometrajeActual, setKilometrajeActual] = useState('');
   const [metodoPago, setMetodoPago] = useState('efectivo');
+  const [tipoTarjeta, setTipoTarjeta] = useState('debito');
   const [montoEfectivo, setMontoEfectivo] = useState('');
   const [montoElectronico, setMontoElectronico] = useState('');
   const [numOperacion, setNumOperacion] = useState('');
@@ -293,8 +299,23 @@ function TabPOS() {
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [ventaOk, setVentaOk] = useState(null);
+  const [ticketVenta, setTicketVenta] = useState(null);
+
+  const [redondearCentavos, setRedondearCentavos] = useState(false);
 
   const toArr = async r => r.ok ? r.json().then(d => Array.isArray(d) ? d : (d.results || [])) : [];
+
+  const { data: cajaActivaData, isLoading: loadingCaja } = useQuery({
+    queryKey: ['caja-activa'],
+    queryFn: async () => {
+      const r = await fetch('/api/caja/cajas/caja_actual/', { headers: tok() });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return (d && d.estado === 'abierta') ? d : null;
+    },
+    staleTime: 15 * 1000,
+  });
+  const hayCajaAbierta = !!cajaActivaData;
 
   const { data: productos = [], isLoading: loadingProductos } = useQuery({
     queryKey: ['pos-productos'],
@@ -317,16 +338,53 @@ function TabPOS() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Precargar opción enviada desde el Cotizador Multimarca
+  useEffect(() => {
+    if (itemPrecargado && itemPrecargado.producto) {
+      const prod = itemPrecargado.producto;
+      const cant = Math.max(1, Math.min(itemPrecargado.cantidad || 1, prod.stock_actual ?? 999));
+      const precio = parseFloat(itemPrecargado.precio_unitario || prod.precio_descuento || prod.precio_venta) || 0;
+      const key = `p-${prod.id}`;
+      setCarrito(prev => {
+        const existe = prev.find(i => i._key === key);
+        if (existe) {
+          return prev.map(i => i._key === key
+            ? { ...i, cantidad: cant, precio_unitario: precio, subtotal: cant * precio }
+            : i
+          );
+        }
+        return [...prev, {
+          _key: key,
+          id: Date.now(),
+          producto: prod,
+          servicio: null,
+          descripcion: prod.descripcion_completa || prod.codigo,
+          cantidad: cant,
+          precio_unitario: precio,
+          subtotal: cant * precio,
+          stock_max: prod.stock_actual ?? 999,
+        }];
+      });
+      if (itemPrecargado.clienteId) setClienteSel(String(itemPrecargado.clienteId));
+      if (itemPrecargado.vehiculoId) setVehiculoSel(String(itemPrecargado.vehiculoId));
+      onClearItemPrecargado?.();
+    }
+  }, [itemPrecargado, onClearItemPrecargado]);
+
+  const clienteActualObj = useMemo(
+    () => clientes.find(c => String(c.id) === String(clienteSel)) || null,
+    [clientes, clienteSel]
+  );
+
+  const medidaDetectadaPOS = useMemo(
+    () => (tabItems === 'productos' ? detectarMedidaFormateada(busqueda) : null),
+    [busqueda, tabItems]
+  );
+
   const loadingData = loadingProductos || loadingServicios || loadingClientes || loadingEmpleados;
 
   const itemsFiltrados = tabItems === 'productos'
-    ? productos.filter(p =>
-        (p.codigo || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-        (p.medida || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-        (p.marca?.nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-        (p.modelo || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-        (p.descripcion_completa || '').toLowerCase().includes(busqueda.toLowerCase())
-      )
+    ? productos.filter(p => coincideProductoInteligente(p, busqueda))
     : servicios.filter(s =>
         (s.nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
         (s.descripcion || '').toLowerCase().includes(busqueda.toLowerCase())
@@ -373,18 +431,21 @@ function TabPOS() {
 
   const subtotal = carrito.reduce((s, i) => s + parseFloat(i.subtotal || 0), 0);
   const descuentoN = parseFloat(descuento) || 0;
-  const total = Math.max(0, subtotal - descuentoN);
+  const rawTotal = Math.max(0, subtotal - descuentoN);
+  const total = redondearCentavos ? Math.round(rawTotal) : rawTotal;
   const totalPagado = (parseFloat(montoEfectivo) || 0) + (parseFloat(montoElectronico) || 0);
   const cambio = totalPagado - total;
 
   const limpiar = () => {
-    setCarrito([]); setEmpleadoSel(''); setClienteSel(''); setMetodoPago('efectivo');
+    setCarrito([]); setEmpleadoSel(''); setClienteSel(''); setVehiculoSel(''); setKilometrajeActual('');
+    setMetodoPago('efectivo'); setTipoTarjeta('debito');
     setMontoEfectivo(''); setMontoElectronico(''); setNumOperacion(''); setNumReferencia('');
     setDescuento(''); setNotas(''); setBusqueda(''); setErrors({});
   };
 
   const validarPOS = () => {
     const e = {};
+    if (!hayCajaAbierta) e.caja = 'No hay una caja abierta. Debe abrir turno de caja primero.';
     if (carrito.length === 0) e.carrito = 'Agrega al menos un producto o servicio';
     if (!empleadoSel) e.empleado = 'Selecciona el empleado que realiza la venta';
     if (total <= 0) e.total = 'El total debe ser mayor a $0';
@@ -422,7 +483,10 @@ function TabPOS() {
       const body = {
         empleado: parseInt(empleadoSel),
         cliente: clienteSel ? parseInt(clienteSel) : null,
+        vehiculo: vehiculoSel ? parseInt(vehiculoSel) : null,
+        kilometraje_actual: kilometrajeActual ? parseInt(kilometrajeActual) : null,
         metodo_pago: metodoPago,
+        tipo_tarjeta: ['tarjeta', 'mixto'].includes(metodoPago) ? tipoTarjeta : null,
         monto_efectivo: ['efectivo', 'mixto'].includes(metodoPago) ? parseFloat(montoEfectivo) : 0,
         monto_electronico: ['tarjeta', 'transferencia', 'mixto'].includes(metodoPago) ? parseFloat(montoElectronico) : 0,
         num_operacion: ['tarjeta', 'mixto'].includes(metodoPago) ? numOperacion.trim() : '',
@@ -444,6 +508,15 @@ function TabPOS() {
       if (r.ok) {
         const venta = await r.json();
         setVentaOk(venta);
+        setTicketVenta(venta);
+        queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+        queryClient.invalidateQueries({ queryKey: ['cajas'] });
+        queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
+        queryClient.invalidateQueries({ queryKey: ['balance-global'] });
+        queryClient.invalidateQueries({ queryKey: ['reporte-balance-global'] });
+        queryClient.invalidateQueries({ queryKey: ['clientes'] });
+        queryClient.invalidateQueries({ queryKey: ['pos-clientes'] });
+        queryClient.invalidateQueries({ queryKey: ['vehiculos-alertas-servicio'] });
         if (venta.productos_actualizados?.length) {
           queryClient.setQueryData(['pos-productos'], prev =>
             (prev || []).map(p => {
@@ -475,12 +548,60 @@ function TabPOS() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 
-      {ventaOk && (
-        <div className="lg:col-span-3 bg-green-50 border border-green-300 text-green-800 rounded-xl px-4 py-3 flex items-center justify-between">
-          <span>✓ Venta <strong>{ventaOk.folio}</strong> registrada — Total: <strong>${fmt(ventaOk.total)}</strong></span>
-          <button onClick={() => setVentaOk(null)}><XMarkIcon className="w-5 h-5 text-green-600" /></button>
+      {!hayCajaAbierta && !loadingCaja && (
+        <div className="lg:col-span-3 bg-amber-500/15 border-2 border-amber-500 text-amber-950 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500 text-white flex-shrink-0">
+              <i className="ri-error-warning-line text-2xl font-bold"></i>
+            </div>
+            <div>
+              <p className="font-black text-sm text-amber-950">
+                Turno de Caja Cerrado o Inactivo
+              </p>
+              <p className="text-xs text-amber-900 font-medium mt-0.5">
+                No hay una caja abierta actualmente. Para registrar ventas en mostrador, debe abrir un turno de caja primero.
+              </p>
+            </div>
+          </div>
+          <a
+            href="/caja"
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-xs transition-all whitespace-nowrap self-start sm:self-auto cursor-pointer"
+          >
+            <i className="ri-lock-unlock-line text-sm"></i>
+            <span>Ir a Apertura de Caja</span>
+          </a>
         </div>
       )}
+
+      {errors.caja && (
+        <div className="lg:col-span-3 bg-red-50 border border-red-300 text-red-700 rounded-xl px-4 py-3 flex items-center justify-between text-sm">
+          <span className="flex items-center gap-1.5">
+            <i className="ri-error-warning-line text-red-500 font-bold"></i>
+            <span>{errors.caja}</span>
+          </span>
+          <button onClick={() => setErrors(e => ({ ...e, caja: undefined }))}><XMarkIcon className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      {ventaOk && (
+        <div className="lg:col-span-3 bg-green-50 border border-green-300 text-green-800 rounded-xl px-4 py-3 flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <i className="ri-checkbox-circle-line text-green-600 font-bold"></i>
+            <span>Venta <strong>{ventaOk.folio}</strong> registrada — Total: <strong>${fmt(ventaOk.total)}</strong></span>
+          </span>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => setTicketVenta(ventaOk)}
+              className="text-xs font-medium px-3 py-1.5 bg-green-700 hover:bg-green-800 text-white rounded-lg transition-colors flex items-center gap-1.5"
+            >
+              <i className="ri-printer-line"></i> Reimprimir
+            </button>
+            <button onClick={() => setVentaOk(null)}><XMarkIcon className="w-5 h-5 text-green-600" /></button>
+          </div>
+        </div>
+      )}
+
+      <ModalTicket venta={ticketVenta} onClose={() => setTicketVenta(null)} />
 
       {errors._api && (
         <div className="lg:col-span-3 bg-red-50 border border-red-300 text-red-700 rounded-xl px-4 py-3 flex items-center justify-between text-sm">
@@ -505,10 +626,16 @@ function TabPOS() {
             <MagnifyingGlassIcon className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
             <input
               type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
-              placeholder={tabItems === 'productos' ? 'Código, medida, marca, modelo…' : 'Buscar servicio…'}
+              placeholder={tabItems === 'productos' ? 'Código, medida (ej. 2055516), marca, modelo…' : 'Buscar servicio…'}
               className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a] focus:border-transparent"
             />
           </div>
+          {medidaDetectadaPOS && (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-xs font-bold text-[#df000a]">
+              <i className="ri-focus-3-line"></i>
+              <span>Medida detectada: {medidaDetectadaPOS}</span>
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -612,14 +739,67 @@ function TabPOS() {
           <FieldError name="empleado" />
         </div>
 
-        {/* Cliente */}
-        <div className="bg-white rounded-xl border border-gray-200 p-3">
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Cliente (opcional)</label>
-          <select value={clienteSel} onChange={e => setClienteSel(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-[#df000a]">
-            <option value="">Venta sin cliente</option>
-            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} — {c.telefono}</option>)}
-          </select>
+        {/* Cliente + Expediente Clínico de Vehículo */}
+        <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2.5">
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Cliente (opcional)</label>
+            <select
+              value={clienteSel}
+              onChange={e => {
+                const val = e.target.value;
+                setClienteSel(val);
+                const cli = clientes.find(c => String(c.id) === String(val));
+                if (cli?.vehiculos?.length === 1) {
+                  setVehiculoSel(String(cli.vehiculos[0].id));
+                } else {
+                  setVehiculoSel('');
+                }
+              }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-[#df000a]"
+            >
+              <option value="">Venta sin cliente</option>
+              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} — {c.telefono}</option>)}
+            </select>
+          </div>
+
+          {clienteActualObj?.vehiculos?.length > 0 && (
+            <div className="pt-2 border-t border-gray-100 space-y-2">
+              <div>
+                <label className="block text-[11px] font-bold text-[#df000a] uppercase mb-1 flex items-center gap-1">
+                  <i className="ri-roadster-line"></i>
+                  <span>Vehículo (Expediente Clínico)</span>
+                </label>
+                <select
+                  value={vehiculoSel}
+                  onChange={e => setVehiculoSel(e.target.value)}
+                  className="w-full border border-red-200 bg-red-50/30 rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-900 focus:ring-2 focus:ring-[#df000a]"
+                >
+                  <option value="">— Sin vincular a vehículo específico —</option>
+                  {clienteActualObj.vehiculos.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.placas ? `[${v.placas}] ` : ''}{v.marca} {v.modelo} {v.año} ({v.medida_llanta_delantera || v.medida_llantas})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {vehiculoSel && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 uppercase mb-1 flex items-center gap-1">
+                    <i className="ri-dashboard-3-line text-gray-400"></i>
+                    <span>Kilometraje actual (opcional)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={kilometrajeActual}
+                    onChange={e => setKilometrajeActual(e.target.value)}
+                    placeholder="Ej. 68500 km (actualiza alerta 6 meses)"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-[#df000a]"
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Método de pago */}
@@ -637,6 +817,38 @@ function TabPOS() {
             <option value="transferencia">Transferencia</option>
             <option value="mixto">Mixto (Efectivo + Electrónico)</option>
           </select>
+
+          {['tarjeta', 'mixto'].includes(metodoPago) && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Tipo de Tarjeta</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTipoTarjeta('debito')}
+                  className={`py-1.5 px-3 rounded-lg text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                    tipoTarjeta === 'debito'
+                      ? 'bg-[#df000a] text-white border-[#df000a] shadow-sm'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  <i className="ri-bank-card-line"></i>
+                  <span>Débito</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoTarjeta('credito')}
+                  className={`py-1.5 px-3 rounded-lg text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                    tipoTarjeta === 'credito'
+                      ? 'bg-[#df000a] text-white border-[#df000a] shadow-sm'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  <i className="ri-bank-card-2-line"></i>
+                  <span>Crédito</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {['efectivo', 'mixto'].includes(metodoPago) && (
             <div>
@@ -700,6 +912,17 @@ function TabPOS() {
             </div>
           </div>
           {errors.total && <p className="text-red-500 text-xs">{errors.total}</p>}
+          <div className="flex items-center justify-between py-1 border-t border-gray-100">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-gray-600 hover:text-gray-900">
+              <input
+                type="checkbox"
+                checked={redondearCentavos}
+                onChange={e => setRedondearCentavos(e.target.checked)}
+                className="w-4 h-4 rounded text-[#df000a] focus:ring-[#df000a] cursor-pointer"
+              />
+              <span className="font-medium">Redondear centavos al peso</span>
+            </label>
+          </div>
           <div className="border-t pt-2 flex justify-between items-center">
             <span className="font-bold text-gray-900 text-sm">TOTAL</span>
             <span className="text-xl font-black text-[#df000a]">${fmt(total)}</span>
@@ -709,10 +932,22 @@ function TabPOS() {
             <textarea value={notas} onChange={e => setNotas(e.target.value)} rows={2}
               className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm resize-none" />
           </div>
-          <button onClick={procesarVenta} disabled={saving}
-            className="w-full bg-[#df000a] hover:bg-[#c4000a] disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm">
+          <button
+            onClick={procesarVenta}
+            disabled={saving || !hayCajaAbierta || carrito.length === 0}
+            title={!hayCajaAbierta ? 'Requiere abrir caja primero' : ''}
+            className={`w-full font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-md ${
+              !hayCajaAbierta
+                ? 'bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300'
+                : 'bg-[#df000a] hover:bg-[#c4000a] text-white disabled:opacity-50 cursor-pointer shadow-red-900/20'
+            }`}
+          >
             {saving && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            {saving ? 'Procesando…' : 'Confirmar Venta'}
+            {saving
+              ? 'Procesando…'
+              : !hayCajaAbierta
+              ? 'Requiere Turno de Caja Abierto'
+              : 'Confirmar Venta'}
           </button>
         </div>
 
@@ -724,6 +959,13 @@ function TabPOS() {
 // ─── Componente raíz ─────────────────────────────────────────────────────────
 export default function Ventas() {
   const [tab, setTab] = useState('pos');
+  const [itemPrecargadoPOS, setItemPrecargadoPOS] = useState(null);
+
+  const handleCargarAlPOS = (payload) => {
+    setItemPrecargadoPOS(payload);
+    setTab('pos');
+  };
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
       <div className="flex items-center gap-3 mb-5">
@@ -731,25 +973,33 @@ export default function Ventas() {
           <ShoppingCartIcon className="w-6 h-6 text-[#df000a]" />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Ventas</h1>
-          <p className="text-xs text-gray-500">Punto de venta y catálogo de servicios</p>
+          <h1 className="text-xl font-bold text-gray-900">Ventas y Cotizaciones</h1>
+          <p className="text-xs text-gray-500">Punto de venta, cotizador multimarca y catálogo de servicios</p>
         </div>
       </div>
 
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5 overflow-x-auto">
         {[
           { id: 'pos', label: 'Punto de Venta', icon: ShoppingCartIcon },
+          { id: 'cotizador', label: 'Cotizador Multimarca', remixIcon: 'ri-price-tag-3-line' },
           { id: 'servicios', label: 'Servicios', icon: WrenchScrewdriverIcon },
-        ].map(({ id, label, icon: Icon }) => (
+        ].map(({ id, label, icon: Icon, remixIcon }) => (
           <button key={id} onClick={() => setTab(id)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex-shrink-0
-              ${tab === id ? 'bg-white shadow text-[#df000a]' : 'text-gray-500 hover:text-gray-700'}`}>
-            <Icon className="w-4 h-4" />{label}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex-shrink-0 cursor-pointer
+              ${tab === id ? 'bg-white shadow text-[#df000a] font-bold' : 'text-gray-500 hover:text-gray-700'}`}>
+            {remixIcon ? <i className={`${remixIcon} text-base`}></i> : <Icon className="w-4 h-4" />}
+            <span>{label}</span>
           </button>
         ))}
       </div>
 
-      {tab === 'pos' && <TabPOS />}
+      {tab === 'pos' && (
+        <TabPOS
+          itemPrecargado={itemPrecargadoPOS}
+          onClearItemPrecargado={() => setItemPrecargadoPOS(null)}
+        />
+      )}
+      {tab === 'cotizador' && <TabCotizador onCargarAlPOS={handleCargarAlPOS} />}
       {tab === 'servicios' && <TabServicios />}
     </div>
   );

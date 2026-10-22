@@ -7,11 +7,12 @@ from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Sum, Max, OuterRef, Subquery
+from django.db.models import Sum, Max, OuterRef, Subquery, Q
 from django.http import HttpResponse
 
 from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
@@ -338,7 +339,10 @@ def _calcular_adeudo_proveedor(proveedor):
             'id': p.id,
             'fecha': str(p.fecha),
             'monto': float(p.monto),
+            'metodo_pago': p.metodo_pago,
+            'numero_factura': p.numero_factura,
             'referencia': p.referencia,
+            'comprobante': p.comprobante.url if p.comprobante else None,
             'notas': p.notas,
         }
         for p in pagos_qs
@@ -402,16 +406,33 @@ class AdeudoProveedorDetalleView(APIView):
 
 class PagoProveedorViewSet(viewsets.ModelViewSet):
     """
-    CRUD para pagos a proveedores.
-    POST /api/inventario/pagos-proveedores/
+    CRUD para pagos a proveedores (GET, POST, PUT, PATCH, DELETE).
+    Soporta subida de archivos comprobante (multipart/form-data) y JSON.
     """
     queryset = PagoProveedor.objects.select_related('proveedor', 'registrado_por').all()
     serializer_class = PagoProveedorSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['proveedor']
     ordering_fields = ['fecha', 'monto']
     ordering = ['-fecha']
+
+    def _verificar_rol_admin(self, user):
+        if not (getattr(user, 'rol', None) == 'admin' or user.is_staff or user.is_superuser):
+            raise PermissionDenied('Solo los administradores pueden modificar o eliminar pagos a proveedores.')
+
+    def update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().destroy(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(registrado_por=self.request.user)
@@ -435,10 +456,40 @@ class ProveedorViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre', 'contacto']
 
 
+def normalizar_termino_medida(termino: str) -> list:
+    """
+    Normaliza búsquedas rápidas de medidas de llantas como:
+    '2055516', '205 55 16', '205-55-16', '205/55R16', '205/55 R16'
+    Retorna una lista de variantes equivalentes si detecta el patrón
+    (ancho: 3 dígitos)(perfil: 2 dígitos)(rin: 2 dígitos), o lista vacía si no coincide.
+    """
+    if not termino:
+        return []
+    limpio = termino.strip().upper()
+    match = re.match(r'^(\d{3})[\s/\-]*(\d{2})[\s/\-R]*(\d{2}(?:\.\d+)?)$', limpio)
+    if not match:
+        solo_digitos = re.sub(r'[^0-9]', '', limpio)
+        if len(solo_digitos) == 7:
+            ancho, perfil, rin = solo_digitos[:3], solo_digitos[3:5], solo_digitos[5:7]
+        else:
+            return []
+    else:
+        ancho, perfil, rin = match.group(1), match.group(2), match.group(3)
+
+    return [
+        f"{ancho}/{perfil} R{rin}",
+        f"{ancho}/{perfil}R{rin}",
+        f"{ancho}-{perfil}-{rin}",
+        f"{ancho} {perfil} {rin}",
+        f"{ancho}{perfil}{rin}",
+        f"{ancho}/{perfil}-{rin}",
+    ]
+
+
 class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.select_related('marca').all()
     serializer_class = ProductoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['marca', 'activo', 'indice_velocidad']
     search_fields = ['codigo', 'medida', 'modelo', 'marca__nombre']
     ordering_fields = ['medida', 'precio_venta', 'codigo']
@@ -447,7 +498,29 @@ class ProductoViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         medida = self.request.query_params.get('medida')
         if medida:
-            qs = qs.filter(medida__icontains=medida)
+            variantes = normalizar_termino_medida(medida)
+            if variantes:
+                q_med = Q(medida__icontains=medida)
+                for v in variantes:
+                    q_med |= Q(medida__icontains=v)
+                qs = qs.filter(q_med)
+            else:
+                qs = qs.filter(medida__icontains=medida)
+
+        search = self.request.query_params.get('search')
+        if search:
+            termino = search.strip()
+            q_filter = (
+                Q(codigo__icontains=termino) |
+                Q(medida__icontains=termino) |
+                Q(modelo__icontains=termino) |
+                Q(marca__nombre__icontains=termino)
+            )
+            variantes = normalizar_termino_medida(termino)
+            for v in variantes:
+                q_filter |= Q(medida__icontains=v)
+            qs = qs.filter(q_filter)
+
         return qs
 
     @action(detail=False, methods=['get'])
@@ -660,8 +733,8 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
     queryset = EntradaInventario.objects.select_related('producto', 'producto__marca', 'proveedor', 'created_by').all()
     serializer_class = EntradaInventarioSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['proveedor', 'en_inventario', 'factura_consumida', 'estado']
-    search_fields = ['producto__codigo', 'numero_factura', 'producto__medida', 'producto__modelo']
+    filterset_fields = ['proveedor', 'en_inventario', 'factura_consumida', 'estado', 'factura_pendiente']
+    search_fields = ['producto__codigo', 'numero_factura', 'folio_remision', 'producto__medida', 'producto__modelo']
     ordering_fields = ['fecha_compra', 'created_at']
     ordering = ['-fecha_compra', '-created_at']
 
@@ -677,6 +750,70 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def vincular_factura(self, request, pk=None):
+        """
+        POST /api/inventario/entradas/{id}/vincular_factura/
+        Vincula número de factura, fecha y/o archivo de factura a una entrada.
+        """
+        entrada = self.get_object()
+        numero_factura = request.data.get('numero_factura')
+        if not numero_factura:
+            return Response({'error': 'El número de factura es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        entrada.numero_factura = numero_factura
+        entrada.factura_pendiente = False
+        
+        fecha_factura = request.data.get('fecha_factura')
+        if fecha_factura:
+            entrada.fecha_factura = fecha_factura
+            
+        archivo_factura = request.FILES.get('archivo_factura')
+        if archivo_factura:
+            entrada.archivo_factura = archivo_factura
+            
+        folio_remision = request.data.get('folio_remision')
+        if folio_remision is not None:
+            entrada.folio_remision = folio_remision
+
+        entrada.save()
+        serializer = self.get_serializer(entrada)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def vincular_factura_lote(self, request):
+        """
+        POST /api/inventario/entradas/vincular_factura_lote/
+        Vincula una misma factura a múltiples entradas.
+        """
+        entrada_ids = request.data.get('entrada_ids', [])
+        numero_factura = request.data.get('numero_factura')
+        fecha_factura = request.data.get('fecha_factura')
+        folio_remision = request.data.get('folio_remision')
+
+        if not entrada_ids or not isinstance(entrada_ids, list):
+            return Response({'error': 'Debe proporcionar una lista de IDs de entradas.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not numero_factura:
+            return Response({'error': 'El número de factura es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        entradas = EntradaInventario.objects.filter(id__in=entrada_ids)
+        if not entradas.exists():
+            return Response({'error': 'No se encontraron entradas con los IDs proporcionados.'}, status=status.HTTP_404_NOT_FOUND)
+
+        update_fields = {'numero_factura': numero_factura, 'factura_pendiente': False}
+        if fecha_factura:
+            update_fields['fecha_factura'] = fecha_factura
+        if folio_remision is not None:
+            update_fields['folio_remision'] = folio_remision
+
+        actualizados = entradas.update(**update_fields)
+        return Response({
+            'ok': True,
+            'mensaje': f'Se actualizaron {actualizados} entradas de inventario.',
+            'actualizados': actualizados,
+            'numero_factura': numero_factura,
+        })
 
 
 class SalidaInventarioViewSet(viewsets.ReadOnlyModelViewSet):

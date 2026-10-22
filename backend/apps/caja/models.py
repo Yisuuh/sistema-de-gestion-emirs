@@ -1,6 +1,7 @@
 """
 Modelos para el módulo de Caja
 """
+from decimal import Decimal
 from django.db import models
 from django.db.models import Sum
 
@@ -45,41 +46,82 @@ class Caja(models.Model):
     
     @property
     def total_ventas_efectivo(self):
-        """Total en efectivo de ventas registradas en esta caja"""
-        return self.ventas.aggregate(
-            t=Sum('monto_efectivo')
-        )['t'] or 0
+        """
+        Total neto en efectivo de ventas y rescates completados registrados en esta caja.
+        Descuenta el cambio entregado al cliente:
+        - Si metodo_pago == 'efectivo', suma total.
+        - Si metodo_pago == 'mixto', suma max(0, total - monto_electronico).
+        Incluye también los rescates completados cobrados en esta caja.
+        """
+        total_efectivo = Decimal('0.00')
+
+        # Ventas en esta caja
+        for venta in self.ventas.all():
+            if venta.metodo_pago == 'efectivo':
+                total_efectivo += Decimal(str(venta.total))
+            elif venta.metodo_pago == 'mixto':
+                neto = Decimal(str(venta.total)) - Decimal(str(venta.monto_electronico or 0))
+                total_efectivo += max(Decimal('0.00'), neto)
+
+        # Rescates completados en esta caja
+        for rescate in self.rescates.filter(estado='completado'):
+            if rescate.metodo_pago == 'efectivo':
+                total_efectivo += Decimal(str(rescate.total))
+            elif rescate.metodo_pago == 'mixto':
+                neto = Decimal(str(rescate.total)) - Decimal(str(rescate.monto_electronico or 0))
+                total_efectivo += max(Decimal('0.00'), neto)
+
+        return total_efectivo
 
     @property
     def total_ventas_electronico(self):
-        """Total electrónico de ventas registradas en esta caja"""
-        return self.ventas.aggregate(
-            t=Sum('monto_electronico')
-        )['t'] or 0
+        """Total electrónico de ventas y rescates completados registrados en esta caja"""
+        total_electronico = Decimal('0.00')
+
+        # Ventas
+        for venta in self.ventas.all():
+            if venta.metodo_pago in ['tarjeta', 'transferencia']:
+                total_electronico += Decimal(str(venta.total))
+            elif venta.metodo_pago == 'mixto':
+                neto = min(Decimal(str(venta.monto_electronico or 0)), Decimal(str(venta.total)))
+                total_electronico += max(Decimal('0.00'), neto)
+
+        # Rescates completados
+        for rescate in self.rescates.filter(estado='completado'):
+            if rescate.metodo_pago in ['tarjeta', 'transferencia']:
+                total_electronico += Decimal(str(rescate.total))
+            elif rescate.metodo_pago == 'mixto':
+                neto = min(Decimal(str(rescate.monto_electronico or 0)), Decimal(str(rescate.total)))
+                total_electronico += max(Decimal('0.00'), neto)
+
+        return total_electronico
 
     @property
     def total_ventas(self):
-        """Total general de ventas registradas en esta caja"""
-        return self.ventas.aggregate(
-            t=Sum('total')
-        )['t'] or 0
+        """Total general de ventas y rescates completados registrados en esta caja"""
+        ventas_total = self.ventas.aggregate(t=Sum('total'))['t'] or Decimal('0.00')
+        rescates_total = self.rescates.filter(estado='completado').aggregate(t=Sum('total'))['t'] or Decimal('0.00')
+        return Decimal(str(ventas_total)) + Decimal(str(rescates_total))
 
     @property
     def num_ventas(self):
-        """Cantidad de ventas en esta caja"""
-        return self.ventas.count()
+        """Cantidad de ventas y rescates completados en esta caja"""
+        return self.ventas.count() + self.rescates.filter(estado='completado').count()
 
     @property
-    def total_ingresos(self):
-        """Calcular total de ingresos (ventas en efectivo + movimientos de ingreso)"""
-        # Movimientos de ingreso extra
+    def total_ingresos_extra(self):
+        """Calcular total de movimientos de ingreso extra"""
         movimientos_ingreso = self.movimientos.filter(
             tipo='ingreso'
         ).aggregate(
             total=Sum('monto')
         )
-        total_movimientos = movimientos_ingreso['total'] or 0
-        return self.total_ventas_efectivo + total_movimientos
+        return movimientos_ingreso['total'] or Decimal('0.00')
+
+    @property
+    def total_ingresos(self):
+        """Calcular total de ingresos (efectivo neto ventas/rescates + movimientos de ingreso extra)"""
+        return self.total_ventas_efectivo + self.total_ingresos_extra
     
     @property
     def total_egresos(self):
@@ -89,12 +131,15 @@ class Caja(models.Model):
         ).aggregate(
             total=Sum('monto')
         )
-        return movimientos_egreso['total'] or 0
+        return movimientos_egreso['total'] or Decimal('0.00')
     
     @property
     def saldo_esperado(self):
-        """Calcular el saldo esperado en caja"""
-        return self.monto_inicial + self.total_ingresos - self.total_egresos
+        """
+        Calcular el saldo esperado en caja con exactitud matemática:
+        monto_inicial + total_ventas_efectivo + total_ingresos_extra - total_egresos
+        """
+        return self.monto_inicial + self.total_ventas_efectivo + self.total_ingresos_extra - self.total_egresos
     
     @property
     def diferencia(self):

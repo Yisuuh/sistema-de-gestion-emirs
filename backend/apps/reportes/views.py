@@ -1,9 +1,11 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum, Count, Avg
+from django.db.models import Sum, Count, Avg, Q, F
 from django.utils import timezone
 from django.http import HttpResponse
+from datetime import datetime, date, time
+import calendar
 
 
 class ResumenDashboard(APIView):
@@ -303,17 +305,310 @@ class ResumenGastos(APIView):
         })
 
 
+class BalanceGlobalView(APIView):
+    """
+    GET /api/reportes/balance-global/?mes=MM&anio=YYYY o ?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
+    Consolida el Balance Financiero Global y Flujo Neto Disponible:
+    - Ingresos Taller (POS)
+    - Ingresos Rescates Viales (Móvil)
+    - Desglose por método de pago
+    - Egresos por Nómina (Pagada)
+    - Egresos a Proveedores
+    - Gastos Operativos
+    - Costo de Mercancía Vendida (PEPS)
+    - Flujo Neto de Efectivo y Utilidad Operativa
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        import calendar
+        from datetime import datetime, date
+        from django.db.models import Sum, Count, Q, F
+        from apps.ventas.models import Venta
+        from apps.rescates.models import Rescate
+        from apps.gastos.models import Gasto
+        from apps.nomina.models import PeriodoNomina
+        from apps.inventario.models import PagoProveedor, SalidaInventario
+
+        hoy = timezone.localdate()
+        mes_param = request.query_params.get('mes')
+        anio_param = request.query_params.get('anio')
+        fecha_inicio_param = request.query_params.get('fecha_inicio')
+        fecha_fin_param = request.query_params.get('fecha_fin')
+
+        if fecha_inicio_param and fecha_fin_param:
+            try:
+                fecha_inicio = datetime.strptime(fecha_inicio_param, '%Y-%m-%d').date()
+                fecha_fin = datetime.strptime(fecha_fin_param, '%Y-%m-%d').date()
+                mes = fecha_inicio.month
+                anio = fecha_inicio.year
+            except ValueError:
+                fecha_inicio = hoy.replace(day=1)
+                _, last_day = calendar.monthrange(hoy.year, hoy.month)
+                fecha_fin = hoy.replace(day=last_day)
+                mes = hoy.month
+                anio = hoy.year
+        else:
+            try:
+                anio = int(anio_param) if anio_param else hoy.year
+                mes = int(mes_param) if mes_param else hoy.month
+            except (ValueError, TypeError):
+                anio = hoy.year
+                mes = hoy.month
+            fecha_inicio = date(anio, mes, 1)
+            _, last_day = calendar.monthrange(anio, mes)
+            fecha_fin = date(anio, mes, last_day)
+
+        # ── 1. Ingresos Taller (Ventas POS) ───────────────────────────────────
+        from datetime import time as dt_time, datetime as dt_datetime
+        tz = timezone.get_current_timezone()
+        inicio_dt = timezone.make_aware(dt_datetime.combine(fecha_inicio, dt_time.min), tz)
+        fin_dt = timezone.make_aware(dt_datetime.combine(fecha_fin, dt_time.max), tz)
+
+        ventas_qs = Venta.objects.filter(fecha__range=[inicio_dt, fin_dt])
+        ventas_agg = ventas_qs.aggregate(
+            total=Sum('total'),
+            efectivo=Sum('monto_efectivo'),
+            electronico=Sum('monto_electronico'),
+            cantidad=Count('id')
+        )
+        ingresos_taller = float(ventas_agg['total'] or 0)
+        num_ventas = int(ventas_agg['cantidad'] or 0)
+        ticket_prom_taller = ingresos_taller / num_ventas if num_ventas > 0 else 0
+
+        # ── 2. Ingresos Rescates Viales ───────────────────────────────────────
+        rescates_qs = Rescate.objects.filter(
+            estado='completado',
+            fecha_solicitud__range=[inicio_dt, fin_dt]
+        )
+        rescates_agg = rescates_qs.aggregate(
+            total=Sum('total'),
+            efectivo=Sum('monto_efectivo'),
+            electronico=Sum('monto_electronico'),
+            cantidad=Count('id')
+        )
+        ingresos_rescates = float(rescates_agg['total'] or 0)
+        num_rescates = int(rescates_agg['cantidad'] or 0)
+        ticket_prom_rescates = ingresos_rescates / num_rescates if num_rescates > 0 else 0
+
+        total_ingresos = ingresos_taller + ingresos_rescates
+
+        # ── 3. Desglose Consolidado de Ingresos por Método de Pago ────────────
+        efectivo_total = float((ventas_agg['efectivo'] or 0) + (rescates_agg['efectivo'] or 0))
+
+        v_debito = float(ventas_qs.filter(tipo_tarjeta='debito').aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        r_debito = float(rescates_qs.filter(tipo_tarjeta='debito').aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        tarjeta_debito = v_debito + r_debito
+
+        v_credito = float(ventas_qs.filter(tipo_tarjeta='credito').aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        r_credito = float(rescates_qs.filter(tipo_tarjeta='credito').aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        tarjeta_credito = v_credito + r_credito
+
+        v_tarj_otro = float(ventas_qs.filter(metodo_pago='tarjeta', tipo_tarjeta__isnull=True).aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        r_tarj_otro = float(rescates_qs.filter(metodo_pago='tarjeta', tipo_tarjeta__isnull=True).aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        tarjeta_total = tarjeta_debito + tarjeta_credito + v_tarj_otro + r_tarj_otro
+
+        v_transf = float(ventas_qs.filter(metodo_pago='transferencia').aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        r_transf = float(rescates_qs.filter(metodo_pago='transferencia').aggregate(t=Sum('monto_electronico'))['t'] or 0)
+        transferencia_total = v_transf + r_transf
+
+        # ── 4. Egresos Nómina (Períodos pagados en el rango) ───────────────────
+        nominas_qs = PeriodoNomina.objects.filter(
+            estado='pagada',
+            fecha_fin__range=[fecha_inicio, fecha_fin]
+        )
+        nom_agg = nominas_qs.aggregate(
+            total_general=Sum('total_general'),
+            total_efectivo=Sum('total_efectivo'),
+            total_transferencia=Sum('total_transferencia'),
+            total_comisiones=Sum('total_comisiones'),
+            total_domingos=Sum('total_domingos'),
+            cantidad=Count('id')
+        )
+        egresos_nomina_total = float(nom_agg['total_general'] or 0)
+        nomina_detalle = [
+            {
+                'id': n.id,
+                'fecha_inicio': str(n.fecha_inicio),
+                'fecha_fin': str(n.fecha_fin),
+                'total_general': float(n.total_general),
+                'total_efectivo': float(n.total_efectivo),
+                'total_transferencia': float(n.total_transferencia),
+                'total_comisiones': float(n.total_comisiones),
+                'total_domingos': float(n.total_domingos),
+                'observaciones': n.observaciones or ''
+            }
+            for n in nominas_qs.order_by('-fecha_inicio')
+        ]
+
+        # ── 5. Egresos Pagos a Proveedores ────────────────────────────────────
+        pagos_prov_qs = PagoProveedor.objects.filter(fecha__range=[fecha_inicio, fecha_fin])
+        pagos_agg = pagos_prov_qs.aggregate(total=Sum('monto'), cantidad=Count('id'))
+        egresos_proveedores_total = float(pagos_agg['total'] or 0)
+        desglose_proveedores = list(
+            pagos_prov_qs.values('proveedor__nombre')
+            .annotate(total=Sum('monto'), cantidad=Count('id'))
+            .order_by('-total')
+        )
+        pagos_detalle = [
+            {
+                'id': p.id,
+                'proveedor_nombre': p.proveedor.nombre if p.proveedor else 'Sin nombre',
+                'monto': float(p.monto),
+                'fecha_pago': str(p.fecha),
+                'metodo_pago': p.metodo_pago,
+                'numero_referencia': p.referencia,
+                'numero_factura': p.numero_factura,
+                'notas': p.notas,
+            }
+            for p in pagos_prov_qs.select_related('proveedor').order_by('-fecha', '-created_at')
+        ]
+
+        # ── 6. Egresos Gastos Operativos ──────────────────────────────────────
+        gastos_qs = Gasto.objects.filter(fecha__range=[fecha_inicio, fecha_fin])
+        gastos_agg = gastos_qs.aggregate(
+            total=Sum('monto'),
+            efectivo=Sum('monto', filter=Q(metodo_pago='efectivo')),
+            transferencia=Sum('monto', filter=Q(metodo_pago='transferencia')),
+            tarjeta=Sum('monto', filter=Q(metodo_pago='tarjeta')),
+            cantidad=Count('id')
+        )
+        egresos_gastos_total = float(gastos_agg['total'] or 0)
+        gastos_por_categoria = list(
+            gastos_qs.values('categoria__nombre', 'categoria__tipo')
+            .annotate(total=Sum('monto'), cantidad=Count('id'))
+            .order_by('-total')
+        )
+
+        # ── 7. Costo de Mercancía Vendida (PEPS) ──────────────────────────────
+        salidas_qs = SalidaInventario.objects.filter(fecha_venta__range=[fecha_inicio, fecha_fin])
+        costo_mercancia = float(
+            salidas_qs.aggregate(
+                c=Sum(F('precio_costo') * F('cantidad'))
+            )['c'] or 0
+        )
+
+        # ── 8. Cálculos Finales de Balance y Utilidad ──────────────────────────
+        total_egresos_flujo = egresos_nomina_total + egresos_proveedores_total + egresos_gastos_total
+        flujo_neto_disponible = total_ingresos - total_egresos_flujo
+        utilidad_operativa = total_ingresos - (costo_mercancia + egresos_nomina_total + egresos_gastos_total)
+        margen_operativo = (utilidad_operativa / total_ingresos * 100) if total_ingresos > 0 else 0
+
+        return Response({
+            'periodo': {
+                'fecha_inicio': str(fecha_inicio),
+                'fecha_fin': str(fecha_fin),
+                'mes': mes,
+                'anio': anio,
+            },
+            'resumen_ejecutivo': {
+                'ingresos_taller': ingresos_taller,
+                'ingresos_rescates': ingresos_rescates,
+                'total_ingresos': total_ingresos,
+                'costo_mercancia_vendida': costo_mercancia,
+                'egresos_gastos': egresos_gastos_total,
+                'egresos_nomina': egresos_nomina_total,
+                'egresos_proveedores': egresos_proveedores_total,
+                'total_egresos_flujo': total_egresos_flujo,
+                'flujo_neto_disponible': flujo_neto_disponible,
+                'utilidad_operativa': utilidad_operativa,
+                'margen_operativo_porcentaje': round(margen_operativo, 2),
+            },
+            'desglose_ingresos': {
+                'efectivo': efectivo_total,
+                'tarjeta_debito': tarjeta_debito,
+                'tarjeta_credito': tarjeta_credito,
+                'tarjeta_total': tarjeta_total,
+                'transferencia': transferencia_total,
+                'total': total_ingresos,
+            },
+            'taller': {
+                'total': ingresos_taller,
+                'num_ventas': num_ventas,
+                'ticket_promedio': ticket_prom_taller,
+                'por_metodo_pago': list(
+                    ventas_qs.values('metodo_pago').annotate(total=Sum('total'), cantidad=Count('id'))
+                ),
+            },
+            'rescates': {
+                'total': ingresos_rescates,
+                'num_rescates': num_rescates,
+                'ticket_promedio': ticket_prom_rescates,
+                'por_unidad': list(
+                    rescates_qs.values('unidad__numero_economico', 'unidad__nombre')
+                    .annotate(total=Sum('total'), cantidad=Count('id'))
+                    .order_by('-total')
+                ),
+                'por_operador': list(
+                    rescates_qs.values('operador__nombre', 'operador__apellido')
+                    .annotate(total=Sum('total'), cantidad=Count('id'))
+                    .order_by('-total')
+                ),
+                'por_metodo_pago': list(
+                    rescates_qs.values('metodo_pago').annotate(total=Sum('total'), cantidad=Count('id'))
+                ),
+            },
+            'nomina': {
+                'total': egresos_nomina_total,
+                'efectivo': float(nom_agg['total_efectivo'] or 0),
+                'transferencia': float(nom_agg['total_transferencia'] or 0),
+                'comisiones': float(nom_agg['total_comisiones'] or 0),
+                'domingos': float(nom_agg['total_domingos'] or 0),
+                'cantidad_periodos': int(nom_agg['cantidad'] or 0),
+                'periodos': nomina_detalle,
+            },
+            'proveedores': {
+                'total': egresos_proveedores_total,
+                'cantidad_pagos': int(pagos_agg['cantidad'] or 0),
+                'desglose': [
+                    {
+                        'proveedor': r['proveedor__nombre'] or 'Sin nombre',
+                        'total': float(r['total'] or 0),
+                        'cantidad': r['cantidad']
+                    }
+                    for r in desglose_proveedores
+                ],
+                'pagos_detalle': pagos_detalle,
+            },
+            'pagos_detalle': pagos_detalle,
+            'gastos': {
+                'total': egresos_gastos_total,
+                'efectivo': float(gastos_agg['efectivo'] or 0),
+                'transferencia': float(gastos_agg['transferencia'] or 0),
+                'tarjeta': float(gastos_agg['tarjeta'] or 0),
+                'cantidad_gastos': int(gastos_agg['cantidad'] or 0),
+                'por_categoria': [
+                    {
+                        'categoria': r['categoria__nombre'] or 'Sin categoría',
+                        'tipo': r['categoria__tipo'] or '',
+                        'total': float(r['total'] or 0),
+                        'cantidad': r['cantidad']
+                    }
+                    for r in gastos_por_categoria
+                ],
+            },
+        })
+
+
 class ReportePDF(APIView):
     """
     GET /api/reportes/pdf/?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
-    Genera una minuta PDF con ventas, gastos, utilidad bruta del período.
+    Genera la Minuta de Operación PDF en ReportLab con:
+    - Balance Ejecutivo Global y Flujo Neto Disponible
+    - Ingresos Taller y Rescates Viales
+    - Detalle de Pagos a Proveedores y Mercancía
+    - Detalle de Nóminas Pagadas (Sueldos, Comisiones, Domingos)
+    - Detalle de Gastos Operativos
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from apps.ventas.models import Venta, DetalleVenta
+        from apps.rescates.models import Rescate
         from apps.gastos.models import Gasto
-        from django.db.models import Q
+        from apps.nomina.models import PeriodoNomina
+        from apps.inventario.models import PagoProveedor, SalidaInventario
+        from django.db.models import Q, F
         from reportlab.lib.pagesizes import letter
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -327,36 +622,53 @@ class ReportePDF(APIView):
         fecha_inicio = request.query_params.get('fecha_inicio', str(hoy.replace(day=1)))
         fecha_fin = request.query_params.get('fecha_fin', str(hoy))
 
-        # Logo: frontend/public/images/logo_hd.png (3 levels up from this file)
         logo_path = os.path.normpath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             '..', '..', '..', 'frontend', 'public', 'images', 'logo_hd.png'
         ))
 
-        # ── Datos ─────────────────────────────────────────────────────────────
+        # ── 1. Consultas de Datos ─────────────────────────────────────────────
+        # Ventas Taller
         ventas_qs = Venta.objects.filter(fecha__date__range=[fecha_inicio, fecha_fin])
-
         v_total = ventas_qs.aggregate(
             total=Sum('total'),
             efectivo=Sum('monto_efectivo'),
             electronico=Sum('monto_electronico'),
             cantidad=Count('id'),
         )
+        venta_total_f = float(v_total['total'] or 0)
 
+        # Rescates Viales
+        rescates_qs = Rescate.objects.filter(
+            estado='completado',
+            fecha_solicitud__date__range=[fecha_inicio, fecha_fin]
+        )
+        r_total = rescates_qs.aggregate(
+            total=Sum('total'),
+            efectivo=Sum('monto_efectivo'),
+            electronico=Sum('monto_electronico'),
+            cantidad=Count('id')
+        )
+        rescate_total_f = float(r_total['total'] or 0)
+        total_ingresos_f = venta_total_f + rescate_total_f
+
+        # Top productos vendidos
+        top_productos = list(
+            DetalleVenta.objects
+            .filter(venta__fecha__date__range=[fecha_inicio, fecha_fin])
+            .values('descripcion')
+            .annotate(piezas=Sum('cantidad'), subtotal=Sum('subtotal'))
+            .order_by('-subtotal')[:8]
+        )
+
+        # Ventas por vendedor
         por_vendedor = list(
             ventas_qs.values('empleado__nombre', 'empleado__apellido')
             .annotate(total=Sum('total'), cantidad=Count('id'))
             .order_by('-total')
         )
 
-        top_productos = list(
-            DetalleVenta.objects
-            .filter(venta__fecha__date__range=[fecha_inicio, fecha_fin])
-            .values('descripcion')
-            .annotate(piezas=Sum('cantidad'), subtotal=Sum('subtotal'))
-            .order_by('-subtotal')[:10]
-        )
-
+        # Gastos operativos
         gastos_qs = Gasto.objects.filter(fecha__range=[fecha_inicio, fecha_fin])
         g_total = gastos_qs.aggregate(
             total=Sum('monto'),
@@ -364,6 +676,7 @@ class ReportePDF(APIView):
             transferencia=Sum('monto', filter=Q(metodo_pago='transferencia')),
             tarjeta=Sum('monto', filter=Q(metodo_pago='tarjeta')),
         )
+        gasto_total_f = float(g_total['total'] or 0)
 
         por_cat_gasto = list(
             gastos_qs.values('categoria__nombre')
@@ -371,25 +684,43 @@ class ReportePDF(APIView):
             .order_by('-total')
         )
 
-        venta_total_f = float(v_total['total'] or 0)
-        gasto_total_f = float(g_total['total'] or 0)
-        utilidad = venta_total_f - gasto_total_f
+        # Nóminas pagadas
+        nominas_qs = PeriodoNomina.objects.filter(
+            estado='pagada',
+            fecha_fin__range=[fecha_inicio, fecha_fin]
+        ).order_by('fecha_inicio')
+        nom_total = nominas_qs.aggregate(
+            total=Sum('total_general'),
+            efectivo=Sum('total_efectivo'),
+            transferencia=Sum('total_transferencia'),
+            comisiones=Sum('total_comisiones'),
+            domingos=Sum('total_domingos')
+        )
+        nomina_total_f = float(nom_total['total'] or 0)
 
-        # Costo de mercancía vendida (costo real de salidas en el período)
-        from apps.inventario.models import SalidaInventario
-        costo_mercancias = float(
-            SalidaInventario.objects
-            .filter(fecha_venta__range=[fecha_inicio, fecha_fin])
-            .aggregate(c=Sum('precio_costo'))
-            .get('c') or 0
+        # Pagos a Proveedores
+        pagos_prov_qs = PagoProveedor.objects.filter(
+            fecha__range=[fecha_inicio, fecha_fin]
+        ).select_related('proveedor').order_by('fecha')
+        pagos_total_f = float(pagos_prov_qs.aggregate(t=Sum('monto'))['t'] or 0)
+
+        # Costo de mercancía vendida
+        salidas_qs = SalidaInventario.objects.filter(fecha_venta__range=[fecha_inicio, fecha_fin])
+        costo_mercancias_f = float(
+            salidas_qs.aggregate(c=Sum(F('precio_costo') * F('cantidad')))['c'] or 0
         )
 
-        # ── PDF ───────────────────────────────────────────────────────────────
+        # Balances
+        total_egresos_flujo = gasto_total_f + nomina_total_f + pagos_total_f
+        flujo_neto = total_ingresos_f - total_egresos_flujo
+        utilidad_operativa = total_ingresos_f - (costo_mercancias_f + nomina_total_f + gasto_total_f)
+
+        # ── 2. Configuración de Documento PDF ──────────────────────────────────
         buf = io.BytesIO()
         doc = SimpleDocTemplate(
             buf, pagesize=letter,
-            leftMargin=1.8*cm, rightMargin=1.8*cm,
-            topMargin=1.8*cm, bottomMargin=1.8*cm,
+            leftMargin=1.5*cm, rightMargin=1.5*cm,
+            topMargin=1.5*cm, bottomMargin=1.5*cm,
         )
         styles = getSampleStyleSheet()
 
@@ -401,8 +732,9 @@ class ReportePDF(APIView):
         WHITE  = colors.white
         GRAY   = colors.HexColor('#666666')
         GREEN  = colors.HexColor('#16a34a')
+        DARK_RED = colors.HexColor('#b91c1c')
 
-        H2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, spaceBefore=14, spaceAfter=4,
+        H2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, spaceBefore=12, spaceAfter=4,
                              textColor=RED, fontName='Helvetica-Bold')
         NORMAL = styles['Normal']
         SMALL  = ParagraphStyle('SMALL', parent=NORMAL, fontSize=8)
@@ -438,10 +770,10 @@ class ReportePDF(APIView):
                 ParagraphStyle('Brand', parent=NORMAL, fontSize=20, fontName='Helvetica-Bold', leading=24),
             ),
             Paragraph(
-                'Minuta de Operación',
+                'Minuta de Operación & Balance Financiero Global',
                 ParagraphStyle('Sub', parent=NORMAL, fontSize=10, textColor=GRAY, spaceBefore=2),
             ),
-            Spacer(1, 0.18*cm),
+            Spacer(1, 0.15*cm),
             Paragraph(
                 f'Período: <b>{fecha_inicio}</b> al <b>{fecha_fin}</b>',
                 ParagraphStyle('Period', parent=NORMAL, fontSize=9),
@@ -454,8 +786,7 @@ class ReportePDF(APIView):
 
         if os.path.exists(logo_path):
             logo_img = Image(logo_path)
-            # Escala proporcional: altura máx 2.8 cm
-            max_h = 2.8 * cm
+            max_h = 2.6 * cm
             aspect = logo_img.imageWidth / max(logo_img.imageHeight, 1)
             logo_img.drawHeight = max_h
             logo_img.drawWidth  = max_h * aspect
@@ -474,108 +805,157 @@ class ReportePDF(APIView):
             ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
         ]))
         story.append(header_tbl)
-        story.append(Spacer(1, 0.25*cm))
+        story.append(Spacer(1, 0.2*cm))
         story.append(HRFlowable(width='100%', thickness=4, color=RED, spaceAfter=2))
         story.append(HRFlowable(width='100%', thickness=2, color=ORANGE, spaceAfter=4))
         story.append(Spacer(1, 0.2*cm))
 
-        # ── Resumen ejecutivo ─────────────────────────────────────────────────
-        story.append(Paragraph('Resumen Ejecutivo', H2))
+        # ── 1. Resumen Ejecutivo & Balance Financiero ──────────────────────────
+        story.append(Paragraph('Balance Ejecutivo y Flujo de Caja', H2))
         resumen_rows = [
-            ['Total Ventas', money(venta_total_f), '   Ventas en Efectivo', money(v_total['efectivo'])],
-            ['Total Gastos', money(gasto_total_f), '   Ventas Electrónicas', money(v_total['electronico'])],
-            ['Utilidad Neta (Ventas − Gastos)', money(utilidad), '   Número de Ventas', str(v_total['cantidad'] or 0)],
+            ['Total Ingresos (Taller + Rescates)', money(total_ingresos_f), 'Ventas Taller', money(venta_total_f)],
+            ['Total Egresos (Flujo)', money(total_egresos_flujo), 'Ingresos Rescates Viales', money(rescate_total_f)],
+            ['Flujo Neto Disponible', money(flujo_neto), 'Gastos Operativos', money(gasto_total_f)],
+            ['Utilidad Operativa Estimada', money(utilidad_operativa), 'Nóminas Pagadas', money(nomina_total_f)],
+            ['Costo Mercancía Vendida (PEPS)', money(costo_mercancias_f), 'Pagos a Proveedores', money(pagos_total_f)],
         ]
-        t_res = Table(resumen_rows, colWidths=[7*cm, 4*cm, 6*cm, 4*cm])
+        t_res = Table(resumen_rows, colWidths=[6.0*cm, 3.0*cm, 5.5*cm, 3.0*cm])
         t_res.setStyle(TableStyle([
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
             ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
             ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
             ('ROWBACKGROUNDS', (0, 0), (-1, -1), [WHITE, ALT_BG]),
             ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('TEXTCOLOR', (1, 2), (1, 2), GREEN if utilidad >= 0 else RED),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ('TEXTCOLOR', (1, 0), (1, 0), BLACK),
+            ('TEXTCOLOR', (1, 2), (1, 2), GREEN if flujo_neto >= 0 else DARK_RED),
             ('FONTNAME', (1, 2), (1, 2), 'Helvetica-Bold'),
+            ('TEXTCOLOR', (1, 3), (1, 3), GREEN if utilidad_operativa >= 0 else DARK_RED),
+            ('FONTNAME', (1, 3), (1, 3), 'Helvetica-Bold'),
         ]))
         story.append(t_res)
-        story.append(Spacer(1, 0.4*cm))
+        story.append(Spacer(1, 0.3*cm))
 
-        # ── Ventas por método de pago ─────────────────────────────────────────
-        story.append(Paragraph('Ventas por Método de Pago', H2))
+        # ── 2. Desglose de Ingresos por Método de Pago ────────────────────────
+        story.append(Paragraph('Ingresos por Método de Pago (Taller + Rescates)', H2))
         mp_rows = []
         for mp in ['efectivo', 'tarjeta', 'transferencia', 'mixto']:
-            agg = ventas_qs.filter(metodo_pago=mp).aggregate(t=Sum('total'), c=Count('id'))
-            if agg['c']:
-                mp_rows.append([mp.capitalize(), str(agg['c']), money(agg['t'])])
+            v_agg = ventas_qs.filter(metodo_pago=mp).aggregate(t=Sum('total'), c=Count('id'))
+            r_agg = rescates_qs.filter(metodo_pago=mp).aggregate(t=Sum('total'), c=Count('id'))
+            t_monto = (v_agg['t'] or 0) + (r_agg['t'] or 0)
+            t_cant = (v_agg['c'] or 0) + (r_agg['c'] or 0)
+            if t_cant > 0:
+                mp_rows.append([
+                    mp.capitalize(),
+                    f"{v_agg['c'] or 0} taller / {r_agg['c'] or 0} rescates",
+                    str(t_cant),
+                    money(t_monto)
+                ])
         if mp_rows:
-            story.append(make_table(['Método', 'Ventas', 'Total'], mp_rows, [6*cm, 4*cm, 7*cm]))
+            story.append(make_table(['Método', 'Distribución', 'Total Ops', 'Monto Total'], mp_rows, [4.5*cm, 5.0*cm, 3.5*cm, 4.5*cm]))
         else:
-            story.append(Paragraph('Sin ventas en el período.', SMALL))
-        story.append(Spacer(1, 0.4*cm))
+            story.append(Paragraph('Sin ingresos registrados en el período.', SMALL))
+        story.append(Spacer(1, 0.3*cm))
 
-        # ── Ventas por vendedor ───────────────────────────────────────────────
-        story.append(Paragraph('Ventas por Vendedor', H2))
-        vend_rows = [
-            [f"{r['empleado__nombre']} {r['empleado__apellido']}".strip(), str(r['cantidad']), money(r['total'])]
-            for r in por_vendedor
-        ]
-        if vend_rows:
-            story.append(make_table(['Vendedor', 'Ventas', 'Total'], vend_rows, [9*cm, 4*cm, 7*cm]))
-        else:
-            story.append(Paragraph('Sin datos.', SMALL))
-        story.append(Spacer(1, 0.4*cm))
+        # ── 3. Rescates Viales Realizados ─────────────────────────────────────
+        if rescate_total_f > 0 or rescates_qs.exists():
+            story.append(Paragraph('Servicios de Rescate y Auxilio Vial Realizados', H2))
+            res_rows = [
+                [
+                    r.folio,
+                    r.nombre_cliente[:25],
+                    f"{r.operador.nombre_completo if r.operador else '—'} ({r.unidad.numero_economico if r.unidad else 'Móvil'})"[:30],
+                    r.metodo_pago.capitalize(),
+                    money(r.total)
+                ]
+                for r in rescates_qs.select_related('operador', 'unidad').order_by('fecha_solicitud')
+            ]
+            story.append(make_table(
+                ['Folio', 'Cliente', 'Operador / Unidad', 'Método', 'Total'],
+                res_rows,
+                [2.5*cm, 4.5*cm, 5.0*cm, 2.5*cm, 3.0*cm]
+            ))
+            story.append(Spacer(1, 0.3*cm))
 
-        # ── Top productos / servicios ─────────────────────────────────────────
-        story.append(Paragraph('Top Productos / Servicios Vendidos', H2))
+        # ── 4. Nóminas Pagadas ────────────────────────────────────────────────
+        if nominas_qs.exists():
+            story.append(Paragraph('Nóminas Pagadas y Personal', H2))
+            nom_rows = [
+                [
+                    f"{n.fecha_inicio} al {n.fecha_fin}",
+                    money(n.total_efectivo),
+                    money(n.total_transferencia),
+                    money(n.total_comisiones),
+                    money(n.total_general)
+                ]
+                for n in nominas_qs
+            ]
+            story.append(make_table(
+                ['Período Nómina', 'Efectivo', 'Transferencia', 'Comisiones', 'Total Pagado'],
+                nom_rows,
+                [4.5*cm, 3.0*cm, 3.5*cm, 3.0*cm, 3.5*cm]
+            ))
+            story.append(Spacer(1, 0.3*cm))
+
+        # ── 5. Pagos a Proveedores ────────────────────────────────────────────
+        if pagos_prov_qs.exists():
+            story.append(Paragraph('Pagos a Proveedores y Compras de Mercancía', H2))
+            prov_rows = [
+                [
+                    str(p.fecha),
+                    p.proveedor.nombre[:26],
+                    p.numero_factura if p.numero_factura else '—',
+                    p.referencia[:16] if p.referencia else '—',
+                    money(p.monto)
+                ]
+                for p in pagos_prov_qs
+            ]
+            story.append(make_table(
+                ['Fecha', 'Proveedor', 'Factura / Remisión', 'Referencia', 'Monto Pagado'],
+                prov_rows,
+                [2.5*cm, 5.5*cm, 3.5*cm, 3.0*cm, 3.0*cm]
+            ))
+            story.append(Spacer(1, 0.3*cm))
+
+        # ── 6. Top productos / servicios ──────────────────────────────────────
+        story.append(Paragraph('Top Productos y Servicios Vendidos', H2))
         prod_rows = [
             [r['descripcion'], str(int(r['piezas'] or 0)), money(r['subtotal'])]
             for r in top_productos
         ]
         if prod_rows:
-            story.append(make_table(['Descripción', 'Piezas', 'Subtotal'], prod_rows, [11*cm, 3*cm, 5*cm]))
+            story.append(make_table(['Descripción', 'Piezas', 'Subtotal'], prod_rows, [10.5*cm, 2.5*cm, 4.5*cm]))
         else:
-            story.append(Paragraph('Sin datos.', SMALL))
-        story.append(Spacer(1, 0.4*cm))
+            story.append(Paragraph('Sin ventas de productos/servicios en el período.', SMALL))
+        story.append(Spacer(1, 0.3*cm))
 
-        # ── Gastos ────────────────────────────────────────────────────────────
-        story.append(Paragraph('Gastos del Período', H2))
+        # ── 7. Gastos del Período ─────────────────────────────────────────────
+        story.append(Paragraph('Gastos Operativos del Período', H2))
         g_sum_rows = [
             ['Total Gastos', money(g_total['total']), 'Efectivo', money(g_total['efectivo'])],
             ['', '', 'Transferencia', money(g_total['transferencia'])],
             ['', '', 'Tarjeta', money(g_total['tarjeta'])],
         ]
-        t_g = Table(g_sum_rows, colWidths=[5*cm, 4*cm, 5*cm, 4*cm])
+        t_g = Table(g_sum_rows, colWidths=[5*cm, 4*cm, 4.5*cm, 4*cm])
         t_g.setStyle(TableStyle([
             ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
             ('ROWBACKGROUNDS', (0, 0), (-1, -1), [WHITE, ALT_BG, WHITE]),
             ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ]))
         story.append(t_g)
         story.append(Spacer(1, 0.25*cm))
 
-        # Gastos por categoría
-        story.append(Paragraph('Gastos por Categoría', H2))
-        gcat_rows = [
-            [r['categoria__nombre'] or 'Sin categoría', money(r['total'])]
-            for r in por_cat_gasto
-        ]
-        if gcat_rows:
-            story.append(make_table(['Categoría', 'Total'], gcat_rows, [12*cm, 5*cm]))
-        else:
-            story.append(Paragraph('Sin gastos en el período.', SMALL))
-        story.append(Spacer(1, 0.4*cm))
-
         # Detalle de gastos
-        story.append(Paragraph('Detalle de Gastos', H2))
+        story.append(Paragraph('Detalle de Gastos Operativos', H2))
         gdet_rows = [
-            [str(g.fecha), g.concepto[:40], g.categoria.nombre if g.categoria else '—',
+            [str(g.fecha), g.concepto[:35], g.categoria.nombre if g.categoria else '—',
              g.metodo_pago.capitalize(), money(g.monto)]
             for g in gastos_qs.select_related('categoria').order_by('fecha')
         ]
@@ -583,12 +963,12 @@ class ReportePDF(APIView):
             story.append(make_table(
                 ['Fecha', 'Concepto', 'Categoría', 'Método', 'Monto'],
                 gdet_rows,
-                [2.8*cm, 6.5*cm, 3.5*cm, 2.5*cm, 3*cm]
+                [2.5*cm, 6.0*cm, 3.5*cm, 2.5*cm, 3.0*cm]
             ))
         else:
             story.append(Paragraph('Sin gastos en el período.', SMALL))
 
-        story.append(Spacer(1, 0.6*cm))
+        story.append(Spacer(1, 0.5*cm))
         story.append(HRFlowable(width='100%', thickness=3, color=RED, spaceAfter=2))
         story.append(HRFlowable(width='100%', thickness=1.5, color=ORANGE, spaceAfter=4))
         story.append(Spacer(1, 0.2*cm))
@@ -601,7 +981,248 @@ class ReportePDF(APIView):
         doc.build(story)
         buf.seek(0)
 
-        nombre_archivo = f"minuta_{fecha_inicio}_{fecha_fin}.pdf"
+        nombre_archivo = f"minuta_balance_{fecha_inicio}_{fecha_fin}.pdf"
         resp = HttpResponse(buf.read(), content_type='application/pdf')
         resp['Content-Disposition'] = f'attachment; filename="{nombre_archivo}"'
         return resp
+
+
+
+class RankingMasVendidos(APIView):
+    """
+    GET /api/reportes/mas-vendidos/?anio=YYYY
+    Devuelve ranking anual de productos y servicios más vendidos con desglose mensual (1-12).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.ventas.models import DetalleVenta
+        from django.db.models import Q, Sum, Count
+
+        anio_param = request.query_params.get('anio')
+        try:
+            anio = int(anio_param) if anio_param else timezone.localdate().year
+        except (ValueError, TypeError):
+            anio = timezone.localdate().year
+
+        # Construir anotaciones mensuales condicionales
+        mes_annotations = {}
+        for m in range(1, 13):
+            mes_annotations[f'mes_{m}_cant'] = Sum('cantidad', filter=Q(venta__fecha__month=m))
+            mes_annotations[f'mes_{m}_tot'] = Sum('subtotal', filter=Q(venta__fecha__month=m))
+
+        # ── Productos más vendidos ────────────────────────────────────────────
+        detalles_prod = DetalleVenta.objects.filter(
+            venta__fecha__year=anio,
+            producto__isnull=False
+        )
+
+        prod_qs = detalles_prod.values(
+            'producto__id',
+            'producto__codigo',
+            'producto__marca__nombre',
+            'producto__modelo',
+            'producto__medida',
+            'producto__indice_carga',
+            'producto__indice_velocidad',
+            'descripcion',
+        ).annotate(
+            cantidad_total=Sum('cantidad'),
+            total_recaudado=Sum('subtotal'),
+            num_ventas=Count('venta', distinct=True),
+            **mes_annotations
+        ).order_by('-cantidad_total')
+
+        productos = []
+        for p in prod_qs:
+            marca = p.get('producto__marca__nombre') or ''
+            modelo = p.get('producto__modelo') or ''
+            medida = p.get('producto__medida') or ''
+            ic = p.get('producto__indice_carga') or ''
+            iv = p.get('producto__indice_velocidad') or ''
+            desc = f"{marca} {modelo} {medida} {ic}{iv}".strip() or p.get('descripcion')
+
+            meses = [
+                {
+                    'mes': m,
+                    'cantidad': int(p.get(f'mes_{m}_cant') or 0),
+                    'total': float(p.get(f'mes_{m}_tot') or 0),
+                }
+                for m in range(1, 13)
+            ]
+
+            productos.append({
+                'id': p['producto__id'],
+                'codigo': p['producto__codigo'],
+                'marca': marca,
+                'modelo': modelo,
+                'medida': medida,
+                'descripcion': desc,
+                'cantidad_total': int(p['cantidad_total'] or 0),
+                'total_recaudado': float(p['total_recaudado'] or 0),
+                'num_ventas': p['num_ventas'],
+                'meses': meses,
+            })
+
+        # ── Servicios más realizados ──────────────────────────────────────────
+        detalles_serv = DetalleVenta.objects.filter(
+            venta__fecha__year=anio,
+            servicio__isnull=False
+        )
+
+        serv_qs = detalles_serv.values(
+            'servicio__id',
+            'servicio__nombre',
+        ).annotate(
+            cantidad_total=Sum('cantidad'),
+            total_recaudado=Sum('subtotal'),
+            num_ventas=Count('venta', distinct=True),
+            **mes_annotations
+        ).order_by('-cantidad_total')
+
+        servicios = []
+        for s in serv_qs:
+            meses = [
+                {
+                    'mes': m,
+                    'cantidad': int(s.get(f'mes_{m}_cant') or 0),
+                    'total': float(s.get(f'mes_{m}_tot') or 0),
+                }
+                for m in range(1, 13)
+            ]
+
+            servicios.append({
+                'id': s['servicio__id'],
+                'nombre': s['servicio__nombre'],
+                'cantidad_total': int(s['cantidad_total'] or 0),
+                'total_recaudado': float(s['total_recaudado'] or 0),
+                'num_ventas': s['num_ventas'],
+                'meses': meses,
+            })
+
+        return Response({
+            'anio': anio,
+            'productos': productos,
+            'servicios': servicios,
+            'totales': {
+                'productos_piezas': sum(p['cantidad_total'] for p in productos),
+                'productos_monto': sum(p['total_recaudado'] for p in productos),
+                'servicios_realizados': sum(s['cantidad_total'] for s in servicios),
+                'servicios_monto': sum(s['total_recaudado'] for s in servicios),
+            }
+        })
+
+
+class BackupSistemaView(APIView):
+    """
+    GET /api/reportes/backup/ -> Estadísticas rápidas de respaldo del sistema (Solo Admin).
+    POST /api/reportes/backup/ o GET /api/reportes/backup/?descargar=1 o GET /api/reportes/backup/descargar/
+    -> Genera y descarga el respaldo completo en formato .zip (full_database_dump.json + manifest.json).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _es_admin(self, user):
+        return (
+            getattr(user, 'rol', None) == 'admin' or
+            getattr(user, 'role', None) == 'admin' or
+            user.is_staff or
+            user.is_superuser
+        )
+
+    def _obtener_conteos(self):
+        from apps.clientes.models import Cliente, Vehiculo
+        from apps.inventario.models import Producto, Proveedor, PagoProveedor
+        from apps.ventas.models import Venta, Cotizacion
+        from apps.rescates.models import Rescate
+        from apps.caja.models import Caja
+
+        return {
+            'clientes': Cliente.objects.count(),
+            'vehiculos': Vehiculo.objects.count(),
+            'productos': Producto.objects.count(),
+            'ventas': Venta.objects.count(),
+            'rescates': Rescate.objects.count(),
+            'cajas': Caja.objects.count(),
+            'proveedores': Proveedor.objects.count(),
+            'pagos': PagoProveedor.objects.count(),
+            'cotizaciones': Cotizacion.objects.count(),
+        }
+
+    def _generar_zip_response(self, request):
+        import io
+        import json
+        import zipfile
+        from django.core.management import call_command
+
+        ahora = timezone.localtime(timezone.now())
+        conteos = self._obtener_conteos()
+
+        dump_buf = io.StringIO()
+        call_command(
+            'dumpdata',
+            exclude=['contenttypes', 'sessions', 'admin.logentry'],
+            indent=2,
+            stdout=dump_buf,
+        )
+        dump_json = dump_buf.getvalue()
+
+        manifest = {
+            'sistema': 'Centro Llantero EmirS - Sistema de Gestión Integral',
+            'fecha_generacion': ahora.strftime('%Y-%m-%d %H:%M:%S'),
+            'generado_por': request.user.username,
+            'generado_por_nombre': request.user.get_full_name() or request.user.username,
+            'conteos_tablas': conteos,
+            'total_registros_principales': sum(conteos.values()),
+        }
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('full_database_dump.json', dump_json.encode('utf-8'))
+            zf.writestr('manifest.json', json.dumps(manifest, indent=2, ensure_ascii=False).encode('utf-8'))
+
+        try:
+            from apps.usuarios.models import LogAuditoria
+            LogAuditoria.objects.create(
+                usuario=request.user,
+                accion='crear',
+                tabla='sistema_backup',
+                registro_id=None,
+                datos_nuevos=manifest,
+                ip=request.META.get('REMOTE_ADDR'),
+            )
+        except Exception:
+            pass
+
+        zip_buf.seek(0)
+        filename = f"Respaldo_EmirS_{ahora.strftime('%Y%m%d_%H%M%S')}.zip"
+        response = HttpResponse(zip_buf.read(), content_type='application/zip')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    def get(self, request, *args, **kwargs):
+        if not self._es_admin(request.user):
+            return Response(
+                {'error': 'Acceso restringido. Solo los administradores pueden gestionar respaldos del sistema.'},
+                status=403
+            )
+
+        descargar = request.query_params.get('descargar')
+        if descargar in ('1', 'true', 'True') or request.path.endswith('/descargar/'):
+            return self._generar_zip_response(request)
+
+        conteos = self._obtener_conteos()
+        return Response({
+            'fecha_actual': timezone.localtime(timezone.now()).strftime('%Y-%m-%d %H:%M:%S'),
+            'conteos': conteos,
+            'total_registros': sum(conteos.values()),
+            **conteos,
+        })
+
+    def post(self, request, *args, **kwargs):
+        if not self._es_admin(request.user):
+            return Response(
+                {'error': 'Acceso restringido. Solo los administradores pueden generar respaldos del sistema.'},
+                status=403
+            )
+        return self._generar_zip_response(request)
+

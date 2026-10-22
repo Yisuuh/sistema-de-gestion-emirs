@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useConfirm } from '../../lib/confirm';
 import {
   EnvelopeIcon,
@@ -114,6 +114,7 @@ export default function Notificaciones() {
   const err = (msg) => { setError(msg); setTimeout(() => setError(null), 5000); };
 
   // ─── Cargar datos ─────────────────────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { cargarTodo(); }, []);
 
   const cargarTodo = async () => {

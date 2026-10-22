@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'apps.clientes.apps.ClientesConfig',
     'apps.reportes.apps.ReportesConfig',
     'apps.notificaciones.apps.NotificacionesConfig',
+    'apps.rescates.apps.RescatesConfig',
 ]
 
 MIDDLEWARE = [

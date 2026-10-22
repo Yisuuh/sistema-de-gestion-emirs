@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
 import {
   Home, Package, ShoppingCart, Wallet, Users, FileText,
-  LogOut, CreditCard, Bell, Menu, X, Banknote, Receipt, TrendingDown,
+  LogOut, CreditCard, Bell, Menu, X, Banknote, Receipt, TrendingDown, Truck,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -11,6 +11,7 @@ const NAV_SECTIONS = [
     links: [
       { to: '/dashboard',  icon: Home,         label: 'Dashboard' },
       { to: '/ventas',     icon: ShoppingCart,  label: 'Punto de Venta' },
+      { to: '/rescates',   icon: Truck,         label: 'Rescates en Ruta' },
       { to: '/caja',       icon: Wallet,        label: 'Caja' },
     ],
   },

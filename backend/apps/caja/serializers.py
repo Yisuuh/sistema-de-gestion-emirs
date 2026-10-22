@@ -132,27 +132,21 @@ class CajaSerializer(serializers.ModelSerializer):
         return data
     
     def create(self, validated_data):
-        """Crear caja con folio automático"""
-        # Verificar que no haya una caja abierta
-        caja_abierta = Caja.objects.filter(estado='abierta').first()
-        if caja_abierta:
-            raise serializers.ValidationError(
-                f"Ya existe una caja abierta con folio {caja_abierta.folio}. "
-                "Debe cerrarla antes de abrir una nueva."
-            )
-        
-        # Generar folio automático
-        ultima_caja = Caja.objects.all().order_by('-id').first()
-        if ultima_caja and ultima_caja.folio:
-            try:
-                numero = int(ultima_caja.folio.replace('C-', '')) + 1
-            except:
-                numero = 1
-        else:
-            numero = 1
-        validated_data['folio'] = f'C-{numero:06d}'
-        
-        return super().create(validated_data)
+        """Crear caja con folio automático atómico"""
+        from django.db import transaction
+        from apps.ventas.services import generar_siguiente_folio_atomico
+
+        with transaction.atomic():
+            # Verificar que no haya una caja abierta
+            caja_abierta = Caja.objects.filter(estado='abierta').first()
+            if caja_abierta:
+                raise serializers.ValidationError(
+                    f"Ya existe una caja abierta con folio {caja_abierta.folio}. "
+                    "Debe cerrarla antes de abrir una nueva."
+                )
+
+            validated_data['folio'] = generar_siguiente_folio_atomico('CAJA', Caja, 'C-', 6)
+            return super().create(validated_data)
 
 
 class CajaListSerializer(serializers.ModelSerializer):

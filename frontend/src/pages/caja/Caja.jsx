@@ -1,4 +1,5 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
+import ModalTicket from '../../components/ModalTicket';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CurrencyDollarIcon,
@@ -17,6 +18,9 @@ import {
   LockOpenIcon,
   CalendarDaysIcon,
   CheckCircleIcon,
+  PencilIcon,
+  TrashIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 
 const API_CAJA = '/api/caja';
@@ -346,7 +350,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             <div className="flex gap-3">
               <button type="button" onClick={() => setPaso(1)}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
-                ? Regresar
+                ← Regresar
               </button>
               <button type="submit" disabled={loading}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2">
@@ -361,7 +365,7 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
   );
 }
 
-// ─── Modal Movimiento ────────────────────────────────────────────────────────
+// ─── Modal Movimiento (Nuevo) ────────────────────────────────────────────────
 function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
   const [form, setForm] = useState({ caja: cajaId, tipo: 'ingreso', concepto: '', descripcion: '', monto: '', empleado: '', categoria: '' });
   const [loading, setLoading] = useState(false);
@@ -399,7 +403,7 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
                 className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${form.tipo === t
                   ? t === 'ingreso' ? 'bg-green-600 text-white border-green-600' : 'bg-red-600 text-white border-red-600'
                   : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
-                {t === 'ingreso' ? '? Ingreso' : '? Egreso'}
+                {t === 'ingreso' ? '↑ Ingreso' : '↓ Egreso'}
               </button>
             ))}
           </div>
@@ -429,13 +433,15 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
             <input type="text" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}
               placeholder="Operativo, Servicios, etc."
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
-          </div>          <div>
+          </div>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Descripción (opcional)</label>
             <textarea rows={2} value={form.descripcion}
               onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
               placeholder="Detalles adicionales del movimiento"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] resize-none" />
-          </div>          <div className="flex gap-3 pt-2">
+          </div>
+          <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancelar</button>
             <button type="submit" disabled={loading}
               className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50">
@@ -448,10 +454,402 @@ function ModalMovimiento({ cajaId, empleados, onGuardado, onClose }) {
   );
 }
 
+// ─── Modal Editar Movimiento ─────────────────────────────────────────────────
+function ModalEditarMovimiento({ movimiento, empleados, onGuardado, onClose }) {
+  const [form, setForm] = useState({
+    tipo: movimiento.tipo || 'ingreso',
+    concepto: movimiento.concepto || '',
+    descripcion: movimiento.descripcion || '',
+    monto: String(movimiento.monto || ''),
+    empleado: String(movimiento.empleado || ''),
+    categoria: movimiento.categoria || '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`${API_CAJA}/movimientos/${movimiento.id}/`, {
+        method: 'PATCH',
+        headers: jsonHdrs(),
+        body: JSON.stringify({
+          tipo: form.tipo,
+          concepto: form.concepto.trim(),
+          descripcion: form.descripcion.trim(),
+          monto: parseFloat(form.monto),
+          empleado: parseInt(form.empleado),
+          categoria: form.categoria.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.detail || JSON.stringify(data)); return; }
+      onGuardado(data);
+    } catch { setErr('Error de conexión.'); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-gray-900">Editar Movimiento</h2>
+          <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" /></button>
+        </div>
+        {err && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>}
+        <form onSubmit={submit} className="space-y-4">
+          <div className="flex gap-2">
+            {['ingreso', 'egreso'].map((t) => (
+              <button key={t} type="button"
+                onClick={() => setForm({ ...form, tipo: t })}
+                className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${form.tipo === t
+                  ? t === 'ingreso' ? 'bg-green-600 text-white border-green-600' : 'bg-red-600 text-white border-red-600'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+                {t === 'ingreso' ? '↑ Ingreso' : '↓ Egreso'}
+              </button>
+            ))}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Empleado *</label>
+            <select required value={form.empleado} onChange={(e) => setForm({ ...form, empleado: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
+              <option value="">Seleccionar empleado</option>
+              {empleados.map((e) => <option key={e.id} value={e.id}>{e.nombre} {e.apellido}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Concepto *</label>
+              <input required type="text" value={form.concepto} onChange={(e) => setForm({ ...form, concepto: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto *</label>
+              <input required type="number" min="0.01" step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Categoría</label>
+            <input type="text" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+            <textarea rows={2} value={form.descripcion}
+              onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] resize-none" />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancelar</button>
+            <button type="submit" disabled={loading}
+              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50">
+              {loading ? 'Guardando...' : 'Guardar Cambios'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Eliminar Movimiento ───────────────────────────────────────────────
+function ModalEliminarMovimiento({ movimiento, onEliminado, onClose }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const eliminar = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`${API_CAJA}/movimientos/${movimiento.id}/`, {
+        method: 'DELETE',
+        headers: hdrs(),
+      });
+      if (res.ok || res.status === 204) {
+        onEliminado();
+      } else {
+        const d = await res.json();
+        setErr(d.error || d.detail || 'Error al eliminar el movimiento');
+      }
+    } catch {
+      setErr('Error de conexión.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center">
+        <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4">
+          <TrashIcon className="w-6 h-6" />
+        </div>
+        <h3 className="text-lg font-bold text-gray-900 mb-2">Eliminar Movimiento</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          ¿Estás seguro de eliminar el movimiento <strong>{movimiento.concepto}</strong> ({movimiento.tipo === 'ingreso' ? '+' : '-'}{fmt(movimiento.monto)})?
+        </p>
+        {err && <div className="text-xs text-red-600 bg-red-50 p-2 rounded mb-3">{err}</div>}
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button type="button" onClick={eliminar} disabled={loading}
+            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 disabled:opacity-50">
+            {loading ? 'Eliminando...' : 'Eliminar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Editar Venta ───────────────────────────────────────────────────────
+function ModalEditarVenta({ venta, empleados, clientes, onGuardado, onClose }) {
+  const [form, setForm] = useState({
+    empleado: String(venta.empleado || ''),
+    cliente: String(venta.cliente || ''),
+    metodo_pago: venta.metodo_pago || 'efectivo',
+    tipo_tarjeta: venta.tipo_tarjeta || 'debito',
+    num_operacion: venta.num_operacion || '',
+    num_referencia: venta.num_referencia || '',
+    notas: venta.notas || '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`/api/ventas/ventas/${venta.id}/`, {
+        method: 'PATCH',
+        headers: jsonHdrs(),
+        body: JSON.stringify({
+          empleado: form.empleado ? parseInt(form.empleado) : undefined,
+          cliente: form.cliente ? parseInt(form.cliente) : null,
+          metodo_pago: form.metodo_pago,
+          tipo_tarjeta: ['tarjeta', 'mixto'].includes(form.metodo_pago) ? form.tipo_tarjeta : null,
+          num_operacion: ['tarjeta', 'mixto'].includes(form.metodo_pago) ? form.num_operacion.trim() : '',
+          num_referencia: ['transferencia', 'mixto'].includes(form.metodo_pago) ? form.num_referencia.trim() : '',
+          notas: form.notas.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.detail || data.error || JSON.stringify(data)); return; }
+      onGuardado(data);
+    } catch { setErr('Error de conexión.'); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <PencilIcon className="w-5 h-5 text-[#df000a]" />
+            <h2 className="text-xl font-bold text-gray-900">Editar Venta {venta.folio}</h2>
+          </div>
+          <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" /></button>
+        </div>
+        {err && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>}
+        <form onSubmit={submit} className="space-y-4 text-sm">
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Vendedor *</label>
+            <select required value={form.empleado} onChange={(e) => setForm({ ...form, empleado: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
+              <option value="">Seleccionar vendedor</option>
+              {empleados.map((e) => (
+                <option key={e.id} value={e.id}>{e.nombre_completo || `${e.nombre} ${e.apellido}`}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Cliente</label>
+            <select value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
+              <option value="">Público General</option>
+              {clientes.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre} — {c.telefono}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Método de Pago</label>
+            <select value={form.metodo_pago} onChange={(e) => setForm({ ...form, metodo_pago: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
+              <option value="efectivo">Efectivo</option>
+              <option value="tarjeta">Tarjeta</option>
+              <option value="transferencia">Transferencia</option>
+              <option value="mixto">Mixto</option>
+            </select>
+          </div>
+
+          {['tarjeta', 'mixto'].includes(form.metodo_pago) && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Tipo de Tarjeta</label>
+              <div className="grid grid-cols-2 gap-2">
+                {['debito', 'credito'].map((tt) => (
+                  <button key={tt} type="button" onClick={() => setForm({ ...form, tipo_tarjeta: tt })}
+                    className={`py-1.5 px-3 rounded-lg text-xs font-bold border capitalize flex items-center justify-center gap-1.5 ${
+                      form.tipo_tarjeta === tt ? 'bg-[#df000a] text-white border-[#df000a]' : 'bg-gray-50 text-gray-700 border-gray-200'
+                    }`}>
+                    <i className={tt === 'debito' ? 'ri-bank-card-line' : 'ri-bank-card-2-line'}></i>
+                    <span>{tt === 'debito' ? 'Débito' : 'Crédito'}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {['tarjeta', 'mixto'].includes(form.metodo_pago) && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">No. Operación Tarjeta</label>
+              <input type="text" value={form.num_operacion} onChange={(e) => setForm({ ...form, num_operacion: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+            </div>
+          )}
+
+          {['transferencia', 'mixto'].includes(form.metodo_pago) && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">No. Referencia Transf.</label>
+              <input type="text" value={form.num_referencia} onChange={(e) => setForm({ ...form, num_referencia: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Notas</label>
+            <textarea rows={2} value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] resize-none" />
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+              Cancelar
+            </button>
+            <button type="submit" disabled={loading}
+              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50 font-medium">
+              {loading ? 'Guardando...' : 'Guardar Cambios'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Eliminar Venta ─────────────────────────────────────────────────────
+function ModalEliminarVenta({ venta, onEliminado, onClose }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const eliminar = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`/api/ventas/ventas/${venta.id}/`, {
+        method: 'DELETE',
+        headers: hdrs(),
+      });
+      if (res.ok || res.status === 204) {
+        onEliminado();
+      } else {
+        const d = await res.json();
+        setErr(d.error || d.detail || 'Error al eliminar la venta');
+      }
+    } catch {
+      setErr('Error de conexión.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <div className="w-14 h-14 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4">
+          <ExclamationTriangleIcon className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-bold text-gray-900 text-center mb-1">
+          ¿Eliminar Venta {venta.folio}?
+        </h3>
+        <p className="text-center text-sm font-semibold text-[#df000a] mb-4">
+          Total: {fmt(venta.total)}
+        </p>
+        
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5 text-xs text-amber-900 leading-relaxed flex items-start gap-2">
+          <i className="ri-error-warning-line text-amber-600 text-base mt-0.5 flex-shrink-0"></i>
+          <div>
+            <strong>Aviso de inventario:</strong> Al eliminar esta venta, el registro se cancelará de la caja y los productos vendidos retornarán automáticamente al stock disponible en el inventario.
+          </div>
+        </div>
+
+        {err && <div className="text-xs text-red-600 bg-red-50 p-2 rounded mb-3">{err}</div>}
+
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose}
+            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button type="button" onClick={eliminar} disabled={loading}
+            className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-bold disabled:opacity-50 transition-colors">
+            {loading ? 'Eliminando...' : 'Sí, Eliminar Venta'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Panel Caja Activa ────────────────────────────────────────────────────────
-function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal }) {
+function CajaActiva({ caja, ventas, movimientos, empleados, clientes, onRefresh, setModal, onNotif }) {
+  const queryClient = useQueryClient();
   const metodoPagoColor = { efectivo: 'green', tarjeta: 'blue', transferencia: 'purple', mixto: 'orange' };
   const metodoPagoLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', mixto: 'Mixto' };
+  const [ticketVenta, setTicketVenta] = useState(null);
+  const [ventaAEditar, setVentaAEditar] = useState(null);
+  const [ventaAEliminar, setVentaAEliminar] = useState(null);
+  const [movAEditar, setMovAEditar] = useState(null);
+  const [movAEliminar, setMovAEliminar] = useState(null);
+
+  const abrirTicket = async (id) => {
+    const r = await fetch(`/api/ventas/ventas/${id}/ticket/`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    });
+    if (r.ok) setTicketVenta(await r.json());
+  };
+
+  const handleVentaEliminada = () => {
+    setVentaAEliminar(null);
+    onNotif('Venta eliminada y stock restituido al inventario.');
+    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['pos-productos'] });
+    queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
+    queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
+  };
+
+  const handleVentaEditada = () => {
+    setVentaAEditar(null);
+    onNotif('Venta actualizada correctamente.');
+    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
+  };
+
+  const handleMovEliminado = () => {
+    setMovAEliminar(null);
+    onNotif('Movimiento eliminado correctamente.');
+    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
+  };
+
+  const handleMovEditado = () => {
+    setMovAEditar(null);
+    onNotif('Movimiento actualizado correctamente.');
+    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
+  };
 
   return (
     <div className="space-y-6">
@@ -521,22 +919,55 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Efectivo</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Electrónico</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/[0.05]">
+              <tbody className="divide-y divide-gray-100">
                 {ventas.map((v) => (
-                  <tr key={v.id} className="hover:bg-red-50">
+                  <tr key={v.id} className="hover:bg-red-50/50">
                     <td className="px-4 py-3 font-mono font-semibold text-gray-800">{v.folio}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{v.fecha_formateada}</td>
                     <td className="px-4 py-3 text-gray-700">{v.empleado_nombre}</td>
                     <td className="px-4 py-3">
-                      <Badge text={metodoPagoLabel[v.metodo_pago] ?? v.metodo_pago}
-                        color={metodoPagoColor[v.metodo_pago] ?? 'gray'} />
+                      <div className="flex flex-col gap-0.5">
+                        <Badge text={metodoPagoLabel[v.metodo_pago] ?? v.metodo_pago}
+                          color={metodoPagoColor[v.metodo_pago] ?? 'gray'} />
+                        {v.tipo_tarjeta && (
+                          <span className="text-[10px] text-gray-400 font-mono capitalize">
+                            {v.tipo_tarjeta}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-center text-gray-600">{v.total_items}</td>
                     <td className="px-4 py-3 text-right text-green-700 font-mono">{fmt(v.monto_efectivo)}</td>
                     <td className="px-4 py-3 text-right text-[#df000a] font-mono">{fmt(v.monto_electronico)}</td>
                     <td className="px-4 py-3 text-right font-bold text-gray-900">{fmt(v.total)}</td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          onClick={() => abrirTicket(v.id)}
+                          title="Imprimir ticket"
+                          className="p-1.5 text-gray-400 hover:text-[#df000a] hover:bg-gray-100 rounded transition-colors"
+                        >
+                          <i className="ri-printer-line text-base"></i>
+                        </button>
+                        <button
+                          onClick={() => setVentaAEditar(v)}
+                          title="Editar Venta"
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                        >
+                          <PencilIcon className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setVentaAEliminar(v)}
+                          title="Eliminar Venta"
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        >
+                          <TrashIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -552,6 +983,7 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <td className="px-4 py-2 text-right font-bold text-gray-900">
                     {fmt(ventas.reduce((s, v) => s + parseFloat(v.total || 0), 0))}
                   </td>
+                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -576,9 +1008,10 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Concepto</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/[0.05]">
+              <tbody className="divide-y divide-gray-100">
                 {movimientos.map((m) => (
                   <tr key={m.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{m.fecha_formateada}</td>
@@ -591,12 +1024,68 @@ function CajaActiva({ caja, ventas, movimientos, empleados, onRefresh, setModal 
                     <td className={`px-4 py-2 text-right font-semibold font-mono ${m.tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'}`}>
                       {m.tipo === 'ingreso' ? '+' : '-'}{fmt(m.monto)}
                     </td>
+                    <td className="px-4 py-2 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          onClick={() => setMovAEditar(m)}
+                          title="Editar Movimiento"
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                        >
+                          <PencilIcon className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setMovAEliminar(m)}
+                          title="Eliminar Movimiento"
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        >
+                          <TrashIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
+      )}
+
+      {/* Modales de acción */}
+      <ModalTicket venta={ticketVenta} onClose={() => setTicketVenta(null)} />
+
+      {ventaAEditar && (
+        <ModalEditarVenta
+          venta={ventaAEditar}
+          empleados={empleados}
+          clientes={clientes}
+          onGuardado={handleVentaEditada}
+          onClose={() => setVentaAEditar(null)}
+        />
+      )}
+
+      {ventaAEliminar && (
+        <ModalEliminarVenta
+          venta={ventaAEliminar}
+          onEliminado={handleVentaEliminada}
+          onClose={() => setVentaAEliminar(null)}
+        />
+      )}
+
+      {movAEditar && (
+        <ModalEditarMovimiento
+          movimiento={movAEditar}
+          empleados={empleados}
+          onGuardado={handleMovEditado}
+          onClose={() => setMovAEditar(null)}
+        />
+      )}
+
+      {movAEliminar && (
+        <ModalEliminarMovimiento
+          movimiento={movAEliminar}
+          onEliminado={handleMovEliminado}
+          onClose={() => setMovAEliminar(null)}
+        />
       )}
     </div>
   );
@@ -635,6 +1124,13 @@ function Historial() {
     } catch { /* silencio */ }
   };
 
+  const cambiarPeriodo = (key) => {
+    setPeriodo(key);
+    if (key !== 'rango') {
+      setSubmitted({ periodo: key, fechaInicio: '', fechaFin: '' });
+    }
+  };
+
   const periodos = [
     { key: 'hoy', label: 'Hoy' },
     { key: 'semana', label: 'Esta semana' },
@@ -650,8 +1146,8 @@ function Historial() {
         <div className="flex gap-2 flex-wrap">
           {periodos.map((p) => (
             <button key={p.key}
-              onClick={() => setPeriodo(p.key)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${periodo === p.key ? 'bg-[#df000a] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              onClick={() => cambiarPeriodo(p.key)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${periodo === p.key ? 'bg-[#df000a] text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
               {p.label}
             </button>
           ))}
@@ -663,13 +1159,13 @@ function Historial() {
             <span className="text-gray-400">—</span>
             <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
+            <button onClick={() => setSubmitted({ periodo: 'rango', fechaInicio, fechaFin })}
+              className="ml-2 px-4 py-1.5 bg-[#df000a] text-white rounded-full text-sm font-medium hover:bg-[#c4000a] flex items-center gap-1.5">
+              {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : null}
+              Buscar
+            </button>
           </div>
         )}
-        <button onClick={() => setSubmitted({ periodo, fechaInicio, fechaFin })}
-          className="ml-2 px-4 py-1.5 bg-[#df000a] text-white rounded-full text-sm font-medium hover:bg-[#c4000a] flex items-center gap-1.5">
-          {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : null}
-          Buscar
-        </button>
       </div>
 
       {error && (
@@ -754,12 +1250,12 @@ function Historial() {
                                 <th className="px-4 py-2 text-left text-xs text-gray-400 font-medium">Método</th>
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Efectivo</th>
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Electrónico</th>
-                                <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Total</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Total</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-white/[0.05]">
+                            <tbody className="divide-y divide-gray-100">
                               {(vc.ventas || []).map((v) => (
-                                <tr key={v.id} className="hover:bg-red-50">
+                                <tr key={v.id} className="hover:bg-red-50/50">
                                   <td className="px-4 py-2 font-mono font-semibold text-gray-800">{v.folio}</td>
                                   <td className="px-4 py-2 text-xs text-gray-500">{v.fecha_formateada}</td>
                                   <td className="px-4 py-2 text-gray-700">{v.empleado_nombre}</td>
@@ -828,6 +1324,17 @@ export default function Caja() {
     staleTime: 10 * 60 * 1000,
   });
 
+  const { data: clientes = [] } = useQuery({
+    queryKey: ['caja-clientes'],
+    queryFn: async () => {
+      const res = await fetch('/api/clientes/clientes/', { headers: hdrs() });
+      if (!res.ok) return [];
+      const d = await res.json();
+      return Array.isArray(d) ? d : d.results ?? [];
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
   const ok = (msg) => { setExito(msg); setTimeout(() => setExito(null), 5000); };
 
   return (
@@ -839,8 +1346,8 @@ export default function Caja() {
         </div>
         <div className="flex items-center gap-3">
           {cajaActual?.estado === 'abierta'
-            ? <Badge text="✅ Caja abierta" color="green" />
-            : <Badge text="⛔ Sin caja activa" color="gray" />}
+            ? <Badge text={<span className="flex items-center gap-1"><i className="ri-checkbox-circle-line"></i> Caja abierta</span>} color="green" />
+            : <Badge text={<span className="flex items-center gap-1"><i className="ri-forbid-2-line"></i> Sin caja activa</span>} color="gray" />}
         </div>
       </div>
 
@@ -878,8 +1385,10 @@ export default function Caja() {
             ventas={ventas}
             movimientos={movimientos}
             empleados={empleados}
+            clientes={clientes}
             onRefresh={() => queryClient.invalidateQueries({ queryKey: ['caja-activa'] })}
             setModal={setModal}
+            onNotif={ok}
           />
         ) : (
           <div className="flex flex-col items-center justify-center py-24">
