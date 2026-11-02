@@ -294,3 +294,31 @@ class CajaModuleTestCase(TestCase):
         self.assertEqual(Decimal(str(res.data['total_ventas_efectivo'])), Decimal('2050.00'))
         self.assertEqual(Decimal(str(res.data['total_ventas_electronico'])), Decimal('1000.00'))
 
+    def test_reimpresion_ticket_ventas_en_caja_cerrada(self):
+        """Verificar que una caja cerrada permite consultar sus ventas completas para reimpresión de tickets"""
+        caja = Caja.objects.create(
+            folio='C-CERRADA-99',
+            monto_inicial=Decimal('1000.00'),
+            monto_final=Decimal('2500.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now()
+        )
+        venta = Venta.objects.create(
+            folio='V-HISTORICA-01',
+            caja=caja,
+            empleado=self.empleado,
+            metodo_pago='efectivo',
+            monto_efectivo=Decimal('1500.00'),
+            subtotal=Decimal('1500.00'),
+            total=Decimal('1500.00')
+        )
+
+        res = self.client.get(f'/api/caja/cajas/{caja.id}/ventas_caja/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn('ventas', res.data)
+        self.assertEqual(len(res.data['ventas']), 1)
+        self.assertEqual(res.data['ventas'][0]['folio'], 'V-HISTORICA-01')
+        self.assertEqual(Decimal(str(res.data['ventas'][0]['total'])), Decimal('1500.00'))
+

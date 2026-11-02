@@ -1,6 +1,8 @@
 """
 Modelos para el módulo de Inventario
 """
+from datetime import timedelta
+from django.utils import timezone
 from django.db import models
 from django.db.models import Sum
 from django.core.validators import FileExtensionValidator
@@ -122,6 +124,10 @@ class EntradaInventario(models.Model):
     factura_pendiente = models.BooleanField(default=False)
     folio_remision = models.CharField(max_length=50, blank=True, default='')
     fecha_factura = models.DateField(null=True, blank=True)
+    fecha_vencimiento = models.DateField(
+        null=True, blank=True,
+        help_text='Fecha límite de pago de la factura al proveedor'
+    )
     archivo_factura = models.FileField(upload_to='facturas_proveedores/%Y/%m/', null=True, blank=True)
     estado = models.CharField(
         max_length=20, choices=ESTADO_CHOICES, default='disponible',
@@ -141,11 +147,34 @@ class EntradaInventario(models.Model):
     
     def __str__(self):
         return f"{self.producto.codigo} - {self.cantidad} unidades - {self.fecha_compra}"
+
+    def save(self, *args, **kwargs):
+        if not self.fecha_vencimiento and self.proveedor and getattr(self.proveedor, 'dias_credito', 0) > 0:
+            base_date = self.fecha_factura or self.fecha_compra or timezone.localdate()
+            self.fecha_vencimiento = base_date + timedelta(days=self.proveedor.dias_credito)
+        super().save(*args, **kwargs)
     
     @property
     def total_compra(self):
         """Total de la compra"""
         return self.cantidad * self.precio_compra
+
+    @property
+    def dias_restantes(self):
+        if not self.fecha_vencimiento:
+            return None
+        return (self.fecha_vencimiento - timezone.localdate()).days
+
+    @property
+    def estado_alerta(self):
+        dias = self.dias_restantes
+        if dias is None:
+            return 'al_dia'
+        if dias < 0:
+            return 'vencida'
+        if dias <= 7:
+            return 'por_vencer'
+        return 'al_dia'
 
 
 class PagoProveedor(models.Model):
@@ -157,7 +186,9 @@ class PagoProveedor(models.Model):
         ('efectivo', 'Efectivo'),
         ('transferencia', 'Transferencia'),
         ('cheque', 'Cheque'),
-        ('tarjeta', 'Tarjeta'),
+        ('tarjeta_debito', 'Tarjeta de Débito'),
+        ('tarjeta_credito', 'Tarjeta de Crédito'),
+        ('tarjeta', 'Tarjeta Bancaria (General)'),  # Mantener para compatibilidad
     ]
 
     proveedor = models.ForeignKey(

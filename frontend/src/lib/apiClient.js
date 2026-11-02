@@ -42,3 +42,6 @@ export const apiClient = {
   put:   (url, body)  => request('PUT',    url, body),
   del:   (url)        => request('DELETE', url),
 }
+
+export default apiClient
+

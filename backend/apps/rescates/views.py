@@ -1,5 +1,5 @@
 import urllib.parse
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.db import transaction, models
 from django.utils import timezone
 from rest_framework import viewsets, status, filters
@@ -123,6 +123,18 @@ class RescateViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        Restringe la eliminación de rescates exclusivamente a usuarios administradores
+        """
+        es_admin = getattr(request.user, 'rol', None) == 'admin' or request.user.is_staff or request.user.is_superuser
+        if not es_admin:
+            return Response(
+                {"error": "No tiene permisos para eliminar registros de rescate. Solo un administrador puede realizar esta acción."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().destroy(request, *args, **kwargs)
+
     @action(detail=True, methods=['post'], url_path='cambiar-estado')
     def cambiar_estado(self, request, pk=None):
         """
@@ -205,24 +217,84 @@ class RescateViewSet(viewsets.ModelViewSet):
 
         metodo_pago = request.data.get('metodo_pago', rescate.metodo_pago)
         tipo_tarjeta = request.data.get('tipo_tarjeta', rescate.tipo_tarjeta)
-        monto_efectivo = Decimal(str(request.data.get('monto_efectivo', rescate.monto_efectivo or 0)))
-        monto_electronico = Decimal(str(request.data.get('monto_electronico', rescate.monto_electronico or 0)))
+
+        try:
+            monto_efectivo = Decimal(str(request.data.get('monto_efectivo', rescate.monto_efectivo or 0)))
+            monto_electronico = Decimal(str(request.data.get('monto_electronico', rescate.monto_electronico or 0)))
+            descuento = Decimal(str(request.data.get('descuento', rescate.descuento or 0)))
+        except (ValueError, TypeError, InvalidOperation):
+            return Response(
+                {"error": "Los montos de pago y descuento deben ser valores numéricos válidos."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if monto_efectivo < 0 or monto_electronico < 0:
+            return Response(
+                {"error": "Los montos de pago no pueden ser negativos."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if descuento < 0:
+            return Response(
+                {"error": "El descuento no puede ser un valor negativo."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         num_operacion = request.data.get('num_operacion', rescate.num_operacion)
         num_referencia = request.data.get('num_referencia', rescate.num_referencia)
-        descuento = Decimal(str(request.data.get('descuento', rescate.descuento or 0)))
         notas = request.data.get('notas', rescate.notas)
+
+        costo_traslado_in = request.data.get('costo_traslado')
+        if costo_traslado_in is not None:
+            try:
+                costo_traslado = Decimal(str(costo_traslado_in or 0))
+            except (ValueError, TypeError, InvalidOperation):
+                return Response(
+                    {"error": "El costo de traslado debe ser un número válido."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if costo_traslado < 0:
+                return Response(
+                    {"error": "El costo de traslado no puede ser un valor negativo."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            costo_traslado = Decimal(str(rescate.costo_traslado or 0))
+
+        distancia_km_in = request.data.get('distancia_km')
+        if distancia_km_in is not None and str(distancia_km_in).strip() != '':
+            try:
+                distancia_km = Decimal(str(distancia_km_in))
+            except (ValueError, TypeError, InvalidOperation):
+                return Response(
+                    {"error": "La distancia en kilómetros debe ser un número válido."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if distancia_km < 0:
+                return Response(
+                    {"error": "La distancia en kilómetros no puede ser un valor negativo."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            distancia_km = rescate.distancia_km
 
         # Validación de montos según método de pago
         if metodo_pago == 'efectivo' and monto_efectivo <= 0:
-            return Response(
-                {"error": "El monto en efectivo debe ser mayor a 0 para pago en efectivo."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            if 'monto_efectivo' not in request.data:
+                monto_efectivo = rescate.total or (costo_traslado + rescate.subtotal - descuento)
+            else:
+                return Response(
+                    {"error": "El monto en efectivo debe ser mayor a 0 para pago en efectivo."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         if metodo_pago in ['tarjeta', 'transferencia'] and monto_electronico <= 0:
-            return Response(
-                {"error": "El monto electrónico debe ser mayor a 0 para este método de pago."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            if 'monto_electronico' not in request.data:
+                monto_electronico = rescate.total or (costo_traslado + rescate.subtotal - descuento)
+            else:
+                return Response(
+                    {"error": "El monto electrónico debe ser mayor a 0 para este método de pago."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         if metodo_pago == 'mixto' and (monto_efectivo <= 0 or monto_electronico <= 0):
             return Response(
                 {"error": "Para pago mixto, se requiere monto en efectivo y monto electrónico mayores a 0."},
@@ -230,6 +302,19 @@ class RescateViewSet(viewsets.ModelViewSet):
             )
 
         with transaction.atomic():
+            # Bloqueo a nivel de fila (select_for_update) para evitar condiciones de carrera y doble cobro
+            rescate = Rescate.objects.select_for_update().get(pk=rescate.pk)
+            if rescate.estado == 'completado':
+                return Response(
+                    {"error": "Este rescate ya fue cobrado previamente."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if rescate.estado == 'cancelado':
+                return Response(
+                    {"error": "No se puede cobrar un rescate cancelado."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             rescate.caja = caja_destino
 
             # Actualizar detalles si vienen en el payload
@@ -239,14 +324,29 @@ class RescateViewSet(viewsets.ModelViewSet):
                 SalidaInventario.objects.filter(rescate=rescate).delete()
                 rescate.detalles.all().delete()
 
-                total_calc = Decimal('0.00')
                 for det in detalles_payload:
                     cant = int(det.get('cantidad', 1) or 1)
-                    pu = Decimal(str(det.get('precio_unitario', 0)))
+                    if cant <= 0:
+                        return Response(
+                            {"error": "La cantidad de cada servicio o producto debe ser mayor a 0."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    try:
+                        pu = Decimal(str(det.get('precio_unitario', 0)))
+                    except (ValueError, TypeError, InvalidOperation):
+                        return Response(
+                            {"error": "El precio unitario debe ser un valor numérico válido."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    if pu < 0:
+                        return Response(
+                            {"error": "El precio unitario no puede ser negativo."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
                     subt = Decimal(str(cant)) * pu
                     serv_id = det.get('servicio_rescate') or det.get('servicio') or det.get('servicio_rescate_id') or det.get('servicio_id')
                     prod_id = det.get('producto') or det.get('producto_id')
-                    det_obj = DetalleRescate.objects.create(
+                    DetalleRescate.objects.create(
                         rescate=rescate,
                         servicio_rescate_id=serv_id,
                         producto_id=prod_id,
@@ -255,26 +355,66 @@ class RescateViewSet(viewsets.ModelViewSet):
                         precio_unitario=pu,
                         subtotal=subt
                     )
-                    total_calc += subt
 
-                rescate.subtotal = total_calc
-                rescate.total = max(Decimal('0.00'), total_calc - descuento)
+            # Calcular total_servicios = costo_traslado + suma(servicios) y total_productos = suma(productos/llantas)
+            servicios_total = Decimal('0.00')
+            productos_total = Decimal('0.00')
+            for det in rescate.detalles.all():
+                if det.producto_id:
+                    productos_total += det.subtotal
+                elif det.servicio_rescate_id is None and ('traslado' in det.descripcion.lower() or 'desplazamiento' in det.descripcion.lower()):
+                    # Detalle sintético de traslado; se suma por separado en costo_traslado
+                    continue
+                else:
+                    servicios_total += det.subtotal
 
-            # Verificar salidas de inventario para productos
+            rescate.costo_traslado = costo_traslado
+            rescate.distancia_km = distancia_km
+            rescate.total_servicios = costo_traslado + servicios_total
+            rescate.total_productos = productos_total
+            rescate.subtotal = rescate.total_servicios + rescate.total_productos
+            rescate.total = max(Decimal('0.00'), rescate.subtotal - descuento)
+
+            # Validar y ajustar montos asegurando cobertura total (prevención de underpayment)
+            if metodo_pago == 'efectivo':
+                if 'monto_efectivo' not in request.data or monto_efectivo == 0:
+                    monto_efectivo = rescate.total
+                elif monto_efectivo < rescate.total:
+                    return Response(
+                        {"error": f"El monto en efectivo (${monto_efectivo}) es menor al total requerido (${rescate.total})."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            elif metodo_pago in ['tarjeta', 'transferencia']:
+                if 'monto_electronico' not in request.data or monto_electronico == 0:
+                    monto_electronico = rescate.total
+                elif monto_electronico < rescate.total:
+                    return Response(
+                        {"error": f"El monto electrónico (${monto_electronico}) es menor al total requerido (${rescate.total})."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            elif metodo_pago == 'mixto':
+                if (monto_efectivo + monto_electronico) < rescate.total:
+                    return Response(
+                        {"error": f"La suma de montos en pago mixto (${monto_efectivo + monto_electronico}) no cubre el total requerido (${rescate.total})."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            # Verificar salidas de inventario para productos con bloqueo pesimista
             for det in rescate.detalles.all():
                 if det.producto:
-                    # Verificar si ya tiene salida registrada
-                    salida_existente = SalidaInventario.objects.filter(rescate=rescate, producto=det.producto).exists()
+                    from apps.inventario.models import Producto
+                    prod_locked = Producto.objects.select_for_update().get(pk=det.producto.pk)
+                    salida_existente = SalidaInventario.objects.filter(rescate=rescate, producto=prod_locked).exists()
                     if not salida_existente:
-                        stock_disp = det.producto.stock_actual
+                        stock_disp = prod_locked.stock_actual
                         if stock_disp < det.cantidad:
                             raise ValidationError(
-                                f"Stock insuficiente para {det.producto.descripcion_completa}. "
+                                f"Stock insuficiente para {prod_locked.descripcion_completa}. "
                                 f"Disponible: {stock_disp}, Solicitado: {det.cantidad}"
                             )
 
                         entradas = EntradaInventario.objects.filter(
-                            producto=det.producto,
+                            producto=prod_locked,
                             en_inventario=True
                         ).order_by('fecha_compra')
 
@@ -284,7 +424,7 @@ class RescateViewSet(viewsets.ModelViewSet):
                             precio_costo = det.precio_unitario * Decimal('0.70')
 
                         SalidaInventario.objects.create(
-                            producto=det.producto,
+                            producto=prod_locked,
                             rescate=rescate,
                             cantidad=det.cantidad,
                             precio_venta=det.precio_unitario,

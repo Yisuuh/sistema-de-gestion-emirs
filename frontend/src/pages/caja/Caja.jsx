@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import ModalTicket from '../../components/ModalTicket';
+import AutorizacionVentaSection from '../../components/AutorizacionVentaSection';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CurrencyDollarIcon,
@@ -618,22 +619,68 @@ function ModalEditarVenta({ venta, empleados, clientes, onGuardado, onClose }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
+  // Control de autorización por roles
+  const rol = localStorage.getItem('rol') || '';
+  const esAdmin = ['admin', 'administrador'].includes(rol.toLowerCase());
+
+  const [motivo, setMotivo] = useState('');
+  const [pinAdmin, setPinAdmin] = useState('');
+  const [codigoOtp, setCodigoOtp] = useState('');
+  const [tabAuth, setTabAuth] = useState('pin'); // 'pin' | 'remoto'
+  const [aprobadoRemoto, setAprobadoRemoto] = useState(false);
+  const [adminAprobador, setAdminAprobador] = useState('');
+
+  const puedeGuardar = esAdmin || (
+    tabAuth === 'pin'
+      ? (pinAdmin.length >= 4 && motivo.trim().length >= 3)
+      : (motivo.trim().length >= 3 && (aprobadoRemoto || codigoOtp.trim().length === 6))
+  );
+
   const submit = async (e) => {
     e.preventDefault();
+    if (!puedeGuardar) {
+      if (!esAdmin) {
+        if (!motivo.trim()) {
+          setErr('Debes ingresar el motivo de la edición.');
+          return;
+        }
+        if (tabAuth === 'pin' && pinAdmin.length < 4) {
+          setErr('Debes ingresar un PIN de administrador válido (4 a 6 dígitos).');
+          return;
+        }
+        if (tabAuth === 'remoto' && !aprobadoRemoto && codigoOtp.trim().length !== 6) {
+          setErr('Debes esperar la aprobación remota del Administrador o ingresar el código OTP de 6 dígitos.');
+          return;
+        }
+      }
+      return;
+    }
+
     setLoading(true); setErr(null);
     try {
+      const payload = {
+        empleado: form.empleado ? parseInt(form.empleado) : undefined,
+        cliente: form.cliente ? parseInt(form.cliente) : null,
+        metodo_pago: form.metodo_pago,
+        tipo_tarjeta: ['tarjeta', 'mixto'].includes(form.metodo_pago) ? form.tipo_tarjeta : null,
+        num_operacion: ['tarjeta', 'mixto'].includes(form.metodo_pago) ? form.num_operacion.trim() : '',
+        num_referencia: ['transferencia', 'mixto'].includes(form.metodo_pago) ? form.num_referencia.trim() : '',
+        notas: form.notas.trim(),
+      };
+
+      if (!esAdmin) {
+        payload.motivo = motivo.trim();
+        if (tabAuth === 'pin') {
+          payload.pin_admin = pinAdmin.trim();
+        } else {
+          payload.codigo_autorizacion = codigoOtp.trim();
+        }
+      }
+
       const res = await fetch(`/api/ventas/ventas/${venta.id}/`, {
         method: 'PATCH',
         headers: jsonHdrs(),
-        body: JSON.stringify({
-          empleado: form.empleado ? parseInt(form.empleado) : undefined,
-          cliente: form.cliente ? parseInt(form.cliente) : null,
-          metodo_pago: form.metodo_pago,
-          tipo_tarjeta: ['tarjeta', 'mixto'].includes(form.metodo_pago) ? form.tipo_tarjeta : null,
-          num_operacion: ['tarjeta', 'mixto'].includes(form.metodo_pago) ? form.num_operacion.trim() : '',
-          num_referencia: ['transferencia', 'mixto'].includes(form.metodo_pago) ? form.num_referencia.trim() : '',
-          notas: form.notas.trim(),
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || data.error || JSON.stringify(data)); return; }
@@ -643,21 +690,30 @@ function ModalEditarVenta({ venta, empleados, clientes, onGuardado, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md my-4 p-6">
-        <div className="flex items-center justify-between mb-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-4 p-6 max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100">
           <div className="flex items-center gap-2">
-            <PencilIcon className="w-5 h-5 text-[#df000a]" />
-            <h2 className="text-xl font-bold text-gray-900">Editar Venta {venta.folio}</h2>
+            <div className="p-2 rounded-xl bg-red-100 text-[#df000a]">
+              <PencilIcon className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Editar Venta {venta.folio}</h2>
+              <p className="text-xs text-gray-500">Monto total: {fmt(venta.total)}</p>
+            </div>
           </div>
-          <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400 hover:text-gray-600" /></button>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 cursor-pointer">
+            <XMarkIcon className="h-5 w-5" />
+          </button>
         </div>
-        {err && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>}
+
+        {err && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 font-medium">{err}</div>}
+
         <form onSubmit={submit} className="space-y-4 text-sm">
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Vendedor *</label>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Vendedor *</label>
             <select required value={form.empleado} onChange={(e) => setForm({ ...form, empleado: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#df000a] text-gray-800">
               <option value="">Seleccionar vendedor</option>
               {empleados.map((e) => (
                 <option key={e.id} value={e.id}>{e.nombre_completo || `${e.nombre} ${e.apellido}`}</option>
@@ -666,9 +722,9 @@ function ModalEditarVenta({ venta, empleados, clientes, onGuardado, onClose }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Cliente</label>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Cliente</label>
             <select value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#df000a] text-gray-800">
               <option value="">Público General</option>
               {clientes.map((c) => (
                 <option key={c.id} value={c.id}>{c.nombre} — {c.telefono}</option>
@@ -677,9 +733,9 @@ function ModalEditarVenta({ venta, empleados, clientes, onGuardado, onClose }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Método de Pago</label>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Método de Pago</label>
             <select value={form.metodo_pago} onChange={(e) => setForm({ ...form, metodo_pago: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]">
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#df000a] text-gray-800">
               <option value="efectivo">Efectivo</option>
               <option value="tarjeta">Tarjeta</option>
               <option value="transferencia">Transferencia</option>
@@ -689,11 +745,11 @@ function ModalEditarVenta({ venta, empleados, clientes, onGuardado, onClose }) {
 
           {['tarjeta', 'mixto'].includes(form.metodo_pago) && (
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Tipo de Tarjeta</label>
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Tipo de Tarjeta</label>
               <div className="grid grid-cols-2 gap-2">
                 {['debito', 'credito'].map((tt) => (
                   <button key={tt} type="button" onClick={() => setForm({ ...form, tipo_tarjeta: tt })}
-                    className={`py-1.5 px-3 rounded-lg text-xs font-bold border capitalize flex items-center justify-center gap-1.5 ${
+                    className={`py-1.5 px-3 rounded-xl text-xs font-bold border capitalize flex items-center justify-center gap-1.5 cursor-pointer ${
                       form.tipo_tarjeta === tt ? 'bg-[#df000a] text-white border-[#df000a]' : 'bg-gray-50 text-gray-700 border-gray-200'
                     }`}>
                     <i className={tt === 'debito' ? 'ri-bank-card-line' : 'ri-bank-card-2-line'}></i>
@@ -706,32 +762,52 @@ function ModalEditarVenta({ venta, empleados, clientes, onGuardado, onClose }) {
 
           {['tarjeta', 'mixto'].includes(form.metodo_pago) && (
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">No. Operación Tarjeta</label>
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">No. Operación Tarjeta</label>
               <input type="text" value={form.num_operacion} onChange={(e) => setForm({ ...form, num_operacion: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#df000a] text-gray-800" />
             </div>
           )}
 
           {['transferencia', 'mixto'].includes(form.metodo_pago) && (
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">No. Referencia Transf.</label>
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">No. Referencia Transf.</label>
               <input type="text" value={form.num_referencia} onChange={(e) => setForm({ ...form, num_referencia: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a]" />
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#df000a] text-gray-800" />
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Notas</label>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Notas</label>
             <textarea rows={2} value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#df000a] resize-none" />
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#df000a] text-gray-800 resize-none" />
           </div>
 
+          {/* Sección de Autorización para Vendedores / Operadores */}
+          {!esAdmin && (
+            <AutorizacionVentaSection
+              accion="editar_venta"
+              venta={venta}
+              motivo={motivo}
+              setMotivo={setMotivo}
+              pinAdmin={pinAdmin}
+              setPinAdmin={setPinAdmin}
+              codigoOtp={codigoOtp}
+              setCodigoOtp={setCodigoOtp}
+              tab={tabAuth}
+              setTab={setTabAuth}
+              aprobadoRemoto={aprobadoRemoto}
+              setAprobadoRemoto={setAprobadoRemoto}
+              adminAprobador={adminAprobador}
+              setAdminAprobador={setAdminAprobador}
+            />
+          )}
+
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 font-medium cursor-pointer">
               Cancelar
             </button>
-            <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50 font-medium">
+            <button type="submit" disabled={loading || (!esAdmin && !puedeGuardar)}
+              className="flex-1 px-4 py-2.5 bg-[#df000a] text-white rounded-xl hover:bg-[#c4000a] disabled:opacity-50 font-bold transition-all shadow-md shadow-red-950/20 cursor-pointer">
               {loading ? 'Guardando...' : 'Guardar Cambios'}
             </button>
           </div>
@@ -746,17 +822,64 @@ function ModalEliminarVenta({ venta, onEliminado, onClose }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
+  // Control de autorización por roles
+  const rol = localStorage.getItem('rol') || '';
+  const esAdmin = ['admin', 'administrador'].includes(rol.toLowerCase());
+
+  const [motivo, setMotivo] = useState('');
+  const [pinAdmin, setPinAdmin] = useState('');
+  const [codigoOtp, setCodigoOtp] = useState('');
+  const [tabAuth, setTabAuth] = useState('pin'); // 'pin' | 'remoto'
+  const [aprobadoRemoto, setAprobadoRemoto] = useState(false);
+  const [adminAprobador, setAdminAprobador] = useState('');
+
+  const puedeEliminar = esAdmin || (
+    tabAuth === 'pin'
+      ? (pinAdmin.length >= 4 && motivo.trim().length >= 3)
+      : (motivo.trim().length >= 3 && (aprobadoRemoto || codigoOtp.trim().length === 6))
+  );
+
   const eliminar = async () => {
+    if (!puedeEliminar) {
+      if (!esAdmin) {
+        if (!motivo.trim()) {
+          setErr('Debes ingresar el motivo de la cancelación de la venta.');
+          return;
+        }
+        if (tabAuth === 'pin' && pinAdmin.length < 4) {
+          setErr('Debes ingresar un PIN de administrador válido (4 a 6 dígitos).');
+          return;
+        }
+        if (tabAuth === 'remoto' && !aprobadoRemoto && codigoOtp.trim().length !== 6) {
+          setErr('Debes esperar la aprobación remota del Administrador o ingresar el código OTP de 6 dígitos.');
+          return;
+        }
+      }
+      return;
+    }
+
     setLoading(true); setErr(null);
     try {
-      const res = await fetch(`/api/ventas/ventas/${venta.id}/`, {
+      let url = `/api/ventas/ventas/${venta.id}/`;
+      if (!esAdmin) {
+        const params = new URLSearchParams();
+        params.append('motivo', motivo.trim());
+        if (tabAuth === 'pin') {
+          params.append('pin_admin', pinAdmin.trim());
+        } else {
+          params.append('codigo_autorizacion', codigoOtp.trim());
+        }
+        url += `?${params.toString()}`;
+      }
+
+      const res = await fetch(url, {
         method: 'DELETE',
         headers: hdrs(),
       });
       if (res.ok || res.status === 204) {
         onEliminado();
       } else {
-        const d = await res.json();
+        const d = await res.json().catch(() => ({}));
         setErr(d.error || d.detail || 'Error al eliminar la venta');
       }
     } catch {
@@ -767,9 +890,9 @@ function ModalEliminarVenta({ venta, onEliminado, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-        <div className="w-14 h-14 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-4 p-6 max-h-[92vh] overflow-y-auto">
+        <div className="w-14 h-14 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-3">
           <ExclamationTriangleIcon className="w-8 h-8" />
         </div>
         <h3 className="text-lg font-bold text-gray-900 text-center mb-1">
@@ -779,22 +902,42 @@ function ModalEliminarVenta({ venta, onEliminado, onClose }) {
           Total: {fmt(venta.total)}
         </p>
         
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5 text-xs text-amber-900 leading-relaxed flex items-start gap-2">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-900 leading-relaxed flex items-start gap-2">
           <i className="ri-error-warning-line text-amber-600 text-base mt-0.5 flex-shrink-0"></i>
           <div>
             <strong>Aviso de inventario:</strong> Al eliminar esta venta, el registro se cancelará de la caja y los productos vendidos retornarán automáticamente al stock disponible en el inventario.
           </div>
         </div>
 
-        {err && <div className="text-xs text-red-600 bg-red-50 p-2 rounded mb-3">{err}</div>}
+        {/* Sección de Autorización para Vendedores / Operadores */}
+        {!esAdmin && (
+          <AutorizacionVentaSection
+            accion="eliminar_venta"
+            venta={venta}
+            motivo={motivo}
+            setMotivo={setMotivo}
+            pinAdmin={pinAdmin}
+            setPinAdmin={setPinAdmin}
+            codigoOtp={codigoOtp}
+            setCodigoOtp={setCodigoOtp}
+            tab={tabAuth}
+            setTab={setTabAuth}
+            aprobadoRemoto={aprobadoRemoto}
+            setAprobadoRemoto={setAprobadoRemoto}
+            adminAprobador={adminAprobador}
+            setAdminAprobador={setAdminAprobador}
+          />
+        )}
 
-        <div className="flex gap-3">
+        {err && <div className="text-xs text-red-600 bg-red-50 p-2.5 rounded-xl border border-red-200 mb-3 font-medium">{err}</div>}
+
+        <div className="flex gap-3 pt-1">
           <button type="button" onClick={onClose}
-            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer">
             Cancelar
           </button>
-          <button type="button" onClick={eliminar} disabled={loading}
-            className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-bold disabled:opacity-50 transition-colors">
+          <button type="button" onClick={eliminar} disabled={loading || (!esAdmin && !puedeEliminar)}
+            className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-bold disabled:opacity-50 transition-colors shadow-md shadow-red-950/20 cursor-pointer">
             {loading ? 'Eliminando...' : 'Sí, Eliminar Venta'}
           </button>
         </div>
@@ -824,7 +967,8 @@ function CajaActiva({ caja, ventas, movimientos, empleados, clientes, onRefresh,
   const handleVentaEliminada = () => {
     setVentaAEliminar(null);
     onNotif('Venta eliminada y stock restituido al inventario.');
-    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
     queryClient.invalidateQueries({ queryKey: ['pos-productos'] });
     queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
     queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
@@ -833,21 +977,24 @@ function CajaActiva({ caja, ventas, movimientos, empleados, clientes, onRefresh,
   const handleVentaEditada = () => {
     setVentaAEditar(null);
     onNotif('Venta actualizada correctamente.');
-    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
     queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
   };
 
   const handleMovEliminado = () => {
     setMovAEliminar(null);
     onNotif('Movimiento eliminado correctamente.');
-    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
     queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
   };
 
   const handleMovEditado = () => {
     setMovAEditar(null);
     onNotif('Movimiento actualizado correctamente.');
-    queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
     queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
   };
 
@@ -1091,6 +1238,114 @@ function CajaActiva({ caja, ventas, movimientos, empleados, clientes, onRefresh,
   );
 }
 
+function ModalDetalleVenta({ venta, onClose, onReimprimir }) {
+  if (!venta) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-[#161a29] border border-white/[0.08] text-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="p-4 sm:p-5 border-b border-white/[0.08] flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-red-600/20 text-red-400 flex items-center justify-center font-bold">
+              <i className="ri-file-list-3-line text-xl"></i>
+            </div>
+            <div>
+              <h3 className="text-base sm:text-lg font-black text-white">Detalle de Venta #{venta.folio}</h3>
+              <p className="text-xs text-slate-400">{venta.fecha_formateada || venta.creado_en}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.05] transition-colors cursor-pointer">
+            <XMarkIcon className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1">
+          {/* Metadata Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3 rounded-xl bg-[#1b2032] border border-white/[0.05]">
+              <span className="text-[11px] uppercase font-bold text-slate-400 block">Atendió</span>
+              <span className="text-sm font-semibold text-white truncate block">{venta.empleado_nombre || '—'}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-[#1b2032] border border-white/[0.05]">
+              <span className="text-[11px] uppercase font-bold text-slate-400 block">Cliente</span>
+              <span className="text-sm font-semibold text-white truncate block">{venta.cliente_nombre || venta.cliente?.nombre || 'Público General'}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-[#1b2032] border border-white/[0.05]">
+              <span className="text-[11px] uppercase font-bold text-slate-400 block">Método</span>
+              <span className="text-sm font-semibold text-emerald-400 capitalize block">{venta.metodo_pago}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-[#1b2032] border border-white/[0.05]">
+              <span className="text-[11px] uppercase font-bold text-slate-400 block">Total</span>
+              <span className="text-sm font-black font-mono text-white block">{fmt(venta.total)}</span>
+            </div>
+          </div>
+
+          {venta.vehiculo && (
+            <div className="p-3 rounded-xl bg-[#1b2032] border border-white/[0.05] flex items-center gap-2 text-xs text-slate-300">
+              <i className="ri-car-line text-red-400 text-sm"></i>
+              <span>Vehículo: <strong>{typeof venta.vehiculo === 'string' ? venta.vehiculo : `${venta.vehiculo.marca} ${venta.vehiculo.modelo} (${venta.vehiculo.placas || 'Sin placas'})`}</strong></span>
+            </div>
+          )}
+
+          {/* Partidas / Detalles */}
+          <div>
+            <h4 className="text-xs font-bold uppercase text-slate-400 mb-2">Productos y Servicios</h4>
+            <div className="rounded-xl border border-white/[0.08] overflow-hidden">
+              <table className="min-w-full text-xs">
+                <thead className="bg-[#1b2032] text-slate-400 border-b border-white/[0.08]">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-bold">Concepto</th>
+                    <th className="px-3 py-2 text-center font-bold">Cant.</th>
+                    <th className="px-3 py-2 text-right font-bold">P. Unit</th>
+                    <th className="px-3 py-2 text-right font-bold">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.05]">
+                  {(venta.detalles || []).length > 0 ? (
+                    venta.detalles.map((d, i) => (
+                      <tr key={d.id || i} className="hover:bg-white/[0.02]">
+                        <td className="px-3 py-2 text-slate-200">
+                          <div className="font-semibold">{d.producto_nombre || d.producto_titulo || d.descripcion || 'Producto'}</div>
+                          {d.producto_codigo && <div className="text-[10px] font-mono text-slate-400">{d.producto_codigo}</div>}
+                        </td>
+                        <td className="px-3 py-2 text-center font-mono text-slate-300">{d.cantidad}</td>
+                        <td className="px-3 py-2 text-right font-mono text-slate-300">{fmt(d.precio_unitario)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-white">{fmt(d.subtotal)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-4 text-center text-slate-400">Sin desglose de partidas detalladas disponible.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-white/[0.08] bg-[#161a29] flex items-center justify-between gap-3">
+          <button
+            onClick={() => onReimprimir?.(venta.id)}
+            className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <i className="ri-printer-line text-sm"></i> Reimprimir Ticket
+          </button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl bg-[#1b2032] hover:bg-slate-700 border border-white/[0.08] text-slate-300 text-xs font-bold transition-colors cursor-pointer"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Panel Historial ──────────────────────────────────────────────────────────
 function Historial() {
   const [periodo, setPeriodo] = useState('hoy');
@@ -1099,6 +1354,34 @@ function Historial() {
   const [submitted, setSubmitted] = useState({ periodo: 'hoy', fechaInicio: '', fechaFin: '' });
   const [cajasAbiertas, setCajasAbiertas] = useState({});
   const [ventasCaja, setVentasCaja] = useState({});
+  const [ticketVenta, setTicketVenta] = useState(null);
+  const [detalleVenta, setDetalleVenta] = useState(null);
+
+  const abrirTicketHistorial = async (id) => {
+    try {
+      const r = await fetch(`/api/ventas/ventas/${id}/ticket/`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (r.ok) setTicketVenta(await r.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const abrirDetalleHistorial = async (v) => {
+    try {
+      const r = await fetch(`/api/ventas/ventas/${v.id}/`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (r.ok) {
+        setDetalleVenta(await r.json());
+      } else {
+        setDetalleVenta(v);
+      }
+    } catch {
+      setDetalleVenta(v);
+    }
+  };
 
   const { data, isLoading: loading, error: queryError } = useQuery({
     queryKey: ['historial-cajas', submitted.periodo, submitted.fechaInicio, submitted.fechaFin],
@@ -1251,6 +1534,7 @@ function Historial() {
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Efectivo</th>
                                 <th className="px-4 py-2 text-right text-xs text-gray-400 font-medium">Electrónico</th>
                                 <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Total</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-400">Acciones</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
@@ -1266,6 +1550,24 @@ function Historial() {
                                   <td className="px-4 py-2 text-right font-mono text-green-700">{fmt(v.monto_efectivo)}</td>
                                   <td className="px-4 py-2 text-right font-mono text-[#df000a]">{fmt(v.monto_electronico)}</td>
                                   <td className="px-4 py-2 text-right font-bold text-gray-900">{fmt(v.total)}</td>
+                                  <td className="px-4 py-2 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        onClick={() => abrirTicketHistorial(v.id)}
+                                        title="Reimprimir Ticket"
+                                        className="p-1.5 text-gray-400 hover:text-[#df000a] hover:bg-red-50 rounded transition-colors cursor-pointer"
+                                      >
+                                        <i className="ri-printer-line text-base"></i>
+                                      </button>
+                                      <button
+                                        onClick={() => abrirDetalleHistorial(v)}
+                                        title="Ver Detalle"
+                                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors cursor-pointer"
+                                      >
+                                        <i className="ri-eye-line text-base"></i>
+                                      </button>
+                                    </div>
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
@@ -1280,6 +1582,23 @@ function Historial() {
           )}
         </>
       )}
+
+      {/* Modal de Reimpresión de Ticket Térmico Oficial */}
+      {ticketVenta && (
+        <ModalTicket venta={ticketVenta} onClose={() => setTicketVenta(null)} />
+      )}
+
+      {/* Modal de Detalle Completo de Venta */}
+      {detalleVenta && (
+        <ModalDetalleVenta
+          venta={detalleVenta}
+          onClose={() => setDetalleVenta(null)}
+          onReimprimir={(id) => {
+            setDetalleVenta(null);
+            abrirTicketHistorial(id);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1292,7 +1611,7 @@ export default function Caja() {
   const [modal, setModal] = useState(null); // 'apertura' | 'cierre' | 'movimiento'
 
   const { data: cajaData, isLoading: loading } = useQuery({
-    queryKey: ['caja-activa'],
+    queryKey: ['caja-activa-completa'],
     queryFn: async () => {
       const res = await fetch(`${API_CAJA}/cajas/caja_actual/`, { headers: hdrs() });
       if (!res.ok) return { cajaActual: null, ventas: [], movimientos: [] };
@@ -1386,7 +1705,10 @@ export default function Caja() {
             movimientos={movimientos}
             empleados={empleados}
             clientes={clientes}
-            onRefresh={() => queryClient.invalidateQueries({ queryKey: ['caja-activa'] })}
+            onRefresh={() => {
+              queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+              queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+            }}
             setModal={setModal}
             onNotif={ok}
           />
@@ -1413,7 +1735,12 @@ export default function Caja() {
       {modal === 'apertura' && (
         <ModalApertura
           empleados={empleados}
-          onGuardado={(data) => { setModal(null); ok(`Caja ${data.folio} abierta exitosamente.`); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
+          onGuardado={(data) => {
+            setModal(null);
+            ok(`Caja ${data.folio} abierta exitosamente.`);
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+          }}
           onClose={() => setModal(null)}
         />
       )}
@@ -1421,7 +1748,12 @@ export default function Caja() {
         <ModalCierre
           caja={cajaActual}
           empleados={empleados}
-          onGuardado={(data) => { setModal(null); ok(`Caja ${data.folio} cerrada. Diferencia: ${fmt(data.diferencia ?? 0)}`); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
+          onGuardado={(data) => {
+            setModal(null);
+            ok(`Caja ${data.folio} cerrada. Diferencia: ${fmt(data.diferencia ?? 0)}`);
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+          }}
           onClose={() => setModal(null)}
         />
       )}
@@ -1429,7 +1761,12 @@ export default function Caja() {
         <ModalMovimiento
           cajaId={cajaActual.id}
           empleados={empleados}
-          onGuardado={() => { setModal(null); ok('Movimiento registrado.'); queryClient.invalidateQueries({ queryKey: ['caja-activa'] }); }}
+          onGuardado={() => {
+            setModal(null);
+            ok('Movimiento registrado.');
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+          }}
           onClose={() => setModal(null)}
         />
       )}

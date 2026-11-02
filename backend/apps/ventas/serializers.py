@@ -3,8 +3,12 @@ Serializers para el módulo de Ventas
 """
 from datetime import timedelta
 from decimal import Decimal
+from django.utils import timezone
 from rest_framework import serializers
-from .models import Venta, DetalleVenta, Servicio, Cotizacion, OpcionCotizacion
+from .models import (
+    Venta, DetalleVenta, Servicio, Cotizacion, OpcionCotizacion,
+    SolicitudAutorizacion
+)
 from apps.inventario.models import Producto
 from apps.clientes.models import Cliente
 
@@ -64,6 +68,8 @@ class VentaSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True, allow_null=True)
     vehiculo_descripcion = serializers.SerializerMethodField()
     fecha_formateada = serializers.DateTimeField(source='fecha', format='%Y-%m-%d %H:%M:%S', read_only=True)
+    editada_por_nombre = serializers.SerializerMethodField()
+    autorizada_por_nombre = serializers.SerializerMethodField()
     
     class Meta:
         model = Venta
@@ -74,9 +80,26 @@ class VentaSerializer(serializers.ModelSerializer):
             'num_voucher_efectivo', 'num_voucher_tarjeta', 'num_voucher_transferencia',
             'monto_efectivo', 'monto_electronico', 'num_operacion', 'num_referencia',
             'subtotal', 'descuento', 'total', 'notas', 'facturada', 'cfdi_uuid',
-            'factura_pendiente', 'detalles'
+            'factura_pendiente', 'detalles',
+            'fue_editada', 'fecha_edicion', 'editada_por', 'editada_por_nombre',
+            'motivo_edicion', 'autorizada_por', 'autorizada_por_nombre',
+            'total_original', 'diferencia_monetaria'
         ]
-        read_only_fields = ['id', 'folio', 'fecha', 'caja']
+        read_only_fields = [
+            'id', 'folio', 'fecha', 'caja',
+            'fue_editada', 'fecha_edicion', 'editada_por', 'autorizada_por',
+            'total_original', 'diferencia_monetaria'
+        ]
+
+    def get_editada_por_nombre(self, obj):
+        if not obj.editada_por:
+            return None
+        return obj.editada_por.get_full_name() or obj.editada_por.username
+
+    def get_autorizada_por_nombre(self, obj):
+        if not obj.autorizada_por:
+            return None
+        return obj.autorizada_por.get_full_name() or obj.autorizada_por.username
 
     def get_vehiculo_descripcion(self, obj):
         if not obj.vehiculo:
@@ -367,6 +390,8 @@ class VentaListSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True, allow_null=True)
     fecha_formateada = serializers.DateTimeField(source='fecha', format='%Y-%m-%d %H:%M', read_only=True)
     total_items = serializers.IntegerField(source='detalles.count', read_only=True)
+    editada_por_nombre = serializers.SerializerMethodField()
+    autorizada_por_nombre = serializers.SerializerMethodField()
     
     class Meta:
         model = Venta
@@ -376,8 +401,21 @@ class VentaListSerializer(serializers.ModelSerializer):
             'caja', 'metodo_pago', 'tipo_tarjeta',
             'num_voucher_efectivo', 'num_voucher_tarjeta', 'num_voucher_transferencia',
             'monto_efectivo', 'monto_electronico', 'num_operacion', 'num_referencia',
-            'total', 'total_items', 'facturada', 'factura_pendiente'
+            'total', 'total_items', 'facturada', 'factura_pendiente',
+            'fue_editada', 'fecha_edicion', 'editada_por', 'editada_por_nombre',
+            'motivo_edicion', 'autorizada_por', 'autorizada_por_nombre',
+            'total_original', 'diferencia_monetaria'
         ]
+
+    def get_editada_por_nombre(self, obj):
+        if not obj.editada_por:
+            return None
+        return obj.editada_por.get_full_name() or obj.editada_por.username
+
+    def get_autorizada_por_nombre(self, obj):
+        if not obj.autorizada_por:
+            return None
+        return obj.autorizada_por.get_full_name() or obj.autorizada_por.username
 
 
 class OpcionCotizacionSerializer(serializers.ModelSerializer):
@@ -387,6 +425,7 @@ class OpcionCotizacionSerializer(serializers.ModelSerializer):
     proveedor_nombre = serializers.CharField(source='proveedor.nombre', read_only=True, allow_null=True)
     utilidad_unitaria = serializers.SerializerMethodField()
     utilidad_total = serializers.SerializerMethodField()
+    desglose_msi = serializers.SerializerMethodField()
     precio_unitario_publico = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
 
     class Meta:
@@ -395,10 +434,13 @@ class OpcionCotizacionSerializer(serializers.ModelSerializer):
             'id', 'cotizacion', 'gama', 'origen',
             'producto', 'proveedor', 'proveedor_nombre', 'proveedor_nombre_libre',
             'marca', 'modelo', 'medida', 'tiempo_entrega',
-            'costo_proveedor', 'tipo_margen', 'valor_margen',
+            'costo_proveedor', 'costo_incluye_iva', 'costo_con_iva',
+            'utiliza_tabulador', 'categoria_rin',
+            'margen_unitario_1', 'margen_unitario_2', 'margen_unitario_4',
+            'tipo_margen', 'valor_margen',
             'precio_unitario_publico', 'precio_par', 'precio_juego_4',
             'precio_cantidad_solicitada', 'recomendada',
-            'utilidad_unitaria', 'utilidad_total'
+            'utilidad_unitaria', 'utilidad_total', 'desglose_msi'
         ]
         read_only_fields = ['id', 'cotizacion']
 
@@ -413,10 +455,37 @@ class OpcionCotizacionSerializer(serializers.ModelSerializer):
         cant = getattr(obj.cotizacion, 'cantidad_requerida', 4) or 4
         return float(round((precio - costo) * Decimal(str(cant)), 2))
 
+    def get_desglose_msi(self, obj):
+        """
+        Retorna la opción de financiamiento a 3 Meses Sin Intereses.
+        El precio al público ya incluye el financiamiento bancario.
+        """
+        pu = Decimal(str(obj.precio_unitario_publico or 0))
+        p_sol = Decimal(str(obj.precio_cantidad_solicitada or 0))
+        if p_sol <= Decimal('0'):
+            cant = getattr(obj.cotizacion, 'cantidad_requerida', 4) or 4
+            p_sol = (pu * Decimal(str(cant))).quantize(Decimal('0.01'))
+
+        p_j4 = Decimal(str(obj.precio_juego_4 or (pu * Decimal('4'))))
+        total = float(p_sol) if p_sol > Decimal('0') else float(p_j4)
+        mensualidad = round(total / 3, 2)
+
+        return {
+            '3_meses': {
+                'meses': 3,
+                'total': total,
+                'mensualidad': mensualidad,
+                'total_solicitado': total,
+                'mensualidad_solicitada': mensualidad,
+                'factor': 1.0,
+                'label': '3 Meses Sin Intereses',
+            }
+        }
+
     def validate(self, data):
-        costo = Decimal(str(data.get('costo_proveedor', 0) or 0))
-        tipo_margen = data.get('tipo_margen', 'porcentaje')
-        valor_margen = Decimal(str(data.get('valor_margen', 0) or 0))
+        costo = Decimal(str(data.get('costo_proveedor', getattr(self.instance, 'costo_proveedor', 0)) or 0))
+        tipo_margen = data.get('tipo_margen', getattr(self.instance, 'tipo_margen', 'porcentaje'))
+        valor_margen = Decimal(str(data.get('valor_margen', getattr(self.instance, 'valor_margen', 0)) or 0))
         precio_pub = data.get('precio_unitario_publico')
 
         if precio_pub is None or Decimal(str(precio_pub)) <= Decimal('0'):
@@ -438,6 +507,16 @@ class OpcionCotizacionSerializer(serializers.ModelSerializer):
         if not data.get('precio_juego_4') or Decimal(str(data.get('precio_juego_4', 0))) <= Decimal('0'):
             data['precio_juego_4'] = (precio_pub * Decimal('4')).quantize(Decimal('0.01'))
 
+        # Auto-completar costo_con_iva si no viene provisto pero se especifica costo_proveedor
+        if 'costo_con_iva' not in data or Decimal(str(data.get('costo_con_iva', 0) or 0)) <= Decimal('0'):
+            incluye_iva = data.get('costo_incluye_iva', getattr(self.instance, 'costo_incluye_iva', False))
+            if incluye_iva:
+                data['costo_con_iva'] = costo.quantize(Decimal('0.01'))
+            elif 'costo_incluye_iva' in data and costo > Decimal('0'):
+                data['costo_con_iva'] = (costo * Decimal('1.16')).quantize(Decimal('0.01'))
+            elif costo > Decimal('0'):
+                data['costo_con_iva'] = costo.quantize(Decimal('0.01'))
+
         return data
 
 
@@ -456,6 +535,7 @@ class CotizacionSerializer(serializers.ModelSerializer):
             'id', 'folio', 'fecha', 'fecha_formateada', 'vigencia_dias', 'fecha_vencimiento',
             'cliente', 'vehiculo', 'nombre_cliente', 'telefono_cliente',
             'vehiculo_referencia', 'medida_solicitada', 'cantidad_requerida',
+            'mostrar_msi', 'factor_interes',
             'incluye_montaje', 'incluye_balanceo', 'incluye_valvula', 'incluye_alineacion',
             'servicios_adicionales',
             'notas_cliente', 'notas_internas', 'estado',
@@ -480,6 +560,19 @@ class CotizacionSerializer(serializers.ModelSerializer):
         if not isinstance(value, list):
             raise serializers.ValidationError("servicios_adicionales debe ser una lista de textos.")
         return [str(item).strip() for item in value if item and str(item).strip()]
+
+    def validate_factor_interes(self, value):
+        if value is None:
+            return Decimal('1.0790')
+        try:
+            val = Decimal(str(value))
+        except Exception:
+            raise serializers.ValidationError("El factor de financiamiento/interés debe ser un número decimal válido.")
+        if val < Decimal('1.0000'):
+            raise serializers.ValidationError("El factor de financiamiento no puede ser menor a 1.0 (no se permiten valores negativos ni menores al costo).")
+        if val > Decimal('2.5000'):
+            raise serializers.ValidationError("El factor de financiamiento no puede exceder 2.50 (250%).")
+        return val
 
     def validate_opciones(self, value):
         if not value:
@@ -540,4 +633,67 @@ class CotizacionSerializer(serializers.ModelSerializer):
 
         instance.refresh_from_db()
         return instance
+
+
+class SolicitudAutorizacionSerializer(serializers.ModelSerializer):
+    """
+    Serializer para el flujo de autorización de eliminación/edición de ventas
+    """
+    solicitado_por_nombre = serializers.SerializerMethodField(read_only=True)
+    autorizado_por_nombre = serializers.SerializerMethodField(read_only=True)
+    venta_folio = serializers.CharField(source='venta.folio', read_only=True)
+    venta_total = serializers.DecimalField(source='venta.total', max_digits=10, decimal_places=2, read_only=True)
+    esta_expirada = serializers.BooleanField(read_only=True)
+    segundos_restantes = serializers.SerializerMethodField(read_only=True)
+    whatsapp_mensaje = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = SolicitudAutorizacion
+        fields = [
+            'id', 'token', 'codigo_otp', 'accion', 'venta', 'venta_folio', 'venta_total',
+            'solicitado_por', 'solicitado_por_nombre', 'autorizado_por', 'autorizado_por_nombre',
+            'motivo', 'estado', 'created_at', 'expires_at', 'esta_expirada',
+            'segundos_restantes', 'whatsapp_mensaje'
+        ]
+        read_only_fields = [
+            'id', 'token', 'codigo_otp', 'solicitado_por', 'autorizado_por',
+            'estado', 'created_at', 'expires_at', 'esta_expirada'
+        ]
+
+    def get_solicitado_por_nombre(self, obj):
+        if obj.solicitado_por:
+            return obj.solicitado_por.get_full_name() or obj.solicitado_por.username
+        return ''
+
+    def get_autorizado_por_nombre(self, obj):
+        if obj.autorizado_por:
+            return obj.autorizado_por.get_full_name() or obj.autorizado_por.username
+        return None
+
+    def get_segundos_restantes(self, obj):
+        if not obj.expires_at:
+            return 0
+        now = timezone.now()
+        if now >= obj.expires_at:
+            return 0
+        return int((obj.expires_at - now).total_seconds())
+
+    def get_whatsapp_mensaje(self, obj):
+        accion_texto = 'Cancelación de Venta' if obj.accion == 'eliminar_venta' else 'Edición de Venta'
+        vendedor = self.get_solicitado_por_nombre(obj)
+        folio = obj.venta.folio if obj.venta else 'N/A'
+        total = f"${obj.venta.total:,.2f}" if obj.venta else '$0.00'
+        return (
+            f"*SOLICITUD DE AUTORIZACIÓN - CENTRO LLANTERO EMIRS*\n\n"
+            f"*Acción:* {accion_texto}\n"
+            f"*Folio:* {folio}\n"
+            f"*Monto:* {total}\n"
+            f"*Solicitado por:* {vendedor}\n"
+            f"*Motivo:* {obj.motivo}\n\n"
+            f"*Enlace para autorizar en 1 clic:*\n"
+            f"/autorizar/{obj.token}\n\n"
+            f"*Código OTP (opcional):* {obj.codigo_otp}\n"
+            f"*Vence en:* 15 minutos"
+        )
+
 

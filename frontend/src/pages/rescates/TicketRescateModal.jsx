@@ -49,6 +49,46 @@ export default function TicketRescateModal({ isOpen, onClose, rescate }) {
         hour: '2-digit', minute: '2-digit'
       })
 
+  // Desglose de costos: Traslado, Servicios / Mano de Obra, y Llantas
+  const costoTrasladoVal = (() => {
+    if (r.costo_traslado !== undefined && r.costo_traslado !== null) {
+      return parseFloat(r.costo_traslado || 0)
+    }
+    const detTraslado = detalles.find(d =>
+      d.es_traslado ||
+      (d.descripcion && d.descripcion.toLowerCase().includes('traslado')) ||
+      (d.descripcion && d.descripcion.toLowerCase().includes('desplazamiento'))
+    )
+    return detTraslado ? parseFloat(detTraslado.subtotal || detTraslado.precio_unitario || 0) : 0
+  })()
+
+  const llantasVal = (() => {
+    return detalles.reduce((sum, d) => {
+      const desc = (d.descripcion || '').toLowerCase()
+      const esTraslado = d.es_traslado || desc.includes('traslado') || desc.includes('desplazamiento')
+      const esProd = !!(d.producto || d.producto_id || desc.includes('llanta') || desc.includes('neumático') || desc.includes('rin'))
+      if (!esTraslado && esProd) {
+        return sum + parseFloat(d.subtotal || (d.precio_unitario * d.cantidad) || 0)
+      }
+      return sum
+    }, 0)
+  })()
+
+  const serviciosVal = (() => {
+    const sumServ = detalles.reduce((sum, d) => {
+      const desc = (d.descripcion || '').toLowerCase()
+      const esTraslado = d.es_traslado || desc.includes('traslado') || desc.includes('desplazamiento')
+      const esProd = !!(d.producto || d.producto_id || desc.includes('llanta') || desc.includes('neumático') || desc.includes('rin'))
+      if (!esTraslado && !esProd) {
+        return sum + parseFloat(d.subtotal || (d.precio_unitario * d.cantidad) || 0)
+      }
+      return sum
+    }, 0)
+    if (sumServ > 0) return sumServ
+    if (detalles.length === 0) return Math.max(0, parseFloat(subtotal || total) - costoTrasladoVal)
+    return Math.max(0, parseFloat(subtotal || total) - costoTrasladoVal - llantasVal)
+  })()
+
   // Compartir archivo PDF directamente en móviles o descargar limpiamente
   const handleShareOrDownloadPDF = async () => {
     if (!rescateId) {
@@ -106,10 +146,6 @@ export default function TicketRescateModal({ isOpen, onClose, rescate }) {
     let cleanPhone = clientPhone.replace(/\D/g, '')
     if (cleanPhone.length === 10) cleanPhone = '52' + cleanPhone
 
-    const itemsText = detalles.length > 0
-      ? detalles.map(d => `• ${d.cantidad}x ${d.descripcion} - $${fmtMXN(d.subtotal)}`).join('\n')
-      : `• 1x Servicio de Rescate Vial - $${fmtMXN(total)}`
-
     const mensaje = `*CENTRO LLANTERO EMIRS - COMPROBANTE DE RESCATE VIAL*
 ━━━━━━━━━━━━━━━━━━━━
 *Folio:* ${folio}
@@ -119,12 +155,13 @@ export default function TicketRescateModal({ isOpen, onClose, rescate }) {
 *Ubicación:* ${ubicacion_texto || 'Servicio en ruta'}
 *Técnico:* ${operadorName} (${unidadName})
 ━━━━━━━━━━━━━━━━━━━━
-*DETALLE DEL SERVICIO:*
-${itemsText}
-━━━━━━━━━━━━━━━━━━━━
+*DESGLOSE DEL COBRO:*
+• Costo de Traslado: $${fmtMXN(costoTrasladoVal)} MXN
+• Servicios y Mano de Obra: $${fmtMXN(serviciosVal)} MXN
+${llantasVal > 0 ? `• Llantas (Taller): $${fmtMXN(llantasVal)} MXN\n` : ''}━━━━━━━━━━━━━━━━━━━━
 *Subtotal:* $${fmtMXN(subtotal || total)} MXN
-${Number(descuento) > 0 ? `*Descuento:* -$${fmtMXN(descuento)} MXN\n` : ''}*TOTAL:* $${fmtMXN(total)} MXN
-*Forma de Pago:* ${metodo_pago.toUpperCase()} ${tipo_tarjeta ? `(${tipo_tarjeta.toUpperCase()})` : ''}
+${Number(descuento) > 0 ? `*Descuento:* -$${fmtMXN(descuento)} MXN\n` : ''}*TOTAL A PAGAR:* $${fmtMXN(total)} MXN
+*Forma de Pago:* ${String(metodo_pago).toUpperCase()} ${tipo_tarjeta ? `(${String(tipo_tarjeta).toUpperCase()})` : ''}
 ━━━━━━━━━━━━━━━━━━━━
 ¡Gracias por confiar en *Centro Llantero EmirS*!
 Tel / WhatsApp Taller: 999 371 8502
@@ -292,6 +329,27 @@ _Seguridad y confianza en su camino._`
 
             <hr style={{ border: 'none', borderTop: '2px dashed #000', margin: '7px 0' }} />
 
+            {/* Desglose Limpio de Rescate */}
+            <div style={{ margin: '5px 0', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 8px' }}>
+              <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#1e293b', textTransform: 'uppercase', marginBottom: '3px' }}>
+                Desglose del Rescate:
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', margin: '2px 0' }}>
+                <span style={{ color: '#475569' }}>Costo de Traslado:</span>
+                <span style={{ fontWeight: 'bold', fontFamily: 'monospace' }}>${fmtMXN(costoTrasladoVal)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', margin: '2px 0' }}>
+                <span style={{ color: '#475569' }}>Servicios y Mano de Obra:</span>
+                <span style={{ fontWeight: 'bold', fontFamily: 'monospace' }}>${fmtMXN(serviciosVal)}</span>
+              </div>
+              {llantasVal > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', margin: '2px 0' }}>
+                  <span style={{ color: '#475569' }}>Llantas (Taller):</span>
+                  <span style={{ fontWeight: 'bold', fontFamily: 'monospace' }}>${fmtMXN(llantasVal)}</span>
+                </div>
+              )}
+            </div>
+
             {/* Total */}
             <div style={{ margin: '4px 0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0', fontSize: '15px' }}>
@@ -304,8 +362,8 @@ _Seguridad y confianza en su camino._`
                   <span style={{ fontWeight: '600' }}>-${fmtMXN(descuento)}</span>
                 </div>
               )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '21px', margin: '4px 0 2px', paddingTop: '4px' }}>
-                <span>TOTAL:</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '20px', margin: '4px 0 2px', paddingTop: '4px', borderTop: '1px solid #000' }}>
+                <span>Total a Pagar:</span>
                 <span>${fmtMXN(total)}</span>
               </div>
             </div>

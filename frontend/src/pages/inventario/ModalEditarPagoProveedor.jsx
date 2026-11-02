@@ -114,9 +114,11 @@ export default function ModalEditarPagoProveedor({ isOpen, onClose, pago, onGuar
               className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-sm font-medium focus:border-[#df000a] focus:ring-1 focus:ring-red-500"
             >
               <option value="transferencia">Transferencia Electrónica</option>
+              <option value="tarjeta_debito">Tarjeta de Débito</option>
+              <option value="tarjeta_credito">Tarjeta de Crédito</option>
               <option value="efectivo">Efectivo</option>
               <option value="cheque">Cheque</option>
-              <option value="tarjeta">Tarjeta Bancaria</option>
+              <option value="tarjeta">Tarjeta (Genérica)</option>
             </select>
           </div>
 

@@ -33,6 +33,8 @@ class EntradaInventarioSerializer(serializers.ModelSerializer):
     proveedor_nombre = serializers.CharField(source='proveedor.nombre', read_only=True)
     total_compra = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    dias_restantes = serializers.IntegerField(read_only=True)
+    estado_alerta = serializers.CharField(read_only=True)
     
     class Meta:
         model = EntradaInventario

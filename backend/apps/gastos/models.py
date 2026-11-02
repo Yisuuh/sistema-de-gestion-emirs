@@ -28,10 +28,12 @@ class Gasto(models.Model):
     METODOS_PAGO = [
         ('efectivo', 'Efectivo'),
         ('transferencia', 'Transferencia'),
-        ('tarjeta', 'Tarjeta'),
+        ('tarjeta_debito', 'Tarjeta de Débito'),
+        ('tarjeta_credito', 'Tarjeta de Crédito'),
+        ('tarjeta', 'Tarjeta (General)'),  # Compatibilidad legado
     ]
 
-    fecha = models.DateField(default=timezone.now)
+    fecha = models.DateField(default=timezone.localdate)
     concepto = models.CharField(max_length=200)
     categoria = models.ForeignKey(
         CategoriaGasto, on_delete=models.PROTECT,

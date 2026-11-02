@@ -117,20 +117,21 @@ class CajaViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def ventas_caja(self, request, pk=None):
         """
-        Todas las ventas registradas dentro de esta caja.
-        Devuelve lista con folio, empleado, método de pago, total y hora.
+        Todas las ventas registradas dentro de esta caja con detalle completo
+        (detalles con producto/servicio, vehículo, formas de pago, empleado, cliente)
+        para renderizado y reimpresión de ticket térmico formal y consulta histórica.
         """
         caja = self.get_object()
         from apps.ventas.models import Venta
-        from apps.ventas.serializers import VentaListSerializer
+        from apps.ventas.serializers import VentaSerializer
         ventas = (
             Venta.objects
             .filter(caja=caja)
-            .select_related('empleado', 'cliente')
-            .prefetch_related('detalles')
+            .select_related('empleado', 'cliente', 'vehiculo')
+            .prefetch_related('detalles__producto', 'detalles__servicio')
             .order_by('-fecha')
         )
-        serializer = VentaListSerializer(ventas, many=True)
+        serializer = VentaSerializer(ventas, many=True)
         return Response({
             'caja_folio': caja.folio,
             'total_ventas': caja.num_ventas,

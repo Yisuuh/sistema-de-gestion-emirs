@@ -1,28 +1,20 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib/medidaUtils';
+import ModalTabuladorRines from './ModalTabuladorRines';
+import {
+  coincideProductoInteligente,
+  detectarMedidaFormateada,
+  extraerRinDeMedida,
+  obtenerCategoriaRin,
+  TABULADOR_UTILIDAD_RINES,
+  obtenerTabuladorConfigurado,
+  calcularPreciosEscalonados,
+  calcularOpcionesMSI,
+} from '../../lib/medidaUtils';
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 const fmt = (n) =>
   Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const GAMA_META = {
-  economica: {
-    label: 'Gama Económica',
-    badgeCls: 'bg-[#1e2438] text-white border-slate-600',
-    icon: 'ri-shield-line',
-  },
-  media: {
-    label: 'Gama Media / Calidad',
-    badgeCls: 'bg-[#1e2438] text-white border-slate-600',
-    icon: 'ri-medal-line',
-  },
-  premium: {
-    label: 'Gama Premium',
-    badgeCls: 'bg-[#1e2438] text-white border-slate-600',
-    icon: 'ri-vip-crown-line',
-  },
-};
 
 const ESTADO_COT_META = {
   vigente:   { label: 'Vigente',   cls: 'bg-[#1e2438] text-emerald-300 border-emerald-500/40' },
@@ -31,24 +23,40 @@ const ESTADO_COT_META = {
   cancelada: { label: 'Cancelada', cls: 'bg-[#1e2438] text-red-300 border-red-500/40' },
 };
 
-const crearOpcionVacia = (gama = 'media', medidaDefault = '', recomend = false) => ({
-  _uid: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-  gama,
-  origen: 'sobre_pedido', // 'stock' | 'sobre_pedido'
-  producto: null,
-  producto_obj: null,
-  proveedor: '',
-  proveedor_nombre_libre: '',
-  marca: '',
-  modelo: '',
-  medida: medidaDefault,
-  tiempo_entrega: '2-3 Horas',
-  costo_proveedor: '',
-  tipo_margen: 'porcentaje', // 'porcentaje' | 'monto_fijo'
-  valor_margen: '25',
-  precio_unitario_publico: '',
-  recomendada: recomend,
-});
+const crearOpcionVacia = (gama = 'media', medidaDefault = '', recomend = false) => {
+  const catRin = obtenerCategoriaRin(medidaDefault);
+  const tabConfig = obtenerTabuladorConfigurado();
+  const tab = tabConfig[catRin] || tabConfig.rin_16 || TABULADOR_UTILIDAD_RINES.rin_16;
+  return {
+    _uid: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    gama,
+    origen: 'sobre_pedido', // 'stock' | 'sobre_pedido'
+    producto: null,
+    producto_obj: null,
+    proveedor: '',
+    proveedor_nombre_libre: '',
+    marca: '',
+    modelo: '',
+    medida: medidaDefault,
+    tiempo_entrega: '2-3 Horas',
+    costo_proveedor: '',
+    costo_incluye_iva: false, // Por defecto el proveedor da precio sin IVA
+    costo_con_iva: '',
+    utiliza_tabulador: true, // Tabulador oficial escalonado activo por defecto
+    categoria_rin: catRin,
+    margen_unitario_1: tab.m1,
+    margen_unitario_2: tab.m2,
+    margen_unitario_4: tab.m4,
+    tipo_margen: 'porcentaje',
+    valor_margen: '25',
+    precio_unitario_publico: '',
+    precio_par: '',
+    precio_juego_4: '',
+    precio_cantidad_solicitada: '',
+    recomendada: recomend,
+    mostrar_msi_panel: false,
+  };
+};
 
 function calcularPrecioConMargen(costo, tipoMargen, valorMargen) {
   const c = parseFloat(costo) || 0;
@@ -58,6 +66,68 @@ function calcularPrecioConMargen(costo, tipoMargen, valorMargen) {
     return Math.round(c * (1 + v / 100) * 100) / 100;
   }
   return Math.round((c + v) * 100) / 100;
+}
+
+function recalcularOpcion(op, cambios, cant = 4, factor = 1.079) {
+  const next = { ...op, ...cambios };
+  const cantidad = Math.max(1, parseInt(cant, 10) || 1);
+  const factorNum = parseFloat(factor) || 1.079;
+
+  if ('medida' in cambios && !('categoria_rin' in cambios)) {
+    next.categoria_rin = obtenerCategoriaRin(next.medida);
+  }
+
+  const costoBase = parseFloat(next.costo_proveedor) || 0;
+  const costoConIva = next.costo_incluye_iva
+    ? Math.round(costoBase * 100) / 100
+    : Math.round(costoBase * 1.16 * 100) / 100;
+  next.costo_con_iva = String(costoConIva);
+
+  if (next.utiliza_tabulador) {
+    const catRin = next.categoria_rin || obtenerCategoriaRin(next.medida);
+    next.categoria_rin = catRin;
+    const escalonados = calcularPreciosEscalonados({
+      costo: costoBase,
+      costoIncluyeIva: next.costo_incluye_iva,
+      categoriaRin: catRin,
+      cantidad,
+      factorInteres: factorNum,
+    });
+    next.margen_unitario_1 = escalonados.m1;
+    next.margen_unitario_2 = escalonados.m2;
+    next.margen_unitario_4 = escalonados.m4;
+
+    if (costoBase > 0) {
+      next.precio_unitario_publico = String(escalonados.precioUnitario);
+      next.precio_par = String(escalonados.precioPar);
+      next.precio_juego_4 = String(escalonados.precioJuego4);
+      next.precio_cantidad_solicitada = String(escalonados.precioCantidad);
+    }
+  } else {
+    // Modo Libre / Manual
+    if ('precio_unitario_publico' in cambios) {
+      const pu = parseFloat(cambios.precio_unitario_publico) || 0;
+      next.precio_par = String(Math.round(pu * 2 * 100) / 100);
+      next.precio_juego_4 = String(Math.round(pu * 4 * 100) / 100);
+      next.precio_cantidad_solicitada = String(Math.round(pu * cantidad * 100) / 100);
+    } else if (
+      'costo_proveedor' in cambios ||
+      'costo_incluye_iva' in cambios ||
+      'tipo_margen' in cambios ||
+      'valor_margen' in cambios ||
+      'utiliza_tabulador' in cambios
+    ) {
+      const pu = calcularPrecioConMargen(costoConIva, next.tipo_margen, next.valor_margen);
+      if (pu > 0) {
+        next.precio_unitario_publico = String(pu);
+        next.precio_par = String(Math.round(pu * 2 * 100) / 100);
+        next.precio_juego_4 = String(Math.round(pu * 4 * 100) / 100);
+        next.precio_cantidad_solicitada = String(Math.round(pu * cantidad * 100) / 100);
+      }
+    }
+  }
+
+  return next;
 }
 
 export default function TabCotizador({ onCargarAlPOS }) {
@@ -72,6 +142,23 @@ export default function TabCotizador({ onCargarAlPOS }) {
   const [medidaSolicitada, setMedidaSolicitada] = useState('');
   const [cantidadRequerida, setCantidadRequerida] = useState(4);
   const [vigenciaDias, setVigenciaDias] = useState(5);
+  const [factorInteres, setFactorInteres] = useState(1.079); // Factor de interés financiamiento oficial EmirS (por defecto 1.079 = 7.9%)
+  const [mostrarMSI, setMostrarMSI] = useState(true); // Checkbox general de Meses Sin Intereses
+  const [mostrarModalTabulador, setMostrarModalTabulador] = useState(false);
+  const [tabuladorActual, setTabuladorActual] = useState(() => obtenerTabuladorConfigurado());
+
+  // Escucha global por cambios en el tabulador para recalcular en vivo todas las opciones activas
+  useEffect(() => {
+    const handleActualizarTabulador = (e) => {
+      const nuevoTab = e?.detail || obtenerTabuladorConfigurado();
+      setTabuladorActual(nuevoTab);
+      setOpciones((prev) =>
+        prev.map((op) => recalcularOpcion(op, {}, cantidadRequerida, factorInteres))
+      );
+    };
+    window.addEventListener('emirs:tabulador_actualizado', handleActualizarTabulador);
+    return () => window.removeEventListener('emirs:tabulador_actualizado', handleActualizarTabulador);
+  }, [cantidadRequerida, factorInteres]);
 
   const [incluyeMontaje, setIncluyeMontaje] = useState(true);
   const [incluyeBalanceo, setIncluyeBalanceo] = useState(true);
@@ -89,9 +176,9 @@ export default function TabCotizador({ onCargarAlPOS }) {
 
   // Opciones comparativas
   const [opciones, setOpciones] = useState(() => [
-    crearOpcionVacia('economica', '', false),
+    crearOpcionVacia('media', '', false),
     crearOpcionVacia('media', '', true),
-    crearOpcionVacia('premium', '', false),
+    crearOpcionVacia('media', '', false),
   ]);
 
   // Modal selector de stock para una fila
@@ -115,7 +202,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
 
   const { data: productos = [] } = useQuery({
     queryKey: ['pos-productos'],
-    queryFn: () => fetch('/api/inventario/productos/?activos=true', { headers: tok() }).then(toArr),
+    queryFn: () => fetch('/api/inventario/productos/?activo=true', { headers: tok() }).then(toArr),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -180,9 +267,32 @@ export default function TabCotizador({ onCargarAlPOS }) {
     }
   };
 
+  const handleCambiarCantidad = (cant) => {
+    const nuevaCant = Math.max(1, parseInt(cant, 10) || 1);
+    setCantidadRequerida(nuevaCant);
+    setOpciones((prev) => prev.map((op) => recalcularOpcion(op, {}, nuevaCant, factorInteres)));
+  };
+
+  const handleCambiarMedida = (val) => {
+    setMedidaSolicitada(val);
+    const det = detectarMedidaFormateada(val) || val;
+    setOpciones((prev) =>
+      prev.map((op) => (!op.medida || op.medida === medidaSolicitada ? recalcularOpcion(op, { medida: det }, cantidadRequerida, factorInteres) : op))
+    );
+  };
+
+  const handleCambiarFactorInteres = (nuevoFactor) => {
+    const f = parseFloat(nuevoFactor) || 1.0;
+    setFactorInteres(f);
+    setOpciones((prev) =>
+      prev.map((op) => recalcularOpcion(op, {}, cantidadRequerida, f))
+    );
+  };
+
   // ─── Handlers de Opciones y Calculadora en Vivo ──────────────────────────
   const agregarOpcion = (gama = 'media') => {
-    setOpciones((prev) => [...prev, crearOpcionVacia(gama, medidaEfectiva, false)]);
+    const nueva = recalcularOpcion(crearOpcionVacia(gama, medidaEfectiva, false), {}, cantidadRequerida, factorInteres);
+    setOpciones((prev) => [...prev, nueva]);
   };
 
   const eliminarOpcion = (uid) => {
@@ -194,17 +304,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
     setOpciones((prev) =>
       prev.map((op) => {
         if (op._uid !== uid) return op;
-        const next = { ...op, ...cambios };
-
-        // Si cambió costo, tipo_margen o valor_margen (y no fue edición directa de precio_unitario_publico)
-        if (
-          ('costo_proveedor' in cambios || 'tipo_margen' in cambios || 'valor_margen' in cambios) &&
-          !('precio_unitario_publico' in cambios)
-        ) {
-          const calc = calcularPrecioConMargen(next.costo_proveedor, next.tipo_margen, next.valor_margen);
-          next.precio_unitario_publico = calc > 0 ? String(calc) : next.precio_unitario_publico;
-        }
-        return next;
+        return recalcularOpcion(op, cambios, cantidadRequerida, factorInteres);
       })
     );
   };
@@ -216,7 +316,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
         const actual = parseFloat(op.precio_unitario_publico) || 0;
         if (actual <= 0) return op;
         const redondeado = Math.ceil(actual / multiplo) * multiplo;
-        return { ...op, precio_unitario_publico: String(redondeado) };
+        return recalcularOpcion(op, { precio_unitario_publico: String(redondeado), utiliza_tabulador: false }, cantidadRequerida, factorInteres);
       })
     );
   };
@@ -226,6 +326,8 @@ export default function TabCotizador({ onCargarAlPOS }) {
     const precioVentaLista = parseFloat(prod.precio_descuento || prod.precio_venta || 0);
     const costoEstimado = costoBase > 0 ? costoBase : Math.round(precioVentaLista * 0.75 * 100) / 100;
     const marcaNom = typeof prod.marca === 'string' ? prod.marca : prod.marca?.nombre || prod.marca_nombre || '';
+    const medProd = prod.medida || medidaEfectiva;
+    const catRin = obtenerCategoriaRin(medProd);
 
     // Calcular margen implícito si hay precio de lista y costo
     let valorMargenCalc = '25';
@@ -236,20 +338,22 @@ export default function TabCotizador({ onCargarAlPOS }) {
     setOpciones((prev) =>
       prev.map((op) => {
         if (op._uid !== uid) return op;
-        return {
+        const baseOp = {
           ...op,
           origen: 'stock',
           producto: prod.id,
           producto_obj: prod,
           marca: marcaNom,
           modelo: prod.modelo || prod.descripcion_completa || '',
-          medida: prod.medida || medidaEfectiva,
+          medida: medProd,
           tiempo_entrega: 'Inmediata (En Stock)',
           costo_proveedor: costoEstimado > 0 ? String(costoEstimado) : '',
+          costo_incluye_iva: true,
+          categoria_rin: catRin,
           tipo_margen: 'porcentaje',
           valor_margen: valorMargenCalc,
-          precio_unitario_publico: precioVentaLista > 0 ? String(precioVentaLista) : '',
         };
+        return recalcularOpcion(baseOp, {}, cantidadRequerida, factorInteres);
       })
     );
     setFilaSelectorStock(null);
@@ -291,7 +395,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
         (o) => o.marca.trim() && parseFloat(o.precio_unitario_publico) > 0
       );
       if (opcionesValidas.length === 0) {
-        throw new Error('Completa al menos una opción con Marca y Precio Unitario Público mayor a $0.');
+        throw new Error('Completa al menos una opción con Marca y P. Unitario mayor a $0.');
       }
 
       const cant = Math.max(1, parseInt(cantidadRequerida, 10) || 4);
@@ -305,6 +409,8 @@ export default function TabCotizador({ onCargarAlPOS }) {
         vehiculo_referencia: vehiculoReferencia.trim(),
         medida_solicitada: medFinal,
         cantidad_requerida: cant,
+        factor_interes: factorInteres,
+        mostrar_msi: mostrarMSI,
         vigencia_dias: Math.max(1, parseInt(vigenciaDias, 10) || 5),
         incluye_montaje: incluyeMontaje,
         incluye_balanceo: incluyeBalanceo,
@@ -315,7 +421,12 @@ export default function TabCotizador({ onCargarAlPOS }) {
         notas_internas: notasInternas.trim(),
         opciones: opcionesValidas.map((o) => {
           const pu = parseFloat(o.precio_unitario_publico) || 0;
+          const par = parseFloat(o.precio_par) || Math.round(pu * 2 * 100) / 100;
+          const j4 = parseFloat(o.precio_juego_4) || Math.round(pu * 4 * 100) / 100;
+          const pCant = parseFloat(o.precio_cantidad_solicitada) || Math.round(pu * cant * 100) / 100;
           const medOp = detectarMedidaFormateada(o.medida) || o.medida.trim() || medFinal || 'S/M';
+          const cConIva = parseFloat(o.costo_con_iva) || (o.costo_incluye_iva ? (parseFloat(o.costo_proveedor) || 0) : Math.round((parseFloat(o.costo_proveedor) || 0) * 1.16 * 100) / 100);
+
           return {
             gama: o.gama,
             origen: o.origen,
@@ -327,12 +438,19 @@ export default function TabCotizador({ onCargarAlPOS }) {
             medida: medOp,
             tiempo_entrega: o.tiempo_entrega.trim() || 'Inmediata',
             costo_proveedor: parseFloat(o.costo_proveedor) || 0,
+            costo_incluye_iva: Boolean(o.costo_incluye_iva),
+            costo_con_iva: cConIva,
+            utiliza_tabulador: Boolean(o.utiliza_tabulador),
+            categoria_rin: o.categoria_rin || obtenerCategoriaRin(medOp),
+            margen_unitario_1: parseFloat(o.margen_unitario_1) || 0,
+            margen_unitario_2: parseFloat(o.margen_unitario_2) || 0,
+            margen_unitario_4: parseFloat(o.margen_unitario_4) || 0,
             tipo_margen: o.tipo_margen,
             valor_margen: parseFloat(o.valor_margen) || 0,
             precio_unitario_publico: pu,
-            precio_par: Math.round(pu * 2 * 100) / 100,
-            precio_juego_4: Math.round(pu * 4 * 100) / 100,
-            precio_cantidad_solicitada: Math.round(pu * cant * 100) / 100,
+            precio_par: par,
+            precio_juego_4: j4,
+            precio_cantidad_solicitada: pCant,
             recomendada: Boolean(o.recomendada),
           };
         }),
@@ -394,6 +512,41 @@ export default function TabCotizador({ onCargarAlPOS }) {
     if (telLimpio.length === 10) telLimpio = `52${telLimpio}`;
 
     const cant = cot.cantidad_requerida || 4;
+    const incluirMSI = typeof cot.mostrar_msi === 'boolean' ? cot.mostrar_msi : mostrarMSI;
+
+    const lineasOpciones = (cot.opciones || []).map((op, i) => {
+      const rec = op.recomendada ? ' ⭐ [RECOMENDADA]' : '';
+      const pu = fmt(op.precio_unitario_publico);
+      const par = fmt(op.precio_par || op.precio_unitario_publico * 2);
+      const j4 = fmt(op.precio_juego_4 || op.precio_unitario_publico * 4);
+
+      let msiBloque = '';
+      if (incluirMSI) {
+        const baseMSI = parseFloat(op.precio_cantidad_solicitada) > 0
+          ? parseFloat(op.precio_cantidad_solicitada)
+          : (parseFloat(op.precio_unitario_publico) || 0) * cant;
+        if (baseMSI > 0) {
+          const msiCalc = calcularOpcionesMSI(baseMSI);
+          msiBloque =
+            `\n   💳 *Financiamiento Meses Sin Intereses (${cant} llantas):*\n` +
+            `      • 3 Meses Sin Intereses: *$${fmt(msiCalc['3_meses'].mensualidad)}/mes* (Total $${fmt(msiCalc['3_meses'].total)})`;
+        }
+      }
+
+      return (
+        `${i + 1}. *${op.marca} ${op.modelo || ''}* (${op.medida})${rec}\n` +
+        `   💵 *Precios de Contado:*\n` +
+        `      • 1 Llanta: *$${pu}*\n` +
+        `      • Par (2): *$${par}* (Ahorro por volumen)\n` +
+        `      • Juego (4): *$${j4}* (Máximo ahorro)\n` +
+        (cant !== 1 && cant !== 2 && cant !== 4 && op.precio_cantidad_solicitada
+          ? `      • Total por ${cant} llantas: *$${fmt(op.precio_cantidad_solicitada)}*\n`
+          : '') +
+        `   ⏱ Entrega: ${op.tiempo_entrega || 'Inmediata'}` +
+        msiBloque
+      );
+    });
+
     const incluyeList = [];
     if (cot.incluye_montaje) incluyeList.push('Montaje profesional');
     if (cot.incluye_balanceo) incluyeList.push('Balanceo computarizado');
@@ -410,31 +563,40 @@ export default function TabCotizador({ onCargarAlPOS }) {
       if (srv && !incluyeList.includes(srv)) incluyeList.push(srv);
     });
 
-    const lineasOpciones = (cot.opciones || []).map((op, i) => {
-      const gamaNombre =
-        op.gama === 'economica' ? 'Económica' : op.gama === 'premium' ? 'Premium' : 'Calidad Media';
-      const rec = op.recomendada ? ' [RECOMENDADA]' : '';
-      const pu = fmt(op.precio_unitario_publico);
-      const par = fmt(op.precio_par || op.precio_unitario_publico * 2);
-      const j4 = fmt(op.precio_juego_4 || op.precio_unitario_publico * 4);
-      return (
-        `${i + 1}. *${op.marca} ${op.modelo || ''}* (${op.medida}) — _${gamaNombre}_${rec}\n` +
-        `   • C/U: *$${pu}* | Par (2): *$${par}* | Juego (4): *$${j4}*\n` +
-        `   • Entrega: ${op.tiempo_entrega || 'Inmediata'}`
-      );
-    });
-
     const texto = [
-      `Hola *${cot.nombre_cliente || 'Cliente'}*, le compartimos su cotización comparativa de *Centro Llantero EmirS* (Folio *${cot.folio}*):`,
-      cot.vehiculo_referencia ? `Vehículo: *${cot.vehiculo_referencia}*` : null,
-      `Medida solicitada: *${cot.medida_solicitada || 'Varias'}* (${cant} llanta${cant > 1 ? 's' : ''})`,
+      `Hola *${cot.nombre_cliente || 'Cliente'}*, le compartimos su cotización de *Centro Llantero EmirS* (Folio *${cot.folio}*):`,
+      cot.vehiculo_referencia ? `🚗 Vehículo: *${cot.vehiculo_referencia}*` : null,
+      `📏 Medida solicitada: *${cot.medida_solicitada || 'Varias'}* (${cant} llanta${cant > 1 ? 's' : ''})`,
       '',
-      '*OPCIONES DISPONIBLES:*',
+      '🏁 *OPCIONES DISPONIBLES:*',
       ...lineasOpciones,
       '',
-      incluyeList.length > 0 ? `*Incluye:* ${incluyeList.join(', ')}.` : null,
-      cot.notas_cliente ? `*Nota:* ${cot.notas_cliente}` : null,
-      `_Cotización vigente por ${cot.vigencia_dias || 5} días._`,
+      '🎁 *BENEFICIOS EXCLUSIVOS:*',
+      '✔ *Desde 1 llanta:* Incluye instalación, válvula, balanceo y llenado con nitrógeno.',
+      '✔ *En la compra de 2 llantas:* Te regalamos 2 años de nitrógeno y revisión periódica.',
+      '✔ *Si te llevas las 4 llantas:* Paga a 3 Meses Sin Intereses con BBVA y llévate 2 años de mantenimiento completo (calibración con nitrógeno, revisiones y reparación de pinchaduras).',
+      ...(incluyeList.length > 0 ? ['', `🛠 *Servicios incluidos adicionales:* ${incluyeList.join(', ')}.`] : []),
+      cot.notas_cliente ? `📝 *Nota:* ${cot.notas_cliente}` : null,
+      '',
+      '📋 *CONDICIONES DE COMPRA Y PAGO:*',
+      '• *Garantía:* Hasta 5 años (Varía dependiendo de la marca) contra defectos de fábrica.',
+      '• *Precios:* Válidos hasta agotar existencias (incluyen IVA).',
+      '• *Para confirmar solicitud:* 50% de anticipo o pago total.',
+      '• *Métodos de pago:* Efectivo, transferencia o depósito, tarjetas de débito y crédito (excepto Amex).',
+      `• *Vigencia:* ${cot.vigencia_dias || 5} días a partir de la emisión.`,
+      '',
+      '💳 *DATOS PARA TRANSFERENCIA O DEPÓSITO:*',
+      '• *Beneficiario:* Emir Amilcar Rosado Mendoza',
+      '• *Banco:* Santander',
+      '• *Tarjeta:* 5579070041019087',
+      '• *CLABE:* 014910605635788786',
+      '• *Correo:* emircentrollantero@gmail.com',
+      '',
+      '📍 *ATENCIÓN, HORARIOS Y UBICACIÓN:*',
+      '• *Tel/WhatsApp:* (999) 111 8213 / (999) 371 8502',
+      '• *Horarios:* L-V 8:00 AM a 6:45 PM | Sáb 8:00 AM a 4:45 PM | Dom 8:30 AM a 12:45 PM',
+      '• *Dirección:* Calle 42 # 282 por 45 Francisco de Montejo',
+      '• *Facebook:* Facebook/EmirScentrollantero',
     ]
       .filter((x) => x !== null)
       .join('\n');
@@ -671,14 +833,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
                 <input
                   type="text"
                   value={medidaSolicitada}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setMedidaSolicitada(val);
-                    const det = detectarMedidaFormateada(val) || val;
-                    setOpciones((prev) =>
-                      prev.map((op) => (!op.medida || op.medida === medidaSolicitada ? { ...op, medida: det } : op))
-                    );
-                  }}
+                  onChange={(e) => handleCambiarMedida(e.target.value)}
                   placeholder="Escribe 2055516 o 205/55 R16..."
                   className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-xl text-sm font-mono font-bold text-gray-900 focus:ring-2 focus:ring-[#df000a]"
                 />
@@ -686,7 +841,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
               {medidaDetectadaPrincipal && medidaSolicitada !== medidaDetectadaPrincipal && (
                 <button
                   type="button"
-                  onClick={() => setMedidaSolicitada(medidaDetectadaPrincipal)}
+                  onClick={() => handleCambiarMedida(medidaDetectadaPrincipal)}
                   className="px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-[#df000a] text-xs font-black whitespace-nowrap hover:bg-red-100 cursor-pointer flex items-center gap-1"
                 >
                   <i className="ri-magic-line"></i>
@@ -706,7 +861,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
                 <button
                   key={n}
                   type="button"
-                  onClick={() => setCantidadRequerida(n)}
+                  onClick={() => handleCambiarCantidad(n)}
                   className={`px-3 py-2 rounded-xl text-xs font-black border transition-all cursor-pointer ${
                     Number(cantidadRequerida) === n
                       ? 'bg-red-600 text-white border-red-500 shadow-xs'
@@ -721,7 +876,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
                 min="1"
                 max="40"
                 value={cantidadRequerida}
-                onChange={(e) => setCantidadRequerida(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                onChange={(e) => handleCambiarCantidad(e.target.value)}
                 className="w-16 border border-gray-300 rounded-xl px-2 py-2 text-center font-mono font-bold text-sm focus:ring-2 focus:ring-[#df000a]"
                 title="Otra cantidad"
               />
@@ -741,6 +896,70 @@ export default function TabCotizador({ onCargarAlPOS }) {
               onChange={(e) => setVigenciaDias(parseInt(e.target.value, 10) || 5)}
               className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-[#df000a]"
             />
+          </div>
+
+          {/* Interés / Factor de Financiamiento */}
+          <div className="sm:col-span-2 lg:col-span-4 bg-[#141720] border border-white/10 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <i className="ri-percent-line text-sm"></i>
+              </span>
+              <div>
+                <span className="text-xs font-black text-white uppercase tracking-wider block">
+                  Interés / Factor de Financiamiento
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  Calcula el costo financiado oficial de EmirS (Base con IVA × Factor) para precios de venta y 3 MSI
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {[
+                { label: '1.079 (Defecto)', val: 1.079 },
+                { label: '1.00 (Sin Interés)', val: 1.00 },
+                { label: '1.05', val: 1.05 },
+                { label: '1.10', val: 1.10 },
+              ].map((b) => (
+                <button
+                  key={b.val}
+                  type="button"
+                  onClick={() => handleCambiarFactorInteres(b.val)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                    Math.abs(factorInteres - b.val) < 0.001
+                      ? 'bg-[#df000a] text-white border-red-500 shadow-sm'
+                      : 'bg-[#1e2438] text-slate-300 border-slate-700 hover:bg-slate-700'
+                  }`}
+                >
+                  {b.label}
+                </button>
+              ))}
+
+              <div className="flex items-center gap-1 bg-[#1e2438] border border-slate-700 rounded-xl px-2 py-1">
+                <span className="text-[11px] font-bold text-slate-400">Libre:</span>
+                <input
+                  type="number"
+                  min="0.5"
+                  max="2.0"
+                  step="0.001"
+                  value={factorInteres}
+                  onChange={(e) => handleCambiarFactorInteres(parseFloat(e.target.value) || 1.0)}
+                  className="w-16 bg-transparent text-amber-300 font-mono font-bold text-xs text-center focus:outline-none"
+                  title="Factor de interés libre (ej. 1.079)"
+                />
+              </div>
+
+              {/* Botón Tabulador de Rines */}
+              <button
+                type="button"
+                onClick={() => setMostrarModalTabulador(true)}
+                className="px-3 py-1.5 rounded-xl bg-[#1b2032] hover:bg-[#232940] text-amber-300 hover:text-amber-200 border border-amber-500/40 text-xs font-black inline-flex items-center gap-1.5 cursor-pointer transition-all shadow-sm ml-1"
+                title="Configurar tabulador de utilidades oficiales por Rin"
+              >
+                <i className="ri-table-line text-sm text-amber-400"></i>
+                <span>Tabulador de Rines</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -775,6 +994,24 @@ export default function TabCotizador({ onCargarAlPOS }) {
                   <span>{item.label}</span>
                 </label>
               ))}
+
+              {/* Checkbox General Meses Sin Intereses */}
+              <label
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer select-none transition-colors ${
+                  mostrarMSI
+                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                    : 'bg-[#1e2438] border-slate-700 text-slate-400 hover:bg-slate-700'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={mostrarMSI}
+                  onChange={(e) => setMostrarMSI(e.target.checked)}
+                  className="accent-amber-500 w-3.5 h-3.5"
+                />
+                <i className="ri-bank-card-line text-amber-400"></i>
+                <span>Ofrecer financiamiento a 3 Meses Sin Intereses (3 MSI)</span>
+              </label>
 
               {/* Chips de servicios adicionales */}
               {serviciosAdicionales.map((srv) => (
@@ -894,24 +1131,10 @@ export default function TabCotizador({ onCargarAlPOS }) {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => agregarOpcion('economica')}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-600 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              onClick={() => agregarOpcion()}
+              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
             >
-              <i className="ri-add-line"></i> + Opción Económica
-            </button>
-            <button
-              type="button"
-              onClick={() => agregarOpcion('media')}
-              className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-            >
-              <i className="ri-add-line"></i> + Opción Gama Media
-            </button>
-            <button
-              type="button"
-              onClick={() => agregarOpcion('premium')}
-              className="px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-            >
-              <i className="ri-add-line"></i> + Opción Premium
+              <i className="ri-add-line"></i> + Agregar Llanta / Opción
             </button>
           </div>
         </div>
@@ -919,13 +1142,39 @@ export default function TabCotizador({ onCargarAlPOS }) {
         {/* Lista de Opciones */}
         <div className="space-y-4">
           {opciones.map((op, index) => {
-            const costoNum = parseFloat(op.costo_proveedor) || 0;
-            const precioUnitNum = parseFloat(op.precio_unitario_publico) || 0;
-            const precioParNum = precioUnitNum * 2;
-            const precioJuego4Num = precioUnitNum * 4;
-            const gananciaUnit = precioUnitNum - costoNum;
             const cant = Math.max(1, parseInt(cantidadRequerida, 10) || 4);
-            const gananciaTotal = gananciaUnit * cant;
+            const costoBase = parseFloat(op.costo_proveedor) || 0;
+            const costoConIva = op.costo_incluye_iva
+              ? costoBase
+              : Math.round(costoBase * 1.16 * 100) / 100;
+
+            const precioUnitNum = parseFloat(op.precio_unitario_publico) || 0;
+            const precioParNum = parseFloat(op.precio_par) || (precioUnitNum * 2);
+            const precioJuego4Num = parseFloat(op.precio_juego_4) || (precioUnitNum * 4);
+            const precioCantNum = parseFloat(op.precio_cantidad_solicitada) || (
+              cant === 1 ? precioUnitNum : cant === 2 ? precioParNum : cant === 4 ? precioJuego4Num : Math.round(precioUnitNum * cant * 100) / 100
+            );
+
+            // Ganancia interna
+            let gananciaUnit = 0;
+            let gananciaTotal = 0;
+            if (op.utiliza_tabulador) {
+              const m1 = parseFloat(op.margen_unitario_1) || 0;
+              const m2 = parseFloat(op.margen_unitario_2) || 0;
+              const m4 = parseFloat(op.margen_unitario_4) || 0;
+              gananciaUnit = cant === 1 ? m1 : cant === 2 || cant === 3 ? m2 : m4;
+              gananciaTotal = cant * gananciaUnit;
+            } else {
+              gananciaUnit = precioUnitNum > 0 && costoConIva > 0 ? precioUnitNum - costoConIva : 0;
+              gananciaTotal = gananciaUnit * cant;
+            }
+
+            const catRinActual = op.categoria_rin || obtenerCategoriaRin(op.medida || medidaEfectiva);
+            const tabMeta = tabuladorActual[catRinActual] || tabuladorActual.rin_16 || TABULADOR_UTILIDAD_RINES.rin_16;
+            const rinNumDetectado = extraerRinDeMedida(op.medida || medidaEfectiva) || 16;
+            const esRin17 = catRinActual === 'rin_17_18' || catRinActual === 'rin_17_auto' || rinNumDetectado === 17;
+            const baseMSI = cant === 4 ? precioJuego4Num : precioCantNum > 0 ? precioCantNum : precioJuego4Num;
+            const msiOpciones = calcularOpcionesMSI(baseMSI);
 
             return (
               <div
@@ -942,17 +1191,6 @@ export default function TabCotizador({ onCargarAlPOS }) {
                     <span className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-white font-mono font-black text-xs">
                       Opción #{index + 1}
                     </span>
-
-                    {/* Selector de Gama */}
-                    <select
-                      value={op.gama}
-                      onChange={(e) => actualizarOpcion(op._uid, { gama: e.target.value })}
-                      className="px-3 py-1 rounded-lg border text-xs font-bold cursor-pointer bg-[#1e2438] text-white border-slate-600"
-                    >
-                      <option value="economica">Gama Económica</option>
-                      <option value="media">Gama Media / Calidad</option>
-                      <option value="premium">Gama Premium</option>
-                    </select>
 
                     {/* Botón Tomar de Stock vs Sobre Pedido */}
                     <button
@@ -1122,28 +1360,86 @@ export default function TabCotizador({ onCargarAlPOS }) {
                 </div>
 
                 {/* ── CALCULADORA EN VIVO (PANEL INTERNO CONFIDENCIAL) ── */}
-                <div className="bg-[#1b2032] text-white rounded-xl p-4 border border-amber-500/30 space-y-3">
+                <div className="bg-[#1b2032] text-white rounded-xl p-4 border border-amber-500/30 space-y-3.5">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.08] pb-2">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                      <i className="ri-lock-password-line"></i>
-                      <span>Calculadora Interna de Margen (Confidencial • No visible para el cliente)</span>
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                        <i className="ri-lock-password-line"></i>
+                        <span>Calculadora Confidencial</span>
+                      </span>
+
+                      {/* Selector de Modo: Tabulador Oficial vs Modo Manual */}
+                      <div className="inline-flex rounded-lg border border-slate-700 bg-[#161a29] p-0.5 text-xs font-bold">
+                        <button
+                          type="button"
+                          onClick={() => actualizarOpcion(op._uid, { utiliza_tabulador: true })}
+                          className={`px-2.5 py-0.5 rounded-md transition-all cursor-pointer ${
+                            op.utiliza_tabulador
+                              ? 'bg-[#df000a] text-white shadow-xs'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <i className="ri-dashboard-3-line mr-1"></i>Tabulador Oficial Rin
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => actualizarOpcion(op._uid, { utiliza_tabulador: false })}
+                          className={`px-2.5 py-0.5 rounded-md transition-all cursor-pointer ${
+                            !op.utiliza_tabulador
+                              ? 'bg-amber-500 text-slate-950 shadow-xs'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <i className="ri-edit-line mr-1"></i>Modo Manual / Libre
+                        </button>
+                      </div>
+                    </div>
 
                     {/* Badge Verde de Ganancia en Vivo */}
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-black font-mono">
                       <i className="ri-funds-box-line text-emerald-400"></i>
                       <span>
-                        Tu Ganancia: ${fmt(gananciaUnit)} por llanta | ${fmt(gananciaTotal)} en las {cant} llantas
+                        Tu Ganancia: ${fmt(gananciaUnit)}/llanta • ${fmt(gananciaTotal)} en las {cant} llantas
                       </span>
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
-                    {/* Input Costo Proveedor */}
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
-                        Costo Proveedor ($)
-                      </label>
+                  {/* Fila de Controles de Costo, IVA y Tabulador / Márgenes */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+                    {/* Costo Proveedor + Toggle IVA */}
+                    <div className="lg:col-span-4 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold uppercase text-slate-300">
+                          Costo Proveedor ($)
+                        </label>
+                        {/* Selector de IVA */}
+                        <div className="flex items-center gap-1 text-[10px] font-bold">
+                          <span className="text-slate-400">¿IVA?</span>
+                          <button
+                            type="button"
+                            onClick={() => actualizarOpcion(op._uid, { costo_incluye_iva: true })}
+                            className={`px-1.5 py-0.5 rounded cursor-pointer ${
+                              op.costo_incluye_iva
+                                ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/50'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            Sí
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => actualizarOpcion(op._uid, { costo_incluye_iva: false })}
+                            className={`px-1.5 py-0.5 rounded cursor-pointer ${
+                              !op.costo_incluye_iva
+                                ? 'bg-red-500/30 text-red-300 border border-red-500/50'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            No (+16%)
+                          </button>
+                        </div>
+                      </div>
+
                       <div className="relative">
                         <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs font-mono">$</span>
                         <input
@@ -1156,110 +1452,222 @@ export default function TabCotizador({ onCargarAlPOS }) {
                           className="w-full pl-6 pr-2.5 py-1.5 rounded-lg bg-[#161a29] border border-slate-700 text-white font-mono text-xs font-bold focus:outline-none focus:border-amber-400"
                         />
                       </div>
+
+                      {!op.costo_incluye_iva && costoBase > 0 && (
+                        <div className="text-[10px] text-amber-300/90 font-mono">
+                          Base con IVA (+16%): ${fmt(costoConIva)}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Toggle Tipo de Margen: % Porcentaje vs $ Monto Fijo */}
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
-                        Tipo de Margen
-                      </label>
-                      <div className="grid grid-cols-2 gap-1 bg-[#161a29] p-1 rounded-lg border border-slate-700">
-                        <button
-                          type="button"
-                          onClick={() => actualizarOpcion(op._uid, { tipo_margen: 'porcentaje' })}
-                          className={`py-1 px-2 rounded text-[11px] font-black transition-all cursor-pointer ${
-                            op.tipo_margen === 'porcentaje'
-                              ? 'bg-amber-500 text-slate-950'
-                              : 'text-slate-300 hover:text-white'
-                          }`}
-                        >
-                          % Porcentaje
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => actualizarOpcion(op._uid, { tipo_margen: 'monto_fijo' })}
-                          className={`py-1 px-2 rounded text-[11px] font-black transition-all cursor-pointer ${
-                            op.tipo_margen === 'monto_fijo'
-                              ? 'bg-amber-500 text-slate-950'
-                              : 'text-slate-300 hover:text-white'
-                          }`}
-                        >
-                          $ Monto Fijo
-                        </button>
-                      </div>
-                    </div>
+                    {/* Lado Central: Tabulador Rin o Ajuste Manual */}
+                    {op.utiliza_tabulador ? (
+                      <div className="lg:col-span-8 bg-[#161a29] rounded-xl p-2.5 border border-slate-700/80 space-y-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
+                          <span className="font-bold text-slate-300 flex items-center gap-1">
+                            <i className="ri-disc-line text-red-400"></i>
+                            <span>Rin {rinNumDetectado} • {tabMeta.nombre}</span>
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            1 pza: +${tabMeta.m1} | Par: +${tabMeta.m2} c/u | Juego (4): +${tabMeta.m4} c/u
+                          </span>
+                        </div>
 
-                    {/* Input Valor de Margen */}
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
-                        {op.tipo_margen === 'porcentaje' ? 'Margen (%)' : 'Ganancia Fija ($/llanta)'}
-                      </label>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          step="0.5"
-                          value={op.valor_margen}
-                          onChange={(e) => actualizarOpcion(op._uid, { valor_margen: e.target.value })}
-                          placeholder={op.tipo_margen === 'porcentaje' ? '25' : '300'}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-[#161a29] border border-slate-700 text-amber-300 font-mono text-xs font-bold focus:outline-none focus:border-amber-400"
-                        />
-                        <span className="text-xs font-bold text-slate-300">
-                          {op.tipo_margen === 'porcentaje' ? '%' : 'MXN'}
-                        </span>
+                        {esRin17 && (
+                          <div className="flex items-center gap-2 pt-1 border-t border-white/[0.06]">
+                            <span className="text-[10px] uppercase font-bold text-amber-400">Variante Rin 17:</span>
+                            <div className="inline-flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => actualizarOpcion(op._uid, { categoria_rin: 'rin_17_18' })}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors ${
+                                  catRinActual === 'rin_17_18'
+                                    ? 'bg-red-600 text-white'
+                                    : 'bg-[#1e2438] text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                Estándar / Camioneta (+{tabuladorActual.rin_17_18?.m1 ?? 700} / +{tabuladorActual.rin_17_18?.m2 ?? 650} / +{tabuladorActual.rin_17_18?.m4 ?? 600})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => actualizarOpcion(op._uid, { categoria_rin: 'rin_17_auto' })}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors ${
+                                  catRinActual === 'rin_17_auto'
+                                    ? 'bg-amber-500 text-slate-950 font-black'
+                                    : 'bg-[#1e2438] text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                Rin 17A Auto (+{tabuladorActual.rin_17_auto?.m1 ?? 550} / +{tabuladorActual.rin_17_auto?.m2 ?? 500} / +{tabuladorActual.rin_17_auto?.m4 ?? 450})
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
+                    ) : (
+                      <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-3 gap-2 bg-[#161a29] rounded-xl p-2.5 border border-slate-700/80 items-end">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
+                            Tipo de Margen
+                          </label>
+                          <div className="grid grid-cols-2 gap-1 bg-[#1e2438] p-0.5 rounded-lg border border-slate-700">
+                            <button
+                              type="button"
+                              onClick={() => actualizarOpcion(op._uid, { tipo_margen: 'porcentaje' })}
+                              className={`py-0.5 px-1 rounded text-[10px] font-black cursor-pointer ${
+                                op.tipo_margen === 'porcentaje'
+                                  ? 'bg-amber-500 text-slate-950'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              % Porcentaje
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => actualizarOpcion(op._uid, { tipo_margen: 'monto_fijo' })}
+                              className={`py-0.5 px-1 rounded text-[10px] font-black cursor-pointer ${
+                                op.tipo_margen === 'monto_fijo'
+                                  ? 'bg-amber-500 text-slate-950'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              $ Fijo
+                            </button>
+                          </div>
+                        </div>
 
-                    {/* Precio Unitario Público (Editable manualmente + botón redondeo) */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-[10px] font-bold uppercase text-emerald-400">
-                          P. Unitario Público *
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => redondearPrecioOpcion(op._uid, 50)}
-                          className="text-[10px] text-amber-300 hover:underline cursor-pointer"
-                          title="Redondear al múltiplo de $50 superior"
-                        >
-                          Redondear $50
-                        </button>
-                      </div>
-                      <div className="relative">
-                        <span className="absolute left-2.5 top-1.5 text-emerald-400 text-xs font-mono font-bold">$</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={op.precio_unitario_publico}
-                          onChange={(e) =>
-                            actualizarOpcion(op._uid, { precio_unitario_publico: e.target.value })
-                          }
-                          placeholder="0.00"
-                          className="w-full pl-6 pr-2.5 py-1.5 rounded-lg bg-[#161a29] border border-emerald-500/60 text-emerald-300 font-mono text-xs font-black focus:outline-none focus:border-emerald-400"
-                        />
-                      </div>
-                    </div>
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
+                            {op.tipo_margen === 'porcentaje' ? 'Margen (%)' : 'Ganancia ($/llanta)'}
+                          </label>
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={op.valor_margen}
+                            onChange={(e) => actualizarOpcion(op._uid, { valor_margen: e.target.value })}
+                            className="w-full px-2 py-1 rounded-lg bg-[#1e2438] border border-slate-700 text-amber-300 font-mono text-xs font-bold focus:outline-none"
+                          />
+                        </div>
 
-                    {/* Precio por Par (2 llantas) */}
-                    <div className="bg-[#161a29] rounded-lg px-3 py-1.5 border border-slate-700">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] font-bold uppercase text-emerald-400">
+                              P. Unitario *
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => redondearPrecioOpcion(op._uid, 50)}
+                              className="text-[10px] text-amber-300 hover:underline cursor-pointer"
+                              title="Redondear al múltiplo de $50"
+                            >
+                              Redondear $50
+                            </button>
+                          </div>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={op.precio_unitario_publico}
+                            onChange={(e) =>
+                              actualizarOpcion(op._uid, { precio_unitario_publico: e.target.value })
+                            }
+                            placeholder="0.00"
+                            className="w-full px-2 py-1 rounded-lg bg-[#1e2438] border border-emerald-500/60 text-emerald-300 font-mono text-xs font-black focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Fila de Precios Escalonados para el Cliente */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/[0.08]">
+                    {/* 1 Llanta */}
+                    <div className="bg-[#161a29] rounded-xl px-3 py-2 border border-slate-700">
                       <span className="block text-[10px] uppercase font-bold text-slate-400">
-                        Precio por Par (2)
+                        P. Unitario (1 pza)
                       </span>
-                      <span className="font-mono font-black text-xs text-white">
+                      <span className="font-mono font-black text-sm text-white">
+                        ${fmt(precioUnitNum)}
+                      </span>
+                    </div>
+
+                    {/* Par (2 llantas) */}
+                    <div className="bg-[#161a29] rounded-xl px-3 py-2 border border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <span className="block text-[10px] uppercase font-bold text-slate-400">
+                          Par (2 pzas)
+                        </span>
+                        {precioParNum > 0 && (
+                          <span className="text-[10px] text-emerald-400 font-mono">
+                            ${fmt(precioParNum / 2)} c/u
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono font-black text-sm text-emerald-300">
                         ${fmt(precioParNum)}
                       </span>
                     </div>
 
-                    {/* Precio por Juego (4 llantas) */}
-                    <div className="bg-[#161a29] rounded-lg px-3 py-1.5 border border-slate-700">
-                      <span className="block text-[10px] uppercase font-bold text-slate-400">
-                        Juego (4 llantas)
-                      </span>
-                      <span className="font-mono font-black text-xs text-amber-300">
+                    {/* Juego (4 llantas) */}
+                    <div className="bg-[#161a29] rounded-xl px-3 py-2 border border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <span className="block text-[10px] uppercase font-bold text-amber-400">
+                          Juego (4 pzas)
+                        </span>
+                        {precioJuego4Num > 0 && (
+                          <span className="text-[10px] text-amber-300 font-mono">
+                            ${fmt(precioJuego4Num / 4)} c/u
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono font-black text-sm text-amber-300">
                         ${fmt(precioJuego4Num)}
                       </span>
                     </div>
+
+                    {/* Cotización por Cantidad Solicitada */}
+                    <div className="bg-[#161a29] rounded-xl px-3 py-2 border border-[#df000a]/50">
+                      <span className="block text-[10px] uppercase font-bold text-red-300">
+                        Total {cant} llanta{cant > 1 ? 's' : ''}
+                      </span>
+                      <span className="font-mono font-black text-sm text-white">
+                        ${fmt(precioCantNum)}
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Subcard de Meses Sin Intereses (BBVA / Bancos) */}
+                  {mostrarMSI && baseMSI > 0 && (
+                    <div className="bg-[#161a29]/90 rounded-xl p-3 border border-amber-500/20 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                          <i className="ri-bank-card-line text-amber-400"></i>
+                          <span>Financiamiento a 3 Meses Sin Intereses ({cant === 4 ? 'Juego de 4' : `${cant} llantas`})</span>
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          Tarjetas de Crédito Participantes (BBVA / Bancarias)
+                        </span>
+                      </div>
+
+                      <div className="bg-[#1b2032] rounded-lg p-3 border border-slate-700/70 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                        <div>
+                          <span className="block text-xs font-bold text-slate-300 uppercase">
+                            {msiOpciones['3_meses']?.label || '3 Meses Sin Intereses'}
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            Interés ya incluido en el precio
+                          </span>
+                        </div>
+                        <div className="sm:text-right">
+                          <span className="font-mono font-black text-sm sm:text-base text-amber-300">
+                            ${fmt(msiOpciones['3_meses']?.mensualidad)} / mes
+                          </span>
+                          <span className="block text-[11px] text-slate-400 font-mono">
+                            Total: ${fmt(msiOpciones['3_meses']?.total)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1376,34 +1784,59 @@ export default function TabCotizador({ onCargarAlPOS }) {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="space-y-1">
-                          {(cot.opciones || []).map((op) => (
-                            <div key={op.id} className="flex items-center justify-between gap-2 text-xs bg-[#161a29] px-2.5 py-1 rounded border border-white/[0.08]">
-                              <span className="truncate max-w-[200px] text-slate-200">
-                                <strong className="text-white">{op.marca}</strong> {op.modelo} —{' '}
-                                <span className="font-mono font-bold text-emerald-400">
-                                  ${fmt(op.precio_unitario_publico)} c/u
-                                </span>
-                              </span>
-                              {op.producto && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleEnviarOpcionAlPOS(
-                                      op,
-                                      cot.cantidad_requerida,
-                                      cot.cliente,
-                                      cot.vehiculo
-                                    )
-                                  }
-                                  className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold shrink-0 cursor-pointer transition-colors"
-                                  title="Enviar esta opción de stock al carrito del POS"
-                                >
-                                  <i className="ri-shopping-cart-line mr-0.5"></i> POS
-                                </button>
-                              )}
-                            </div>
-                          ))}
+                        <div className="space-y-1.5">
+                          {(cot.opciones || []).map((op) => {
+                            const pu = parseFloat(op.precio_unitario_publico) || 0;
+                            const par = parseFloat(op.precio_par) || Math.round(pu * 2 * 100) / 100;
+                            const j4 = parseFloat(op.precio_juego_4) || Math.round(pu * 4 * 100) / 100;
+                            return (
+                              <div
+                                key={op.id || op._uid || Math.random()}
+                                className="flex items-center justify-between gap-2 text-xs bg-[#161a29] px-2.5 py-1.5 rounded-lg border border-white/[0.08]"
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate text-slate-200">
+                                    <strong className="text-white">{op.marca}</strong> {op.modelo}
+                                    {op.recomendada && (
+                                      <span className="ml-1.5 px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">
+                                        ⭐ Recomendada
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 mt-0.5 text-[11px] font-mono">
+                                    <span className="text-emerald-400 font-bold" title="1 Llanta (P. Unitario real)">
+                                      P. Unit: ${fmt(pu)}
+                                    </span>
+                                    <span className="text-slate-600">•</span>
+                                    <span className="text-sky-300 font-semibold" title="Par (2 piezas)">
+                                      Par (2 pzas): ${fmt(par)}
+                                    </span>
+                                    <span className="text-slate-600">•</span>
+                                    <span className="text-amber-300 font-semibold" title="Juego (4 piezas)">
+                                      Juego (4 pzas): ${fmt(j4)}
+                                    </span>
+                                  </div>
+                                </div>
+                                {op.producto && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleEnviarOpcionAlPOS(
+                                        op,
+                                        cot.cantidad_requerida,
+                                        cot.cliente,
+                                        cot.vehiculo
+                                      )
+                                    }
+                                    className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold shrink-0 cursor-pointer transition-colors flex items-center gap-1 shadow-sm"
+                                    title="Enviar esta opción de stock al carrito del POS"
+                                  >
+                                    <i className="ri-shopping-cart-line mr-0.5"></i> POS
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center whitespace-nowrap">
@@ -1537,6 +1970,24 @@ export default function TabCotizador({ onCargarAlPOS }) {
           </div>
         </div>
       )}
+
+      {/* Modal Tabulador de Rines */}
+      <ModalTabuladorRines
+        isOpen={mostrarModalTabulador}
+        onClose={() => {
+          setMostrarModalTabulador(false);
+          setOpciones((prev) =>
+            prev.map((op) => recalcularOpcion(op, {}, cantidadRequerida, factorInteres))
+          );
+        }}
+        factorInteres={factorInteres}
+        onGuardado={(nuevoTab) => {
+          setTabuladorActual(nuevoTab);
+          setOpciones((prev) =>
+            prev.map((op) => recalcularOpcion(op, {}, cantidadRequerida, factorInteres))
+          );
+        }}
+      />
     </div>
   );
 }

@@ -9,33 +9,52 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'icons/*.svg'],
+      devOptions: {
+        enabled: true,
+      },
+      includeAssets: ['favicon.ico', 'icons/*.svg', 'icons/*.png'],
       manifest: {
+        id: '/',
         name: 'Centro Llantero EmirS',
         short_name: 'EmirS',
         description: 'Sistema de gestión Centro Llantero EmirS',
-        theme_color: '#1f2937',
-        background_color: '#f3f4f6',
+        theme_color: '#0c0e17',
+        background_color: '#0c0e17',
         display: 'standalone',
+        display_override: ['standalone', 'minimal-ui'],
         orientation: 'portrait',
         scope: '/',
         start_url: '/',
         icons: [
           {
+            src: '/icons/icon-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: '/icons/icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: '/icons/icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+          {
             src: '/icons/icon-192.svg',
             sizes: '192x192',
             type: 'image/svg+xml',
+            purpose: 'any',
           },
           {
             src: '/icons/icon-512.svg',
             sizes: '512x512',
             type: 'image/svg+xml',
-          },
-          {
-            src: '/icons/icon-512.svg',
-            sizes: '512x512',
-            type: 'image/svg+xml',
-            purpose: 'maskable',
+            purpose: 'any',
           },
         ],
       },
@@ -67,6 +86,7 @@ export default defineConfig({
     },
   },
   server: {
+    allowedHosts: true,
     host: '0.0.0.0',
     port: 5173,
     proxy: {

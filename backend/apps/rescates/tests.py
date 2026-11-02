@@ -332,3 +332,208 @@ class RescatesModuleTestCase(TestCase):
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Este rescate ya fue cobrado previamente.', res.data['error'])
 
+    def test_cobrar_con_costo_traslado_y_segregacion(self):
+        """Verifica cobro con costo_traslado variable y cálculo de total_servicios y total_productos."""
+        rescate = Rescate.objects.create(
+            folio='RES-000099',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Traslado',
+            telefono_cliente='6141234567',
+            ubicacion_texto='Carretera Km 45',
+            subtotal=Decimal('0.00'),
+            total=Decimal('0.00'),
+            estado='en_proceso'
+        )
+        DetalleRescate.objects.create(
+            rescate=rescate,
+            servicio_rescate=self.servicio,
+            descripcion='Auxilio Carretera',
+            cantidad=1,
+            precio_unitario=Decimal('500.00'),
+            subtotal=Decimal('500.00')
+        )
+        DetalleRescate.objects.create(
+            rescate=rescate,
+            producto=self.producto,
+            descripcion='Llanta Nexen',
+            cantidad=1,
+            precio_unitario=Decimal('1400.00'),
+            subtotal=Decimal('1400.00')
+        )
+
+        url = f'/api/rescates/ordenes/{rescate.id}/cobrar/'
+        payload = {
+            'costo_traslado': '300.00',
+            'distancia_km': '45.5',
+            'metodo_pago': 'efectivo',
+            'descuento': '50.00',
+            'monto_efectivo': '2150.00'
+        }
+        res = self.client.post(url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        rescate.refresh_from_db()
+        self.assertEqual(rescate.costo_traslado, Decimal('300.00'))
+        self.assertEqual(rescate.distancia_km, Decimal('45.50'))
+        self.assertEqual(rescate.total_servicios, Decimal('800.00'))
+        self.assertEqual(rescate.total_productos, Decimal('1400.00'))
+        self.assertEqual(rescate.subtotal, Decimal('2200.00'))
+        self.assertEqual(rescate.total, Decimal('2150.00'))
+
+    def test_cobrar_rechaza_costo_traslado_negativo(self):
+        """Auditoría de integridad: cobrar debe rechazar costo_traslado negativo."""
+        rescate = Rescate.objects.create(
+            folio='RES-SEC-01',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Negativo',
+            telefono_cliente='6145550001',
+            ubicacion_texto='Carretera',
+            vehiculo_marca_modelo='Auto',
+            vehiculo_placas='PL-NEG',
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00'),
+            estado='en_proceso'
+        )
+        url = f'/api/rescates/ordenes/{rescate.id}/cobrar/'
+        payload = {
+            'costo_traslado': '-150.00',
+            'metodo_pago': 'efectivo',
+            'monto_efectivo': '350.00'
+        }
+        res = self.client.post(url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("costo de traslado no puede ser un valor negativo", res.data['error'])
+
+    def test_cobrar_rechaza_distancia_km_negativa(self):
+        """Auditoría de integridad: cobrar debe rechazar distancia_km negativa."""
+        rescate = Rescate.objects.create(
+            folio='RES-SEC-02',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Distancia Negativa',
+            telefono_cliente='6145550002',
+            ubicacion_texto='Carretera',
+            vehiculo_marca_modelo='Auto',
+            vehiculo_placas='PL-NEG2',
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00'),
+            estado='en_proceso'
+        )
+        url = f'/api/rescates/ordenes/{rescate.id}/cobrar/'
+        payload = {
+            'costo_traslado': '150.00',
+            'distancia_km': '-25.0',
+            'metodo_pago': 'efectivo',
+            'monto_efectivo': '650.00'
+        }
+        res = self.client.post(url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("distancia en kilómetros no puede ser un valor negativo", res.data['error'])
+
+    def test_cobrar_rechaza_descuento_negativo(self):
+        """Auditoría de integridad: cobrar debe rechazar descuento negativo."""
+        rescate = Rescate.objects.create(
+            folio='RES-SEC-03',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Descuento Negativo',
+            telefono_cliente='6145550003',
+            ubicacion_texto='Carretera',
+            vehiculo_marca_modelo='Auto',
+            vehiculo_placas='PL-NEG3',
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00'),
+            estado='en_proceso'
+        )
+        url = f'/api/rescates/ordenes/{rescate.id}/cobrar/'
+        payload = {
+            'costo_traslado': '100.00',
+            'descuento': '-50.00',
+            'metodo_pago': 'efectivo',
+            'monto_efectivo': '650.00'
+        }
+        res = self.client.post(url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("descuento no puede ser un valor negativo", res.data['error'])
+
+    def test_cobrar_rechaza_doble_cobro(self):
+        """Auditoría de integridad: rescate ya completado no puede ser vuelto a cobrar."""
+        rescate = Rescate.objects.create(
+            folio='RES-SEC-04',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Doble Cobro',
+            telefono_cliente='6145550004',
+            ubicacion_texto='Carretera',
+            vehiculo_marca_modelo='Auto',
+            vehiculo_placas='PL-NEG4',
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00'),
+            estado='completado',
+            fecha_cierre=timezone.now()
+        )
+        url = f'/api/rescates/ordenes/{rescate.id}/cobrar/'
+        payload = {
+            'metodo_pago': 'efectivo',
+            'monto_efectivo': '500.00'
+        }
+        res = self.client.post(url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("ya fue cobrado previamente", res.data['error'])
+
+    def test_segregacion_comisiones_llantas_rescates(self):
+        """Segregación contable: llantas en rescates no generan comisiones indebidas al operador."""
+        # Operador con comisión de auxilio vial configurada sólo para servicios
+        self.assertEqual(self.servicio.comision_operador, Decimal('100.00'))
+
+        # Crear rescate con servicio + llanta
+        rescate = Rescate.objects.create(
+            folio='RES-COM-01',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Segregación',
+            telefono_cliente='6145559988',
+            ubicacion_texto='Av. Tecnologico',
+            vehiculo_marca_modelo='Nissan Versa',
+            vehiculo_placas='PL-SEG',
+            subtotal=Decimal('1850.00'),
+            total=Decimal('1850.00'),
+            estado='en_proceso'
+        )
+        det_servicio = DetalleRescate.objects.create(
+            rescate=rescate,
+            servicio_rescate=self.servicio,
+            descripcion='Servicio de Auxilio',
+            cantidad=1,
+            precio_unitario=Decimal('450.00'),
+            subtotal=Decimal('450.00')
+        )
+        det_llanta = DetalleRescate.objects.create(
+            rescate=rescate,
+            producto=self.producto,
+            descripcion=self.producto.descripcion_completa,
+            cantidad=1,
+            precio_unitario=Decimal('1400.00'),
+            subtotal=Decimal('1400.00')
+        )
+        # El detalle de llanta no tiene servicio_rescate asignado
+        self.assertIsNone(det_llanta.servicio_rescate)
+
+        # Cobrar rescate
+        url = f'/api/rescates/ordenes/{rescate.id}/cobrar/'
+        payload = {
+            'metodo_pago': 'efectivo',
+            'monto_efectivo': '1850.00'
+        }
+        res = self.client.post(url, payload, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Confirmar en Balance Global que los 1400.00 de la llanta van al taller
+        res_bg = self.client.get('/api/reportes/balance-global/')
+        self.assertEqual(res_bg.status_code, status.HTTP_200_OK)
+        # El subtotal de la llanta (1400.00) se suma a ingresos_taller
+        taller_ingresos = res_bg.data['resumen_ejecutivo']['ingresos_taller']
+        self.assertGreaterEqual(taller_ingresos, 1400.00)
+

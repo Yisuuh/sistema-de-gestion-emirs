@@ -20,5 +20,7 @@ urlpatterns = [
     path('', include(router.urls)),
     path('importar-xml/', ImportarXMLView.as_view(), name='importar-xml'),
     path('adeudos/', AdeudosResumenView.as_view(), name='adeudos-resumen'),
+    path('adeudos/facturas-vencimiento/', EntradaInventarioViewSet.as_view({'get': 'facturas_vencimiento'}), name='adeudos-facturas-vencimiento'),
+    path('adeudos/facturas_vencimiento/', EntradaInventarioViewSet.as_view({'get': 'facturas_vencimiento'}), name='adeudos-facturas-vencimiento-und'),
     path('adeudos/<int:proveedor_id>/', AdeudoProveedorDetalleView.as_view(), name='adeudo-proveedor'),
 ]

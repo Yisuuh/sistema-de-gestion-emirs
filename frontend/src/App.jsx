@@ -21,6 +21,8 @@ const Gastos       = lazy(() => import('./pages/gastos/Gastos'))
 const Facturacion  = lazy(() => import('./pages/facturacion/Facturacion'))
 const Reportes     = lazy(() => import('./pages/reportes/Reportes'))
 const Rescates     = lazy(() => import('./pages/rescates/Rescates'))
+const Usuarios     = lazy(() => import('./pages/usuarios/Usuarios'))
+const AutorizarSolicitud = lazy(() => import('./pages/autorizar/AutorizarSolicitud'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,7 +43,7 @@ function PageLoader() {
   )
 }
 
-// Componente para proteger rutas
+// Componente para proteger rutas generales autenticadas
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
   
@@ -52,6 +54,15 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+// Componente para restringir acceso exclusivo a Administradores
+function AdminRoute({ children }) {
+  const rol = localStorage.getItem('rol');
+  if (rol !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -59,6 +70,9 @@ function App() {
       <BrowserRouter>
         <Suspense fallback={<PageLoader />}>
         <Routes>
+          {/* Pantalla Móvil de Autorización Remota (Pública con Token) */}
+          <Route path="/autorizar/:token" element={<AutorizarSolicitud />} />
+
           {/* Auth Routes */}
           <Route path="/auth" element={<AuthLayout />}>
             <Route path="login" element={<Login />} />
@@ -78,7 +92,16 @@ function App() {
             <Route path="rescates" element={<Rescates />} />
             <Route path="caja" element={<Caja />} />
             <Route path="clientes" element={<Clientes />} />
-            <Route path="nomina" element={<Nomina />} />
+            <Route path="nomina" element={
+              <AdminRoute>
+                <Nomina />
+              </AdminRoute>
+            } />
+            <Route path="usuarios" element={
+              <AdminRoute>
+                <Usuarios />
+              </AdminRoute>
+            } />
             <Route path="gastos" element={<Gastos />} />
             <Route path="facturacion" element={<Facturacion />} />
             <Route path="reportes" element={<Reportes />} />

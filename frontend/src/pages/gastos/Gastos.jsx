@@ -38,8 +38,17 @@ const GASTO_VACIO = {
 const METODOS = [
   { value: 'efectivo', label: 'Efectivo' },
   { value: 'transferencia', label: 'Transferencia' },
-  { value: 'tarjeta', label: 'Tarjeta' },
+  { value: 'tarjeta_debito', label: 'Tarjeta de Débito' },
+  { value: 'tarjeta_credito', label: 'Tarjeta de Crédito' },
 ];
+
+const METODO_BADGES = {
+  efectivo: { label: 'Efectivo', cls: 'bg-green-100 text-green-800 border-green-200' },
+  transferencia: { label: 'Transferencia', cls: 'bg-red-100 text-[#a80008] border-red-200' },
+  tarjeta_debito: { label: 'Tarj. Débito', cls: 'bg-blue-100 text-blue-800 border-blue-200' },
+  tarjeta_credito: { label: 'Tarj. Crédito', cls: 'bg-purple-100 text-purple-800 border-purple-200' },
+  tarjeta: { label: 'Tarjeta', cls: 'bg-purple-100 text-purple-800 border-purple-200' },
+};
 
 export default function Gastos() {
   const confirm = useConfirm();
@@ -429,11 +438,8 @@ export default function Gastos() {
                     <td className="px-4 py-2 text-gray-500">{g.categoria_nombre ?? '—'}</td>
                     <td className="px-4 py-2 text-right font-semibold text-red-700 tabular-nums">{fmt(g.monto)}</td>
                     <td className="px-4 py-2 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium
-                        ${g.metodo_pago === 'efectivo' ? 'bg-green-100 text-green-800'
-                          : g.metodo_pago === 'transferencia' ? 'bg-red-100 text-[#a80008]'
-                          : 'bg-purple-100 text-purple-800'}`}>
-                        {g.metodo_pago}
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${METODO_BADGES[g.metodo_pago]?.cls || 'bg-gray-100 text-gray-800 border-gray-200'}`}>
+                        {METODO_BADGES[g.metodo_pago]?.label || g.metodo_pago}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-gray-500">{g.responsable_nombre ?? '—'}</td>

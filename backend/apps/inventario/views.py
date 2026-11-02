@@ -1,5 +1,6 @@
 import re
 import csv
+import math
 import xml.etree.ElementTree as ET
 from decimal import Decimal
 
@@ -10,9 +11,11 @@ from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
+from datetime import datetime, timedelta
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Sum, Max, OuterRef, Subquery, Q
+from django.db.models import Sum, Max, OuterRef, Subquery, Q, F
 from django.http import HttpResponse
 
 from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
@@ -23,6 +26,51 @@ from .serializers import (
 )
 
 INDICES_VELOCIDAD_VALIDOS = ['T', 'H', 'V', 'W', 'Y', 'Z']
+
+
+def _calcular_precio_venta_sugerido(precio_compra, medida: str = '') -> Decimal:
+    """
+    Calcula el precio de venta sugerido basado en el Tabulador de Utilidad por Rin oficial de EmirS.
+    """
+    precio_compra = Decimal(str(precio_compra))
+    if precio_compra <= Decimal('0'):
+        raise ValueError("El precio de compra debe ser mayor a 0.")
+    rin = 16
+    if medida:
+        match_r = re.search(r'R\s*(\d{2}(?:\.\d+)?)', medida, re.IGNORECASE)
+        if match_r:
+            try:
+                rin = int(float(match_r.group(1)))
+            except ValueError:
+                pass
+        else:
+            # Si no detecta letra R, buscar 2 dígitos de rin (13 a 24)
+            matches = re.findall(r'\b(1[3-9]|2[0-4])\b', medida)
+            if matches:
+                rin = int(matches[-1])
+            else:
+                match_digits = re.search(r'(1[3-9]|2[0-4])', medida)
+                if match_digits:
+                    rin = int(match_digits.group(1))
+
+    if rin <= 15:
+        m1 = 400
+    elif rin == 16:
+        m1 = 450
+    elif rin in (17, 18):
+        m1 = 700
+    elif rin >= 19:
+        m1 = 850
+    else:
+        m1 = 450
+
+    factor_financiamiento = Decimal('1.0790')
+    costo_con_iva = precio_compra * Decimal('1.16')
+    costo_financiado = costo_con_iva * factor_financiamiento
+    m1_financiado = Decimal(str(m1)) * factor_financiamiento
+    base_total = float(costo_financiado + m1_financiado)
+    precio_redondeado = math.ceil(math.floor(base_total) / 5.0) * 5
+    return Decimal(str(precio_redondeado)).quantize(Decimal('0.01'))
 
 
 def _parsear_descripcion_llanta(descripcion: str, codigo: str) -> dict:
@@ -90,6 +138,26 @@ def _parsear_cfdi(xml_bytes: bytes) -> dict:
     numero_factura = f"{serie}{folio}".strip() or folio
     fecha_compra = fecha[:10] if fecha else None  # YYYY-MM-DD
 
+    # Condiciones de pago y crédito en CFDI
+    condiciones_pago = root.get('CondicionesDePago', '').strip()
+    metodo_pago_cfdi = root.get('MetodoPago', '').strip()
+    dias_credito = None
+    if condiciones_pago:
+        match_dias = re.search(r'(\d+)\s*(?:d[ií]as|d\b)?', condiciones_pago, re.IGNORECASE)
+        if match_dias:
+            try:
+                dias_credito = int(match_dias.group(1))
+            except ValueError:
+                pass
+
+    fecha_vencimiento = None
+    if fecha_compra and dias_credito and dias_credito > 0:
+        try:
+            base_date = datetime.strptime(fecha_compra, '%Y-%m-%d').date()
+            fecha_vencimiento = (base_date + timedelta(days=dias_credito)).isoformat()
+        except Exception:
+            pass
+
     emisor = root.find('cfdi:Emisor', ns)
     proveedor_nombre = emisor.get('Nombre', '').strip() if emisor is not None else ''
     proveedor_rfc = emisor.get('Rfc', '').strip() if emisor is not None else ''
@@ -105,18 +173,24 @@ def _parsear_cfdi(xml_bytes: bytes) -> dict:
         precio_compra = round(float(valor_unitario_raw), 4)
 
         info = _parsear_descripcion_llanta(descripcion, codigo)
+        precio_sug = _calcular_precio_venta_sugerido(Decimal(str(precio_compra)), info.get('medida', ''))
 
         items.append({
             'codigo': codigo,
             'descripcion': descripcion,
             'cantidad': cantidad,
             'precio_compra': precio_compra,
+            'precio_venta_sugerido': float(precio_sug),
             **info,
         })
 
     return {
         'numero_factura': numero_factura,
         'fecha_compra': fecha_compra,
+        'fecha_vencimiento': fecha_vencimiento,
+        'dias_credito': dias_credito,
+        'condiciones_de_pago': condiciones_pago,
+        'metodo_pago_cfdi': metodo_pago_cfdi,
         'subtotal': subtotal,
         'total': total,
         'proveedor': {
@@ -160,6 +234,8 @@ class ImportarXMLView(APIView):
             return Response({'accion': 'preview', 'datos': datos})
 
         if accion == 'guardar':
+            if not (getattr(request.user, 'rol', None) == 'admin' or request.user.is_staff or request.user.is_superuser):
+                raise PermissionDenied('Solo los administradores pueden importar facturas y registrar productos en inventario.')
             try:
                 resultado = self._guardar(datos, request.user)
                 return Response({'accion': 'guardado', 'resultado': resultado})
@@ -179,6 +255,9 @@ class ImportarXMLView(APIView):
                 'activo': True,
             },
         )
+        if proveedor.dias_credito == 0 and datos.get('dias_credito'):
+            proveedor.dias_credito = datos['dias_credito']
+            proveedor.save(update_fields=['dias_credito'])
 
         resultados = []
         for item in datos['items']:
@@ -191,9 +270,22 @@ class ImportarXMLView(APIView):
             if iv not in INDICES_VELOCIDAD_VALIDOS:
                 iv = 'H'
 
+            cantidad = int(item.get('cantidad', 0))
+            if cantidad <= 0:
+                raise ValueError(f"La cantidad para el producto '{item.get('codigo', '')}' debe ser mayor a 0.")
+
             precio_compra = Decimal(str(item['precio_compra']))
-            # Precio de venta sugerido con 30 % de margen (ajustable)
-            precio_venta_sugerido = (precio_compra * Decimal('1.30')).quantize(Decimal('0.01'))
+            if precio_compra <= Decimal('0'):
+                raise ValueError(f"El precio de compra para el producto '{item.get('codigo', '')}' debe ser mayor a 0.")
+
+            precio_venta_sugerido = _calcular_precio_venta_sugerido(precio_compra, item.get('medida', ''))
+            precio_venta_final = (
+                Decimal(str(item['precio_venta'])).quantize(Decimal('0.01'))
+                if item.get('precio_venta')
+                else precio_venta_sugerido
+            )
+            if precio_venta_final <= Decimal('0'):
+                raise ValueError(f"El precio de venta para el producto '{item.get('codigo', '')}' debe ser mayor a 0.")
 
             producto, producto_creado = Producto.objects.get_or_create(
                 codigo=item['codigo'],
@@ -203,11 +295,14 @@ class ImportarXMLView(APIView):
                     'modelo': item.get('modelo', ''),
                     'indice_carga': item.get('indice_carga', 82),
                     'indice_velocidad': iv,
-                    'precio_venta': precio_venta_sugerido,
+                    'precio_venta': precio_venta_final,
                     'stock_minimo': 2,
                     'activo': True,
                 },
             )
+            if not producto_creado:
+                producto.precio_venta = precio_venta_final
+                producto.save(update_fields=['precio_venta'])
 
             # ── Entrada de inventario ─────────────────────────────────────────────
             entrada = EntradaInventario.objects.create(
@@ -216,6 +311,7 @@ class ImportarXMLView(APIView):
                 cantidad=item['cantidad'],
                 precio_compra=precio_compra,
                 fecha_compra=datos['fecha_compra'],
+                fecha_vencimiento=datos.get('fecha_vencimiento'),
                 numero_factura=datos['numero_factura'],
                 en_inventario=True,
                 created_by=usuario,
@@ -226,6 +322,7 @@ class ImportarXMLView(APIView):
                 'descripcion': item['descripcion'],
                 'cantidad': item['cantidad'],
                 'precio_compra': float(precio_compra),
+                'precio_venta': float(precio_venta_final),
                 'producto_creado': producto_creado,
                 'producto_id': producto.id,
                 'entrada_id': entrada.id,
@@ -272,17 +369,43 @@ def _calcular_adeudo_proveedor(proveedor):
     # Agrupar entradas por número de factura
     facturas: dict = {}
     monto_total_deuda = Decimal('0')
+    hoy = timezone.localdate()
 
     for entrada in entradas:
-        key = entrada.numero_factura
+        num_factura = (entrada.numero_factura or '').strip()
+        fol_remision = (entrada.folio_remision or '').strip()
+
+        if num_factura:
+            key = f"FAC-{num_factura}"
+            etiqueta = num_factura
+        elif fol_remision:
+            key = f"REM-{fol_remision}"
+            etiqueta = f"Remisión: {fol_remision}"
+        else:
+            key = f"ENT-{entrada.id}"
+            etiqueta = f"Entrada #{entrada.id} (Sin Factura)"
+
         if key not in facturas:
+            fv = entrada.fecha_vencimiento
+            if not fv and proveedor and proveedor.dias_credito > 0:
+                base_d = entrada.fecha_factura or entrada.fecha_compra or hoy
+                fv = base_d + timedelta(days=proveedor.dias_credito)
+
             facturas[key] = {
-                'numero_factura': entrada.numero_factura,
+                'key': key,
+                'numero_factura': etiqueta,
+                'folio_remision': fol_remision,
                 'fecha_compra': str(entrada.fecha_compra),
+                'fecha_vencimiento': fv,
                 'monto_total': Decimal('0'),
                 'monto_vendido': Decimal('0'),
                 'items': [],
             }
+        else:
+            if entrada.fecha_vencimiento and not facturas[key].get('fecha_vencimiento'):
+                facturas[key]['fecha_vencimiento'] = entrada.fecha_vencimiento
+            if fol_remision and not facturas[key].get('folio_remision'):
+                facturas[key]['folio_remision'] = fol_remision
 
         monto_linea = entrada.cantidad * entrada.precio_compra
 
@@ -307,6 +430,8 @@ def _calcular_adeudo_proveedor(proveedor):
             estado_stock = 'disponible'
 
         facturas[key]['items'].append({
+            'key': key,
+            'numero_factura': etiqueta,
             'entrada_id': entrada.id,
             'producto_id': entrada.producto_id,
             'producto_codigo': entrada.producto.codigo,
@@ -324,15 +449,72 @@ def _calcular_adeudo_proveedor(proveedor):
         facturas[key]['monto_vendido'] += monto_vendido_linea
         monto_total_deuda += monto_linea
 
+    # Pagos registrados
+    pagos_qs = PagoProveedor.objects.filter(proveedor=proveedor).order_by('-fecha', '-created_at')
+
+    for f in facturas.values():
+        num_fac = f.get('numero_factura', '').strip()
+        key = f.get('key', '').strip()
+        folio_rem = f.get('folio_remision', '').strip() if f.get('folio_remision') else ''
+
+        candidatos = {c.strip().upper() for c in [num_fac, key, folio_rem, f"REM-{folio_rem}" if folio_rem else ""] if c and c.strip()}
+        pagos_factura = [p for p in pagos_qs if p.numero_factura and p.numero_factura.strip().upper() in candidatos]
+
+        monto_pagado_fac = sum(Decimal(str(p.monto)) for p in pagos_factura)
+        saldo_pendiente_fac = max(Decimal('0.00'), f['monto_total'] - monto_pagado_fac)
+
+        fv = f.get('fecha_vencimiento')
+        if fv:
+            if isinstance(fv, str):
+                try:
+                    fv = datetime.strptime(fv, '%Y-%m-%d').date()
+                except Exception:
+                    pass
+            try:
+                dias_restantes = (fv - hoy).days
+            except Exception:
+                dias_restantes = None
+        else:
+            dias_restantes = None
+
+        if saldo_pendiente_fac <= Decimal('0.00'):
+            estado_fac = 'pagada'
+        elif dias_restantes is not None and dias_restantes < 0 and saldo_pendiente_fac > Decimal('0.00'):
+            estado_fac = 'vencida'
+        elif monto_pagado_fac > Decimal('0.00') and saldo_pendiente_fac > Decimal('0.00'):
+            estado_fac = 'abono_parcial'
+        else:
+            estado_fac = 'vigente'
+
+        f['monto_pagado'] = float(monto_pagado_fac)
+        f['saldo_pendiente'] = float(saldo_pendiente_fac)
+        f['fecha_vencimiento'] = str(fv) if fv else None
+        f['dias_restantes'] = dias_restantes
+        f['estado'] = estado_fac
+        f['pagos'] = [
+            {
+                'id': p.id,
+                'fecha': str(p.fecha),
+                'monto': float(p.monto),
+                'metodo_pago': p.metodo_pago,
+                'referencia': p.referencia,
+                'comprobante': p.comprobante.url if p.comprobante else None,
+                'notas': p.notas,
+            }
+            for p in pagos_factura
+        ]
+
+    monto_total_deuda = sum(Decimal(str(f['monto_total'])) for f in facturas.values())
+    monto_total_pagado = pagos_qs.aggregate(t=Sum('monto'))['t'] or Decimal('0.00')
+    saldo_pendiente_total = max(Decimal('0.00'), monto_total_deuda - monto_total_pagado)
+    cuenta_vencida = sum(Decimal(str(f['saldo_pendiente'])) for f in facturas.values() if f.get('estado') == 'vencida')
+    cuenta_vencida = min(cuenta_vencida, saldo_pendiente_total)
+    cuenta_corriente = max(Decimal('0.00'), saldo_pendiente_total - cuenta_vencida)
+
     # Convertir montos a float para la respuesta JSON
     for f in facturas.values():
         f['monto_total'] = float(f['monto_total'])
         f['monto_vendido'] = float(f['monto_vendido'])
-
-    # Pagos registrados
-    pagos_qs = PagoProveedor.objects.filter(proveedor=proveedor).order_by('-fecha')
-    monto_pagado = pagos_qs.aggregate(t=Sum('monto'))['t'] or Decimal('0')
-    saldo_pendiente = monto_total_deuda - monto_pagado
 
     pagos_lista = [
         {
@@ -354,8 +536,11 @@ def _calcular_adeudo_proveedor(proveedor):
         'proveedor_telefono': proveedor.telefono,
         'total_facturas': len(facturas),
         'monto_total_deuda': float(monto_total_deuda),
-        'monto_pagado': float(monto_pagado),
-        'saldo_pendiente': float(saldo_pendiente),
+        'monto_pagado': float(monto_total_pagado),
+        'saldo_pendiente': float(saldo_pendiente_total),
+        'cuenta_vencida': float(cuenta_vencida),
+        'cuenta_corriente': float(cuenta_corriente),
+        'saldo_pendiente_total': float(saldo_pendiente_total),
         'facturas': sorted(facturas.values(), key=lambda x: x['fecha_compra'], reverse=True),
         'pagos': pagos_lista,
     }
@@ -381,10 +566,14 @@ class AdeudosResumenView(APIView):
         total_deuda_global = sum(r['monto_total_deuda'] for r in resultado)
         total_pagado_global = sum(r['monto_pagado'] for r in resultado)
         saldo_global = sum(r['saldo_pendiente'] for r in resultado)
+        total_cuenta_corriente_global = sum(r['cuenta_corriente'] for r in resultado)
+        total_cuenta_vencida_global = sum(r['cuenta_vencida'] for r in resultado)
         return Response({
             'total_deuda_global': total_deuda_global,
             'total_pagado_global': total_pagado_global,
             'saldo_global': saldo_global,
+            'total_cuenta_corriente_global': total_cuenta_corriente_global,
+            'total_cuenta_vencida_global': total_cuenta_vencida_global,
             'proveedores': resultado,
         })
 
@@ -521,7 +710,40 @@ class ProductoViewSet(viewsets.ModelViewSet):
                 q_filter |= Q(medida__icontains=v)
             qs = qs.filter(q_filter)
 
+        activos = self.request.query_params.get('activos')
+        if activos is not None:
+            if activos.lower() in ('true', '1', 't'):
+                qs = qs.filter(activo=True)
+            elif activos.lower() in ('false', '0', 'f'):
+                qs = qs.filter(activo=False)
+
         return qs
+
+    def _verificar_rol_admin(self, user):
+        if not (getattr(user, 'rol', None) == 'admin' or user.is_staff or user.is_superuser):
+            raise PermissionDenied('Solo los administradores pueden crear, modificar o eliminar productos.')
+
+    def create(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        instance = self.get_object()
+        if instance.entradas.exists() or instance.salidas.exists():
+            return Response(
+                {'error': 'No se puede eliminar definitivamente un producto con historial de entradas o ventas. Desactívelo o archívelo en su lugar.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=False, methods=['get'])
     def stock_bajo(self, request):
@@ -544,7 +766,13 @@ class ProductoViewSet(viewsets.ModelViewSet):
         Vista consolidada: entradas_total, salidas_total, stock_actual,
         ultimo_precio_compra, precio_venta, precio_descuento por producto.
         """
-        productos = self.get_queryset().filter(activo=True)
+        activo_param = (request.query_params.get('activo') or 'true').strip().lower()
+        if activo_param in ('false', '0'):
+            productos = self.get_queryset().filter(activo=False)
+        elif activo_param in ('all', 'todos'):
+            productos = self.get_queryset()
+        else:
+            productos = self.get_queryset().filter(activo=True)
 
         # Último precio de compra por producto
         ultimo_precio_qs = (
@@ -589,9 +817,11 @@ class ProductoViewSet(viewsets.ModelViewSet):
                 'codigo': p.codigo,
                 'medida': p.medida,
                 'marca': p.marca.nombre,
+                'marca_id': p.marca_id,
                 'modelo': p.modelo,
                 'indice_carga': p.indice_carga,
                 'indice_velocidad': p.indice_velocidad,
+                'activo': p.activo,
                 'entradas_total': entradas_total,
                 'salidas_total': salidas_total,
                 'stock_actual': stock,
@@ -748,6 +978,26 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
             qs = qs.filter(fecha_compra__lte=fecha_fin)
         return qs
 
+    def _verificar_rol_admin(self, user):
+        if not (getattr(user, 'rol', None) == 'admin' or user.is_staff or user.is_superuser):
+            raise PermissionDenied('Solo los administradores pueden crear o modificar entradas de inventario.')
+
+    def create(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().destroy(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
@@ -757,6 +1007,7 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
         POST /api/inventario/entradas/{id}/vincular_factura/
         Vincula número de factura, fecha y/o archivo de factura a una entrada.
         """
+        self._verificar_rol_admin(request.user)
         entrada = self.get_object()
         numero_factura = request.data.get('numero_factura')
         if not numero_factura:
@@ -787,6 +1038,7 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
         POST /api/inventario/entradas/vincular_factura_lote/
         Vincula una misma factura a múltiples entradas.
         """
+        self._verificar_rol_admin(request.user)
         entrada_ids = request.data.get('entrada_ids', [])
         numero_factura = request.data.get('numero_factura')
         fecha_factura = request.data.get('fecha_factura')
@@ -814,6 +1066,128 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
             'actualizados': actualizados,
             'numero_factura': numero_factura,
         })
+
+    @action(detail=False, methods=['get'])
+    def facturas_vencimiento(self, request):
+        """
+        GET /api/inventario/entradas/facturas_vencimiento/?dias=7
+        Retorna las facturas con saldo pendiente > 0, calculando:
+        id, numero_factura, folio_remision, proveedor_nombre, proveedor_id,
+        monto_total, saldo_pendiente, fecha_factura, fecha_vencimiento,
+        dias_restantes y estado_alerta ('vencida', 'por_vencer', 'al_dia').
+        """
+        try:
+            dias_limite = int(request.query_params.get('dias', 7))
+        except (ValueError, TypeError):
+            dias_limite = 7
+
+        hoy = timezone.localdate()
+
+        entradas = (
+            EntradaInventario.objects
+            .select_related('proveedor')
+            .order_by('fecha_compra', 'created_at')
+        )
+
+        facturas_map = {}
+        for entrada in entradas:
+            clave = (
+                entrada.proveedor_id,
+                entrada.numero_factura.strip() if entrada.numero_factura else (
+                    f"REM-{entrada.folio_remision.strip()}" if entrada.folio_remision else f"ENT-{entrada.id}"
+                )
+            )
+            monto_linea = entrada.cantidad * entrada.precio_compra
+
+            if clave not in facturas_map:
+                fv = entrada.fecha_vencimiento
+                if not fv and entrada.proveedor and entrada.proveedor.dias_credito > 0:
+                    base_d = entrada.fecha_factura or entrada.fecha_compra or hoy
+                    fv = base_d + timedelta(days=entrada.proveedor.dias_credito)
+
+                facturas_map[clave] = {
+                    'id': entrada.id,
+                    'numero_factura': entrada.numero_factura or '',
+                    'folio_remision': entrada.folio_remision or '',
+                    'proveedor_id': entrada.proveedor_id,
+                    'proveedor_nombre': entrada.proveedor.nombre,
+                    'monto_total': Decimal('0.00'),
+                    'fecha_factura': entrada.fecha_factura or entrada.fecha_compra,
+                    'fecha_vencimiento': fv,
+                }
+
+            facturas_map[clave]['monto_total'] += monto_linea
+            if entrada.fecha_vencimiento and not facturas_map[clave]['fecha_vencimiento']:
+                facturas_map[clave]['fecha_vencimiento'] = entrada.fecha_vencimiento
+
+        resultado = []
+        for clave, fac in facturas_map.items():
+            prov_id = fac['proveedor_id']
+            num_fac = fac['numero_factura']
+            monto_total = fac['monto_total']
+
+            pagos_directos = Decimal('0.00')
+            if num_fac:
+                pagos_directos = PagoProveedor.objects.filter(
+                    proveedor_id=prov_id,
+                    numero_factura__iexact=num_fac
+                ).aggregate(t=Sum('monto'))['t'] or Decimal('0.00')
+
+            saldo_pendiente = max(Decimal('0.00'), monto_total - pagos_directos)
+
+            total_deuda_prov = EntradaInventario.objects.filter(proveedor_id=prov_id).aggregate(
+                t=Sum(F('cantidad') * F('precio_compra'))
+            )['t'] or Decimal('0.00')
+            total_pagos_prov = PagoProveedor.objects.filter(proveedor_id=prov_id).aggregate(
+                t=Sum('monto')
+            )['t'] or Decimal('0.00')
+            saldo_global_prov = max(Decimal('0.00'), total_deuda_prov - total_pagos_prov)
+
+            if saldo_global_prov == Decimal('0.00'):
+                saldo_pendiente = Decimal('0.00')
+            elif saldo_pendiente > saldo_global_prov:
+                saldo_pendiente = saldo_global_prov
+
+            if saldo_pendiente <= Decimal('0.00'):
+                continue
+
+            fv = fac['fecha_vencimiento']
+            if fv:
+                dias_restantes = (fv - hoy).days
+                if dias_restantes < 0:
+                    estado_alerta = 'vencida'
+                elif dias_restantes <= dias_limite:
+                    estado_alerta = 'por_vencer'
+                else:
+                    estado_alerta = 'al_dia'
+            else:
+                dias_restantes = None
+                estado_alerta = 'al_dia'
+
+            resultado.append({
+                'id': fac['id'],
+                'numero_factura': fac['numero_factura'],
+                'folio_remision': fac['folio_remision'],
+                'proveedor_nombre': fac['proveedor_nombre'],
+                'proveedor_id': fac['proveedor_id'],
+                'monto_total': float(monto_total),
+                'saldo_pendiente': float(saldo_pendiente),
+                'fecha_factura': str(fac['fecha_factura']) if fac['fecha_factura'] else None,
+                'fecha_vencimiento': str(fv) if fv else None,
+                'dias_restantes': dias_restantes,
+                'estado_alerta': estado_alerta,
+            })
+
+        vencidas = [f for f in resultado if f['estado_alerta'] == 'vencida']
+        vencidas.sort(key=lambda x: x['dias_restantes'] if x['dias_restantes'] is not None else -9999)
+
+        por_vencer = [f for f in resultado if f['estado_alerta'] != 'vencida']
+        por_vencer.sort(key=lambda x: x['dias_restantes'] if x['dias_restantes'] is not None else 9999)
+
+        resultado = vencidas + por_vencer
+
+        return Response(resultado)
+
 
 
 class SalidaInventarioViewSet(viewsets.ReadOnlyModelViewSet):

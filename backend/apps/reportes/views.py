@@ -372,9 +372,7 @@ class BalanceGlobalView(APIView):
             electronico=Sum('monto_electronico'),
             cantidad=Count('id')
         )
-        ingresos_taller = float(ventas_agg['total'] or 0)
-        num_ventas = int(ventas_agg['cantidad'] or 0)
-        ticket_prom_taller = ingresos_taller / num_ventas if num_ventas > 0 else 0
+        ventas_taller_base = float(ventas_agg['total'] or 0)
 
         # ── 2. Ingresos Rescates Viales ───────────────────────────────────────
         rescates_qs = Rescate.objects.filter(
@@ -387,8 +385,21 @@ class BalanceGlobalView(APIView):
             electronico=Sum('monto_electronico'),
             cantidad=Count('id')
         )
-        ingresos_rescates = float(rescates_agg['total'] or 0)
+        rescates_total_bruto = float(rescates_agg['total'] or 0)
         num_rescates = int(rescates_agg['cantidad'] or 0)
+
+        # Segregación contable: llantas vendidas en rescates se computan en ingresos de ventas del taller
+        from apps.rescates.models import DetalleRescate
+        llantas_rescates_monto = float(
+            DetalleRescate.objects.filter(
+                rescate__in=rescates_qs,
+                producto__isnull=False
+            ).aggregate(t=Sum('subtotal'))['t'] or 0
+        )
+        ingresos_taller = ventas_taller_base + llantas_rescates_monto
+        ingresos_rescates = max(0.0, rescates_total_bruto - llantas_rescates_monto)
+        num_ventas = int(ventas_agg['cantidad'] or 0)
+        ticket_prom_taller = ingresos_taller / num_ventas if num_ventas > 0 else 0
         ticket_prom_rescates = ingresos_rescates / num_rescates if num_rescates > 0 else 0
 
         total_ingresos = ingresos_taller + ingresos_rescates
@@ -636,7 +647,7 @@ class ReportePDF(APIView):
             electronico=Sum('monto_electronico'),
             cantidad=Count('id'),
         )
-        venta_total_f = float(v_total['total'] or 0)
+        venta_taller_base = float(v_total['total'] or 0)
 
         # Rescates Viales
         rescates_qs = Rescate.objects.filter(
@@ -649,7 +660,18 @@ class ReportePDF(APIView):
             electronico=Sum('monto_electronico'),
             cantidad=Count('id')
         )
-        rescate_total_f = float(r_total['total'] or 0)
+        rescate_total_bruto = float(r_total['total'] or 0)
+
+        # Segregación contable de ingresos
+        from apps.rescates.models import DetalleRescate
+        llantas_rescates_monto = float(
+            DetalleRescate.objects.filter(
+                rescate__in=rescates_qs,
+                producto__isnull=False
+            ).aggregate(t=Sum('subtotal'))['t'] or 0
+        )
+        venta_total_f = venta_taller_base + llantas_rescates_monto
+        rescate_total_f = max(0.0, rescate_total_bruto - llantas_rescates_monto)
         total_ingresos_f = venta_total_f + rescate_total_f
 
         # Top productos vendidos
@@ -779,7 +801,7 @@ class ReportePDF(APIView):
                 ParagraphStyle('Period', parent=NORMAL, fontSize=9),
             ),
             Paragraph(
-                f'Generado: {timezone.now().strftime("%d/%m/%Y %H:%M")}',
+                f'Generado: {timezone.now().strftime("%d/%m/%Y")}',
                 ParagraphStyle('Gen', parent=NORMAL, fontSize=8, textColor=GRAY),
             ),
         ]
@@ -974,7 +996,7 @@ class ReportePDF(APIView):
         story.append(Spacer(1, 0.2*cm))
         story.append(Paragraph(
             f'Centro Llantero <font color="#df000a"><b>EmirS</b></font> '
-            f'— Generado el {timezone.now().strftime("%d/%m/%Y %H:%M")}',
+            f'— Generado el {timezone.now().strftime("%d/%m/%Y")}',
             ParagraphStyle('footer', parent=SMALL, textColor=GRAY, alignment=1)
         ))
 
@@ -1225,4 +1247,1107 @@ class BackupSistemaView(APIView):
                 status=403
             )
         return self._generar_zip_response(request)
+
+
+class ReportePagosProveedoresPDFView(APIView):
+    """
+    GET /api/reportes/pagos-proveedores/pdf/?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
+    Genera un informe contable de pagos a proveedores en formato PDF con ReportLab.
+    Incluye encabezado institucional, resumen por método y tabla detallada con totales.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _es_admin(self, user):
+        return (
+            getattr(user, 'rol', None) in ['admin', 'administrador'] or
+            getattr(user, 'role', None) in ['admin', 'administrador'] or
+            user.is_staff or
+            user.is_superuser
+        )
+
+    def get(self, request):
+        if not self._es_admin(request.user):
+            return Response(
+                {'error': 'Acceso restringido. Solo los administradores pueden consultar y exportar reportes contables de pagos a proveedores.'},
+                status=403
+            )
+        from apps.inventario.models import PagoProveedor, Proveedor
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image,
+        )
+        import io, os
+
+        hoy = timezone.now().date()
+        fecha_inicio = request.query_params.get('fecha_inicio', str(hoy.replace(day=1)))
+        fecha_fin = request.query_params.get('fecha_fin', str(hoy))
+        proveedor_id = request.query_params.get('proveedor') or request.query_params.get('proveedor_id')
+        metodo_pago = request.query_params.get('metodo_pago')
+
+        pagos_qs = (
+            PagoProveedor.objects
+            .filter(fecha__range=[fecha_inicio, fecha_fin])
+            .select_related('proveedor', 'registrado_por')
+            .order_by('-fecha', '-created_at')
+        )
+
+        proveedor_nombre = None
+        if proveedor_id:
+            pagos_qs = pagos_qs.filter(proveedor_id=proveedor_id)
+            prov = Proveedor.objects.filter(id=proveedor_id).first()
+            if prov:
+                proveedor_nombre = prov.nombre
+
+        if metodo_pago:
+            pagos_qs = pagos_qs.filter(metodo_pago=metodo_pago)
+
+        total_monto = pagos_qs.aggregate(t=Sum('monto'))['t'] or Decimal('0.00')
+        total_ops = pagos_qs.count()
+
+        # Resumen por método
+        metodos_labels = {
+            'efectivo': 'Efectivo',
+            'transferencia': 'Transferencia',
+            'cheque': 'Cheque',
+            'tarjeta_debito': 'Tarjeta de Débito',
+            'tarjeta_credito': 'Tarjeta de Crédito',
+            'tarjeta': 'Tarjeta Bancaria (General)',
+        }
+        resumen_metodos = []
+        for clave, etiqueta in metodos_labels.items():
+            sub_qs = pagos_qs.filter(metodo_pago=clave)
+            cnt = sub_qs.count()
+            if cnt > 0:
+                sub_total = sub_qs.aggregate(t=Sum('monto'))['t'] or Decimal('0.00')
+                resumen_metodos.append([etiqueta, str(cnt), f"${sub_total:,.2f}"])
+
+        # Configuración ReportLab
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=letter,
+            leftMargin=1.5*cm, rightMargin=1.5*cm,
+            topMargin=1.5*cm, bottomMargin=1.5*cm,
+        )
+        styles = getSampleStyleSheet()
+
+        RED    = colors.HexColor('#df000a')
+        BLACK  = colors.HexColor('#0d0000')
+        ORANGE = colors.HexColor('#ef8701')
+        ALT_BG = colors.HexColor('#fff8f8')
+        WHITE  = colors.white
+        GRAY   = colors.HexColor('#666666')
+
+        NORMAL = styles['Normal']
+        H2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, spaceBefore=10, spaceAfter=4,
+                             textColor=RED, fontName='Helvetica-Bold')
+        SMALL  = ParagraphStyle('SMALL', parent=NORMAL, fontSize=8)
+
+        story = []
+
+        # Logo y Encabezado
+        logo_path = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', '..', '..', 'frontend', 'public', 'images', 'logo_hd.png'
+        ))
+
+        right_content = [
+            Paragraph(
+                'Centro Llantero <font color="#df000a"><b>EmirS</b></font>',
+                ParagraphStyle('Brand', parent=NORMAL, fontSize=20, fontName='Helvetica-Bold', leading=24),
+            ),
+            Paragraph(
+                'Reporte Contable de Pagos a Proveedores',
+                ParagraphStyle('Sub', parent=NORMAL, fontSize=11, textColor=GRAY, spaceBefore=2),
+            ),
+            Spacer(1, 0.15*cm),
+            Paragraph(
+                f'Período: <b>{fecha_inicio}</b> al <b>{fecha_fin}</b>',
+                ParagraphStyle('Period', parent=NORMAL, fontSize=9),
+            ),
+        ]
+        if proveedor_nombre:
+            right_content.append(Paragraph(
+                f'Proveedor filtrado: <b>{proveedor_nombre}</b>',
+                ParagraphStyle('FilterProv', parent=NORMAL, fontSize=8.5, textColor=GRAY),
+            ))
+        if metodo_pago:
+            right_content.append(Paragraph(
+                f'Método de pago: <b>{metodos_labels.get(metodo_pago, metodo_pago)}</b>',
+                ParagraphStyle('FilterMP', parent=NORMAL, fontSize=8.5, textColor=GRAY),
+            ))
+
+        right_content.append(Paragraph(
+            f'Generado: {timezone.now().strftime("%d/%m/%Y")}',
+            ParagraphStyle('Gen', parent=NORMAL, fontSize=8, textColor=GRAY),
+        ))
+
+        if os.path.exists(logo_path):
+            logo_img = Image(logo_path)
+            max_h = 2.4 * cm
+            aspect = logo_img.imageWidth / max(logo_img.imageHeight, 1)
+            logo_img.drawHeight = max_h
+            logo_img.drawWidth  = max_h * aspect
+            header_tbl = Table(
+                [[logo_img, right_content]],
+                colWidths=[logo_img.drawWidth + 0.5*cm, None],
+            )
+        else:
+            header_tbl = Table([[right_content]], colWidths=[None])
+
+        header_tbl.setStyle(TableStyle([
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 2),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+            ('TOPPADDING',    (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        story.append(header_tbl)
+        story.append(Spacer(1, 0.2*cm))
+        story.append(HRFlowable(width='100%', thickness=3, color=RED, spaceAfter=2))
+        story.append(HRFlowable(width='100%', thickness=1.5, color=ORANGE, spaceAfter=4))
+        story.append(Spacer(1, 0.2*cm))
+
+        # Resumen por Método
+        story.append(Paragraph('Resumen por Método de Pago', H2))
+        if resumen_metodos:
+            resumen_data = [['Método de Pago', 'Operaciones', 'Monto Total']] + resumen_metodos + [
+                ['GRAN TOTAL', str(total_ops), f"${total_monto:,.2f}"]
+            ]
+            t_res = Table(resumen_data, colWidths=[8.0*cm, 4.0*cm, 6.0*cm])
+            t_res.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), BLACK),
+                ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -2), [WHITE, ALT_BG]),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f3f4f6')),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ]))
+            story.append(t_res)
+        else:
+            story.append(Paragraph('No se registraron pagos a proveedores en este período.', SMALL))
+
+        story.append(Spacer(1, 0.3*cm))
+
+        # Detalle de Pagos
+        story.append(Paragraph('Detalle de Pagos Registrados', H2))
+        if pagos_qs.exists():
+            headers = ['Fecha', 'Proveedor', 'Factura / Rem.', 'Método', 'Referencia', 'Registrado Por', 'Monto']
+            col_widths = [2.2*cm, 4.0*cm, 2.7*cm, 2.7*cm, 2.5*cm, 2.2*cm, 2.3*cm]
+            detail_rows = []
+            for p in pagos_qs:
+                detail_rows.append([
+                    p.fecha.strftime('%d/%m/%Y'),
+                    p.proveedor.nombre[:22],
+                    p.numero_factura or '-',
+                    p.get_metodo_pago_display()[:18],
+                    p.referencia[:16] if p.referencia else '-',
+                    (p.registrado_por.username[:12] if p.registrado_por else '-'),
+                    f"${p.monto:,.2f}"
+                ])
+
+            # Fila final de total
+            detail_rows.append(['TOTAL', '', '', '', '', f"{total_ops} pagos", f"${total_monto:,.2f}"])
+
+            t_det = Table([headers] + detail_rows, colWidths=col_widths, repeatRows=1)
+            t_det.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), BLACK),
+                ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 7.5),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -2), [WHITE, ALT_BG]),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e5e7eb')),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
+                ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+                ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                ('ALIGN', (2, 0), (4, -1), 'LEFT'),
+                ('ALIGN', (5, 0), (5, -1), 'CENTER'),
+                ('ALIGN', (6, 0), (6, -1), 'RIGHT'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+                ('TOPPADDING', (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ]))
+            story.append(t_det)
+        else:
+            story.append(Paragraph('Sin movimientos detallados para los filtros seleccionados.', SMALL))
+
+        story.append(Spacer(1, 0.4*cm))
+        story.append(HRFlowable(width='100%', thickness=2, color=RED, spaceAfter=2))
+        story.append(HRFlowable(width='100%', thickness=1, color=ORANGE, spaceAfter=3))
+        story.append(Spacer(1, 0.15*cm))
+        story.append(Paragraph(
+            f'Centro Llantero <font color="#df000a"><b>EmirS</b></font> '
+            f'— Generado el {timezone.now().strftime("%d/%m/%Y")}',
+            ParagraphStyle('footer', parent=SMALL, textColor=GRAY, alignment=1)
+        ))
+
+        doc.build(story)
+        buf.seek(0)
+        nombre_archivo = f"reporte_pagos_proveedores_{fecha_inicio}_{fecha_fin}.pdf"
+        resp = HttpResponse(buf.read(), content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="{nombre_archivo}"'
+        return resp
+
+
+class ReportePagosProveedoresExcelView(APIView):
+    """
+    GET /api/reportes/pagos-proveedores/excel/?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
+    Genera un informe contable de pagos a proveedores en formato Excel (.xlsx) usando openpyxl.
+    Incluye encabezados estilizados, formato de moneda, y fórmula SUM de totales.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _es_admin(self, user):
+        return (
+            getattr(user, 'rol', None) in ['admin', 'administrador'] or
+            getattr(user, 'role', None) in ['admin', 'administrador'] or
+            user.is_staff or
+            user.is_superuser
+        )
+
+    def get(self, request):
+        if not self._es_admin(request.user):
+            return Response(
+                {'error': 'Acceso restringido. Solo los administradores pueden consultar y exportar reportes contables de pagos a proveedores.'},
+                status=403
+            )
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from apps.inventario.models import PagoProveedor, Proveedor
+        import io
+
+        hoy = timezone.now().date()
+        fecha_inicio = request.query_params.get('fecha_inicio', str(hoy.replace(day=1)))
+        fecha_fin = request.query_params.get('fecha_fin', str(hoy))
+        proveedor_id = request.query_params.get('proveedor') or request.query_params.get('proveedor_id')
+        metodo_pago = request.query_params.get('metodo_pago')
+
+        pagos_qs = (
+            PagoProveedor.objects
+            .filter(fecha__range=[fecha_inicio, fecha_fin])
+            .select_related('proveedor', 'registrado_por')
+            .order_by('-fecha', '-created_at')
+        )
+
+        proveedor_nombre = None
+        if proveedor_id:
+            pagos_qs = pagos_qs.filter(proveedor_id=proveedor_id)
+            prov = Proveedor.objects.filter(id=proveedor_id).first()
+            if prov:
+                proveedor_nombre = prov.nombre
+
+        if metodo_pago:
+            pagos_qs = pagos_qs.filter(metodo_pago=metodo_pago)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Pagos a Proveedores"
+        ws.views.sheetView[0].showGridLines = True
+
+        # Paleta y estilos
+        fill_header = PatternFill(start_color="0D0000", end_color="0D0000", fill_type="solid")
+        fill_subtotal = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        font_title = Font(name="Calibri", size=15, bold=True, color="DF000A")
+        font_subtitle = Font(name="Calibri", size=10, italic=True, color="555555")
+        font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        font_bold = Font(name="Calibri", size=10, bold=True)
+        font_data = Font(name="Calibri", size=10)
+
+        border_thin = Border(
+            left=Side(style='thin', color='DDDDDD'),
+            right=Side(style='thin', color='DDDDDD'),
+            top=Side(style='thin', color='DDDDDD'),
+            bottom=Side(style='thin', color='DDDDDD')
+        )
+        border_total = Border(
+            top=Side(style='thin', color='000000'),
+            bottom=Side(style='double', color='000000'),
+            left=Side(style='thin', color='DDDDDD'),
+            right=Side(style='thin', color='DDDDDD')
+        )
+
+        # Fila 1: Título
+        ws.merge_cells('A1:G1')
+        ws['A1'] = "Centro Llantero EmirS - Reporte de Pagos a Proveedores"
+        ws['A1'].font = font_title
+        ws['A1'].alignment = Alignment(vertical='center')
+        ws.row_dimensions[1].height = 25
+
+        # Fila 2: Subtítulo
+        sub_texto = f"Período: {fecha_inicio} al {fecha_fin}  |  Generado el: {timezone.now().strftime('%d/%m/%Y')}"
+        if proveedor_nombre:
+            sub_texto += f"  |  Proveedor: {proveedor_nombre}"
+        if metodo_pago:
+            sub_texto += f"  |  Método: {metodo_pago}"
+        ws.merge_cells('A2:G2')
+        ws['A2'] = sub_texto
+        ws['A2'].font = font_subtitle
+        ws['A2'].alignment = Alignment(vertical='center')
+        ws.row_dimensions[2].height = 18
+
+        # Fila 4: Encabezados de tabla detallada
+        start_row = 4
+        headers = ['Fecha', 'Proveedor', 'Factura / Remisión', 'Método de Pago', 'Referencia', 'Registrado Por', 'Monto']
+        for col_idx, h_text in enumerate(headers, 1):
+            cell = ws.cell(row=start_row, column=col_idx, value=h_text)
+            cell.fill = fill_header
+            cell.font = font_header
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[start_row].height = 22
+
+        current_row = start_row + 1
+        pagos_lista = list(pagos_qs)
+        first_data_row = current_row
+
+        if pagos_lista:
+            for p in pagos_lista:
+                c1 = ws.cell(row=current_row, column=1, value=p.fecha.strftime('%Y-%m-%d'))
+                c2 = ws.cell(row=current_row, column=2, value=p.proveedor.nombre)
+                c3 = ws.cell(row=current_row, column=3, value=p.numero_factura or '-')
+                c4 = ws.cell(row=current_row, column=4, value=p.get_metodo_pago_display())
+                c5 = ws.cell(row=current_row, column=5, value=p.referencia or '-')
+                c6 = ws.cell(row=current_row, column=6, value=p.registrado_por.username if p.registrado_por else '-')
+                c7 = ws.cell(row=current_row, column=7, value=float(p.monto))
+
+                c1.alignment = Alignment(horizontal='center')
+                c2.alignment = Alignment(horizontal='left')
+                c3.alignment = Alignment(horizontal='center')
+                c4.alignment = Alignment(horizontal='center')
+                c5.alignment = Alignment(horizontal='left')
+                c6.alignment = Alignment(horizontal='center')
+                c7.alignment = Alignment(horizontal='right')
+                c7.number_format = '"$"#,##0.00'
+
+                for c in [c1, c2, c3, c4, c5, c6, c7]:
+                    c.font = font_data
+                    c.border = border_thin
+
+                current_row += 1
+
+            last_data_row = current_row - 1
+            # Fila de totales
+            ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=6)
+            total_label = ws.cell(row=current_row, column=1, value="TOTAL GENERAL")
+            total_label.font = font_bold
+            total_label.alignment = Alignment(horizontal='right', vertical='center')
+
+            total_val = ws.cell(row=current_row, column=7)
+            total_val.value = f"=SUM(G{first_data_row}:G{last_data_row})"
+            total_val.font = font_bold
+            total_val.alignment = Alignment(horizontal='right', vertical='center')
+            total_val.number_format = '"$"#,##0.00'
+
+            for c_idx in range(1, 8):
+                cell = ws.cell(row=current_row, column=c_idx)
+                cell.border = border_total
+                cell.fill = fill_subtotal
+            ws.row_dimensions[current_row].height = 20
+        else:
+            ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=7)
+            empty_cell = ws.cell(row=current_row, column=1, value="No se encontraron pagos con los filtros seleccionados.")
+            empty_cell.font = font_subtitle
+            empty_cell.alignment = Alignment(horizontal='center')
+
+        # Autoajustar anchos de columnas
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                if cell.row in [1, 2]:
+                    continue
+                if isinstance(cell.value, (int, float)) and cell.number_format and '"$"#' in cell.number_format:
+                    val_str = f"${cell.value:,.2f}"
+                else:
+                    val_str = str(cell.value or '')
+                max_len = max(max_len, len(val_str))
+            ws.column_dimensions[col_letter].width = max(max_len + 4, 14)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        nombre_archivo = f"reporte_pagos_proveedores_{fecha_inicio}_{fecha_fin}.xlsx"
+        resp = HttpResponse(
+            buf.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        resp['Content-Disposition'] = f'attachment; filename="{nombre_archivo}"'
+        return resp
+
+
+class ReporteContableExcelView(APIView):
+    """
+    GET /api/reportes/contable-excel/?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD o ?mes=MM&anio=YYYY
+    Genera el libro contable de auditoría e inventario (.xlsx) con 4 hojas estilizadas:
+    - Hoja 1: "Detalles De Salidas"
+    - Hoja 2: "Entradas de Producto"
+    - Hoja 3: "Salidas de Productos"
+    - Hoja 4: "Inventario Emir'S Centro Llantero"
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _es_admin(self, user):
+        return (
+            getattr(user, 'rol', None) in ['admin', 'administrador'] or
+            getattr(user, 'role', None) in ['admin', 'administrador'] or
+            user.is_staff or
+            user.is_superuser
+        )
+
+    def get(self, request):
+        if not self._es_admin(request.user):
+            return Response(
+                {'error': 'Acceso restringido. Solo los administradores pueden consultar y exportar el libro contable de inventario.'},
+                status=403
+            )
+        import calendar
+        from datetime import datetime, date
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from openpyxl.formatting.rule import CellIsRule
+        from django.db.models import Sum
+        from apps.inventario.models import Producto, EntradaInventario, SalidaInventario
+
+        hoy = timezone.localdate()
+        mes_param = request.query_params.get('mes')
+        anio_param = request.query_params.get('anio')
+        fecha_inicio_param = request.query_params.get('fecha_inicio')
+        fecha_fin_param = request.query_params.get('fecha_fin')
+
+        if fecha_inicio_param and fecha_fin_param:
+            try:
+                fecha_inicio = datetime.strptime(fecha_inicio_param, '%Y-%m-%d').date()
+                fecha_fin = datetime.strptime(fecha_fin_param, '%Y-%m-%d').date()
+            except ValueError:
+                fecha_inicio = hoy.replace(day=1)
+                _, last_day = calendar.monthrange(hoy.year, hoy.month)
+                fecha_fin = hoy.replace(day=last_day)
+        elif mes_param and anio_param:
+            try:
+                mes = int(mes_param)
+                anio = int(anio_param)
+                fecha_inicio = date(anio, mes, 1)
+                _, last_day = calendar.monthrange(anio, mes)
+                fecha_fin = date(anio, mes, last_day)
+            except (ValueError, TypeError):
+                fecha_inicio = hoy.replace(day=1)
+                _, last_day = calendar.monthrange(hoy.year, hoy.month)
+                fecha_fin = hoy.replace(day=last_day)
+        else:
+            fecha_inicio = hoy.replace(day=1)
+            _, last_day = calendar.monthrange(hoy.year, hoy.month)
+            fecha_fin = hoy.replace(day=last_day)
+
+        # ── Estilos y Paleta Institucional ──────────────────────────────────
+        fill_header = PatternFill(start_color="0D0000", end_color="0D0000", fill_type="solid")
+        font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+        fill_total = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        font_total = Font(name="Calibri", size=10, bold=True)
+        font_data = Font(name="Calibri", size=10)
+        font_empty = Font(name="Calibri", size=10, italic=True, color="666666")
+
+        border_thin = Border(
+            left=Side(style='thin', color='DDDDDD'),
+            right=Side(style='thin', color='DDDDDD'),
+            top=Side(style='thin', color='DDDDDD'),
+            bottom=Side(style='thin', color='DDDDDD')
+        )
+        border_total = Border(
+            top=Side(style='thin', color='000000'),
+            bottom=Side(style='double', color='000000'),
+            left=Side(style='thin', color='DDDDDD'),
+            right=Side(style='thin', color='DDDDDD')
+        )
+
+        fill_stock_true = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+        font_stock_true = Font(name="Calibri", size=10, bold=True, color="166534")
+        fill_stock_false = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        font_stock_false = Font(name="Calibri", size=10, bold=True, color="991B1B")
+
+        fill_orange_light = PatternFill(start_color="FFEDD5", end_color="FFEDD5", fill_type="solid")
+        font_orange_dark = Font(name="Calibri", size=10, bold=True, color="C2410C")
+        fill_slate_light = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        font_slate_dark = Font(name="Calibri", size=10, bold=True, color="64748B")
+
+        # ── Pre-cálculo optimizado de stock y entradas ────────────────────────
+        entradas_totales = dict(
+            EntradaInventario.objects.values('producto_id').annotate(t=Sum('cantidad')).values_list('producto_id', 't')
+        )
+        salidas_totales = dict(
+            SalidaInventario.objects.values('producto_id').annotate(t=Sum('cantidad')).values_list('producto_id', 't')
+        )
+
+        def get_stock(prod_id):
+            return entradas_totales.get(prod_id, 0) - salidas_totales.get(prod_id, 0)
+
+        # Mapeo de entradas de productos para asociar proveedor y factura
+        todas_entradas = list(
+            EntradaInventario.objects.select_related('proveedor').order_by('fecha_compra', 'id')
+        )
+        entradas_por_prod = {}
+        latest_entrada_por_prod = {}
+        for ent in todas_entradas:
+            entradas_por_prod.setdefault(ent.producto_id, []).append(ent)
+            latest_entrada_por_prod[ent.producto_id] = ent
+
+        def encontrar_entrada_origen(producto_id, precio_costo, fecha_venta):
+            prod_entradas = entradas_por_prod.get(producto_id, [])
+            if not prod_entradas:
+                return None
+            for e in prod_entradas:
+                if e.precio_compra == precio_costo and e.fecha_compra <= fecha_venta:
+                    return e
+            cands = [e for e in prod_entradas if e.fecha_compra <= fecha_venta]
+            if cands:
+                return cands[-1]
+            return prod_entradas[-1]
+
+        # Consultas de rango de fechas
+        salidas_qs = list(
+            SalidaInventario.objects
+            .filter(fecha_venta__range=[fecha_inicio, fecha_fin])
+            .select_related('producto', 'producto__marca', 'venta', 'rescate')
+            .order_by('fecha_venta', 'id')
+        )
+
+        entradas_qs = list(
+            EntradaInventario.objects
+            .filter(fecha_compra__range=[fecha_inicio, fecha_fin])
+            .select_related('producto', 'producto__marca', 'proveedor')
+            .order_by('fecha_compra', 'id')
+        )
+
+        productos_activos = list(
+            Producto.objects
+            .filter(activo=True)
+            .select_related('marca')
+            .order_by('medida', 'marca__nombre', 'modelo')
+        )
+
+        # ── Inicializar Workbook ─────────────────────────────────────────────
+        wb = openpyxl.Workbook()
+
+        # =====================================================================
+        # HOJA 1: "Detalles De Salidas"
+        # =====================================================================
+        ws1 = wb.active
+        ws1.title = "Detalles De Salidas"
+        ws1.freeze_panes = "A2"
+
+        h1_headers = [
+            'ID', 'ID Salida', 'Medida', 'Marca', 'Modelo', 'Stock',
+            'Cantidad Llantas Vendidas', 'Proveedor', 'Numero de Factura',
+            'F. Compra', 'F. Venta', 'P. Venta', 'P. Compra', 'Facturas Usadas', 'G. Unitaria'
+        ]
+        ws1.row_dimensions[1].height = 26
+        for col_idx, h_text in enumerate(h1_headers, 1):
+            cell = ws1.cell(row=1, column=col_idx, value=h_text)
+            cell.fill = fill_header
+            cell.font = font_header
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        current_row = 2
+        start_row = 2
+        if salidas_qs:
+            for idx, s in enumerate(salidas_qs, 1):
+                ws1.row_dimensions[current_row].height = 20
+                prod = s.producto
+                stock_val = get_stock(prod.id)
+                e_orig = encontrar_entrada_origen(prod.id, s.precio_costo, s.fecha_venta)
+                prov_nom = e_orig.proveedor.nombre if (e_orig and e_orig.proveedor) else '-'
+                num_fact = (e_orig.numero_factura or e_orig.folio_remision or '-') if e_orig else '-'
+                f_comp = e_orig.fecha_compra.strftime('%Y-%m-%d') if (e_orig and e_orig.fecha_compra) else '-'
+                fact_usadas = num_fact
+
+                c_id = ws1.cell(row=current_row, column=1, value=idx)
+                c_idsal = ws1.cell(row=current_row, column=2, value=s.id)
+                c_med = ws1.cell(row=current_row, column=3, value=prod.medida)
+                c_marca = ws1.cell(row=current_row, column=4, value=prod.marca.nombre if prod.marca else '')
+                c_mod = ws1.cell(row=current_row, column=5, value=prod.modelo)
+
+                # Columna Stock
+                c_stk = ws1.cell(row=current_row, column=6)
+                if stock_val > 0:
+                    c_stk.value = "VERDADERO"
+                    c_stk.fill = fill_stock_true
+                    c_stk.font = font_stock_true
+                else:
+                    c_stk.value = "FALSO"
+                    c_stk.fill = fill_stock_false
+                    c_stk.font = font_stock_false
+                c_stk.alignment = Alignment(horizontal='center', vertical='center')
+
+                c_cant = ws1.cell(row=current_row, column=7, value=s.cantidad)
+                c_prov = ws1.cell(row=current_row, column=8, value=prov_nom)
+                c_fact = ws1.cell(row=current_row, column=9, value=num_fact)
+                c_fcomp = ws1.cell(row=current_row, column=10, value=f_comp)
+                c_fvent = ws1.cell(row=current_row, column=11, value=s.fecha_venta.strftime('%Y-%m-%d'))
+                c_pvent = ws1.cell(row=current_row, column=12, value=float(s.precio_venta))
+                c_pcomp = ws1.cell(row=current_row, column=13, value=float(s.precio_costo))
+                c_usadas = ws1.cell(row=current_row, column=14, value=fact_usadas)
+
+                # Columna G. Unitaria: fórmula =L{row}-M{row}
+                c_gunita = ws1.cell(row=current_row, column=15, value=f"=L{current_row}-M{current_row}")
+
+                # Alineaciones y formatos
+                c_id.alignment = Alignment(horizontal='center', vertical='center')
+                c_idsal.alignment = Alignment(horizontal='center', vertical='center')
+                c_med.alignment = Alignment(horizontal='center', vertical='center')
+                c_marca.alignment = Alignment(horizontal='left', vertical='center')
+                c_mod.alignment = Alignment(horizontal='left', vertical='center')
+                c_cant.alignment = Alignment(horizontal='right', vertical='center')
+                c_cant.number_format = '#,##0'
+                c_prov.alignment = Alignment(horizontal='left', vertical='center')
+                c_fact.alignment = Alignment(horizontal='center', vertical='center')
+                c_fcomp.alignment = Alignment(horizontal='center', vertical='center')
+                c_fvent.alignment = Alignment(horizontal='center', vertical='center')
+                c_pvent.alignment = Alignment(horizontal='right', vertical='center')
+                c_pvent.number_format = '"$"#,##0.00'
+                c_pcomp.alignment = Alignment(horizontal='right', vertical='center')
+                c_pcomp.number_format = '"$"#,##0.00'
+                c_usadas.alignment = Alignment(horizontal='center', vertical='center')
+                c_gunita.alignment = Alignment(horizontal='right', vertical='center')
+                c_gunita.number_format = '"$"#,##0.00'
+
+                for col_c in range(1, 16):
+                    cell_cur = ws1.cell(row=current_row, column=col_c)
+                    cell_cur.border = border_thin
+                    if col_c != 6:
+                        cell_cur.font = font_data
+
+                current_row += 1
+
+            last_row = current_row - 1
+            # Fila final de totales
+            ws1.row_dimensions[current_row].height = 22
+            ws1.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=6)
+            lbl = ws1.cell(row=current_row, column=1, value="TOTALES")
+            lbl.font = font_total
+            lbl.alignment = Alignment(horizontal='right', vertical='center')
+
+            tot_cant = ws1.cell(row=current_row, column=7, value=f"=SUM(G{start_row}:G{last_row})")
+            tot_cant.font = font_total
+            tot_cant.alignment = Alignment(horizontal='right', vertical='center')
+            tot_cant.number_format = '#,##0'
+
+            tot_pvent = ws1.cell(row=current_row, column=12, value=f"=SUM(L{start_row}:L{last_row})")
+            tot_pvent.font = font_total
+            tot_pvent.alignment = Alignment(horizontal='right', vertical='center')
+            tot_pvent.number_format = '"$"#,##0.00'
+
+            tot_pcomp = ws1.cell(row=current_row, column=13, value=f"=SUM(M{start_row}:M{last_row})")
+            tot_pcomp.font = font_total
+            tot_pcomp.alignment = Alignment(horizontal='right', vertical='center')
+            tot_pcomp.number_format = '"$"#,##0.00'
+
+            tot_gunita = ws1.cell(row=current_row, column=15, value=f"=SUM(O{start_row}:O{last_row})")
+            tot_gunita.font = font_total
+            tot_gunita.alignment = Alignment(horizontal='right', vertical='center')
+            tot_gunita.number_format = '"$"#,##0.00'
+
+            for col_c in range(1, 16):
+                c_tot = ws1.cell(row=current_row, column=col_c)
+                c_tot.border = border_total
+                c_tot.fill = fill_total
+        else:
+            ws1.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=15)
+            c_empty = ws1.cell(row=current_row, column=1, value="No se registraron salidas de inventario en el período seleccionado.")
+            c_empty.font = font_empty
+            c_empty.alignment = Alignment(horizontal='center', vertical='center')
+            for col_c in range(1, 16):
+                ws1.cell(row=current_row, column=col_c).border = border_thin
+
+        # =====================================================================
+        # HOJA 2: "Entradas de Producto"
+        # =====================================================================
+        ws2 = wb.create_sheet(title="Entradas de Producto")
+        ws2.freeze_panes = "A2"
+
+        h2_headers = [
+            'Cod. Prod', 'Medida', 'Marca', 'Modelo', 'C. Carga', 'Vel',
+            'Cantidad', 'P. Compra', 'F. Compra', 'N° Fact', 'Proveedor',
+            'Inventario', 'Factura Consumida'
+        ]
+        ws2.row_dimensions[1].height = 26
+        for col_idx, h_text in enumerate(h2_headers, 1):
+            cell = ws2.cell(row=1, column=col_idx, value=h_text)
+            cell.fill = fill_header
+            cell.font = font_header
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        current_row = 2
+        start_row = 2
+        if entradas_qs:
+            for ent in entradas_qs:
+                ws2.row_dimensions[current_row].height = 20
+                prod = ent.producto
+                stk_actual = get_stock(prod.id)
+
+                c1 = ws2.cell(row=current_row, column=1, value=prod.codigo)
+                c2 = ws2.cell(row=current_row, column=2, value=prod.medida)
+                c3 = ws2.cell(row=current_row, column=3, value=prod.marca.nombre if prod.marca else '')
+                c4 = ws2.cell(row=current_row, column=4, value=prod.modelo)
+                c5 = ws2.cell(row=current_row, column=5, value=prod.indice_carga)
+                c6 = ws2.cell(row=current_row, column=6, value=prod.indice_velocidad)
+                c7 = ws2.cell(row=current_row, column=7, value=ent.cantidad)
+                c8 = ws2.cell(row=current_row, column=8, value=float(ent.precio_compra))
+                c9 = ws2.cell(row=current_row, column=9, value=ent.fecha_compra.strftime('%Y-%m-%d'))
+                c10 = ws2.cell(row=current_row, column=10, value=ent.numero_factura or ent.folio_remision or '-')
+                c11 = ws2.cell(row=current_row, column=11, value=ent.proveedor.nombre if ent.proveedor else '-')
+
+                # Columna Inventario: "Si" (verde), "En Lista" (naranja), "No" (rojo)
+                c12 = ws2.cell(row=current_row, column=12)
+                if ent.estado == 'en_lista':
+                    c12.value = "En Lista"
+                    c12.fill = fill_orange_light
+                    c12.font = font_orange_dark
+                elif ent.en_inventario and ent.estado in ['disponible', '']:
+                    c12.value = "Si"
+                    c12.fill = fill_stock_true
+                    c12.font = font_stock_true
+                else:
+                    c12.value = "No"
+                    c12.fill = fill_stock_false
+                    c12.font = font_stock_false
+                c12.alignment = Alignment(horizontal='center', vertical='center')
+
+                # Columna Factura Consumida
+                c13 = ws2.cell(row=current_row, column=13)
+                if ent.factura_consumida or ent.estado == 'consumido' or stk_actual <= 0:
+                    c13.value = "Factura Consumida"
+                    c13.fill = fill_slate_light
+                    c13.font = font_slate_dark
+                else:
+                    c13.value = "En Stock"
+                    c13.fill = fill_stock_true
+                    c13.font = font_stock_true
+                c13.alignment = Alignment(horizontal='center', vertical='center')
+
+                # Formatos y alineaciones
+                c1.alignment = Alignment(horizontal='center', vertical='center')
+                c2.alignment = Alignment(horizontal='center', vertical='center')
+                c3.alignment = Alignment(horizontal='left', vertical='center')
+                c4.alignment = Alignment(horizontal='left', vertical='center')
+                c5.alignment = Alignment(horizontal='center', vertical='center')
+                c6.alignment = Alignment(horizontal='center', vertical='center')
+                c7.alignment = Alignment(horizontal='right', vertical='center')
+                c7.number_format = '#,##0'
+                c8.alignment = Alignment(horizontal='right', vertical='center')
+                c8.number_format = '"$"#,##0.00'
+                c9.alignment = Alignment(horizontal='center', vertical='center')
+                c10.alignment = Alignment(horizontal='center', vertical='center')
+                c11.alignment = Alignment(horizontal='left', vertical='center')
+
+                for col_c in range(1, 14):
+                    cell_cur = ws2.cell(row=current_row, column=col_c)
+                    cell_cur.border = border_thin
+                    if col_c not in [12, 13]:
+                        cell_cur.font = font_data
+
+                current_row += 1
+
+            last_row = current_row - 1
+            # Fila final de totales
+            ws2.row_dimensions[current_row].height = 22
+            ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=6)
+            lbl = ws2.cell(row=current_row, column=1, value="TOTALES")
+            lbl.font = font_total
+            lbl.alignment = Alignment(horizontal='right', vertical='center')
+
+            tot_cant = ws2.cell(row=current_row, column=7, value=f"=SUM(G{start_row}:G{last_row})")
+            tot_cant.font = font_total
+            tot_cant.alignment = Alignment(horizontal='right', vertical='center')
+            tot_cant.number_format = '#,##0'
+
+            tot_imp = ws2.cell(row=current_row, column=8, value=f"=SUMPRODUCT(G{start_row}:G{last_row}, H{start_row}:H{last_row})")
+            tot_imp.font = font_total
+            tot_imp.alignment = Alignment(horizontal='right', vertical='center')
+            tot_imp.number_format = '"$"#,##0.00'
+
+            for col_c in range(1, 14):
+                c_tot = ws2.cell(row=current_row, column=col_c)
+                c_tot.border = border_total
+                c_tot.fill = fill_total
+        else:
+            ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=13)
+            c_empty = ws2.cell(row=current_row, column=1, value="No se registraron entradas de inventario en el período seleccionado.")
+            c_empty.font = font_empty
+            c_empty.alignment = Alignment(horizontal='center', vertical='center')
+            for col_c in range(1, 14):
+                ws2.cell(row=current_row, column=col_c).border = border_thin
+
+        # =====================================================================
+        # HOJA 3: "Salidas de Productos"
+        # =====================================================================
+        ws3 = wb.create_sheet(title="Salidas de Productos")
+        ws3.freeze_panes = "A2"
+
+        h3_headers = [
+            'ID Sal', 'Cod. Prod', 'Medida', 'Marca', 'Modelo',
+            'Cantidad', 'P. Venta', 'F. Venta', 'N° Fact', 'Proveedor'
+        ]
+        ws3.row_dimensions[1].height = 26
+        for col_idx, h_text in enumerate(h3_headers, 1):
+            cell = ws3.cell(row=1, column=col_idx, value=h_text)
+            cell.fill = fill_header
+            cell.font = font_header
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        current_row = 2
+        start_row = 2
+        if salidas_qs:
+            for s in salidas_qs:
+                ws3.row_dimensions[current_row].height = 20
+                prod = s.producto
+                e_orig = encontrar_entrada_origen(prod.id, s.precio_costo, s.fecha_venta)
+                prov_nom = e_orig.proveedor.nombre if (e_orig and e_orig.proveedor) else '-'
+                num_fact = (e_orig.numero_factura or e_orig.folio_remision or '-') if e_orig else '-'
+
+                c1 = ws3.cell(row=current_row, column=1, value=s.id)
+                c2 = ws3.cell(row=current_row, column=2, value=prod.codigo)
+                c3 = ws3.cell(row=current_row, column=3, value=prod.medida)
+                c4 = ws3.cell(row=current_row, column=4, value=prod.marca.nombre if prod.marca else '')
+                c5 = ws3.cell(row=current_row, column=5, value=prod.modelo)
+                c6 = ws3.cell(row=current_row, column=6, value=s.cantidad)
+                c7 = ws3.cell(row=current_row, column=7, value=float(s.precio_venta))
+                c8 = ws3.cell(row=current_row, column=8, value=s.fecha_venta.strftime('%Y-%m-%d'))
+                c9 = ws3.cell(row=current_row, column=9, value=num_fact)
+                c10 = ws3.cell(row=current_row, column=10, value=prov_nom)
+
+                c1.alignment = Alignment(horizontal='center', vertical='center')
+                c2.alignment = Alignment(horizontal='center', vertical='center')
+                c3.alignment = Alignment(horizontal='center', vertical='center')
+                c4.alignment = Alignment(horizontal='left', vertical='center')
+                c5.alignment = Alignment(horizontal='left', vertical='center')
+                c6.alignment = Alignment(horizontal='right', vertical='center')
+                c6.number_format = '#,##0'
+                c7.alignment = Alignment(horizontal='right', vertical='center')
+                c7.number_format = '"$"#,##0.00'
+                c8.alignment = Alignment(horizontal='center', vertical='center')
+                c9.alignment = Alignment(horizontal='center', vertical='center')
+                c10.alignment = Alignment(horizontal='left', vertical='center')
+
+                for col_c in range(1, 11):
+                    cell_cur = ws3.cell(row=current_row, column=col_c)
+                    cell_cur.border = border_thin
+                    cell_cur.font = font_data
+
+                current_row += 1
+
+            last_row = current_row - 1
+            # Fila final de totales
+            ws3.row_dimensions[current_row].height = 22
+            ws3.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=5)
+            lbl = ws3.cell(row=current_row, column=1, value="TOTALES")
+            lbl.font = font_total
+            lbl.alignment = Alignment(horizontal='right', vertical='center')
+
+            tot_cant = ws3.cell(row=current_row, column=6, value=f"=SUM(F{start_row}:F{last_row})")
+            tot_cant.font = font_total
+            tot_cant.alignment = Alignment(horizontal='right', vertical='center')
+            tot_cant.number_format = '#,##0'
+
+            tot_imp = ws3.cell(row=current_row, column=7, value=f"=SUMPRODUCT(F{start_row}:F{last_row}, G{start_row}:G{last_row})")
+            tot_imp.font = font_total
+            tot_imp.alignment = Alignment(horizontal='right', vertical='center')
+            tot_imp.number_format = '"$"#,##0.00'
+
+            for col_c in range(1, 11):
+                c_tot = ws3.cell(row=current_row, column=col_c)
+                c_tot.border = border_total
+                c_tot.fill = fill_total
+        else:
+            ws3.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=10)
+            c_empty = ws3.cell(row=current_row, column=1, value="No se registraron salidas de productos en el período seleccionado.")
+            c_empty.font = font_empty
+            c_empty.alignment = Alignment(horizontal='center', vertical='center')
+            for col_c in range(1, 11):
+                ws3.cell(row=current_row, column=col_c).border = border_thin
+
+        # =====================================================================
+        # HOJA 4: "Inventario Emir'S Centro Llantero"
+        # =====================================================================
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            ws4 = wb.create_sheet(title="Inventario Emir'S Centro Llantero")
+        ws4.freeze_panes = "A2"
+
+        h4_headers = [
+            'Cod. Prod', 'Medida', 'Marca', 'Modelo', 'Entrada', 'Salidas',
+            'Stock', 'Precio', 'P. Compra', 'Fac. Referencia', 'P. Descuento'
+        ]
+        ws4.row_dimensions[1].height = 26
+        for col_idx, h_text in enumerate(h4_headers, 1):
+            cell = ws4.cell(row=1, column=col_idx, value=h_text)
+            cell.fill = fill_header
+            cell.font = font_header
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        current_row = 2
+        start_row = 2
+        fill_stock_cero = PatternFill(start_color="EF4444", end_color="EF4444", fill_type="solid")
+        font_stock_cero = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+
+        if productos_activos:
+            for p in productos_activos:
+                ws4.row_dimensions[current_row].height = 20
+                tot_ent = entradas_totales.get(p.id, 0)
+                tot_sal = salidas_totales.get(p.id, 0)
+                stock_est = tot_ent - tot_sal
+                latest_ent = latest_entrada_por_prod.get(p.id)
+                p_comp = float(latest_ent.precio_compra) if latest_ent else 0.0
+                fac_ref = (latest_ent.numero_factura or latest_ent.folio_remision or '-') if latest_ent else '-'
+
+                c1 = ws4.cell(row=current_row, column=1, value=p.codigo)
+                c2 = ws4.cell(row=current_row, column=2, value=p.medida)
+                c3 = ws4.cell(row=current_row, column=3, value=p.marca.nombre if p.marca else '')
+                c4 = ws4.cell(row=current_row, column=4, value=p.modelo)
+                c5 = ws4.cell(row=current_row, column=5, value=tot_ent)
+                c6 = ws4.cell(row=current_row, column=6, value=tot_sal)
+
+                # Columna Stock con fórmula =E{row}-F{row}
+                c7 = ws4.cell(row=current_row, column=7, value=f"=E{current_row}-F{current_row}")
+                c8 = ws4.cell(row=current_row, column=8, value=float(p.precio_venta))
+                c9 = ws4.cell(row=current_row, column=9, value=p_comp)
+                c10 = ws4.cell(row=current_row, column=10, value=fac_ref)
+                c11 = ws4.cell(row=current_row, column=11, value=float(p.precio_descuento) if p.precio_descuento is not None else '-')
+
+                c1.alignment = Alignment(horizontal='center', vertical='center')
+                c2.alignment = Alignment(horizontal='center', vertical='center')
+                c3.alignment = Alignment(horizontal='left', vertical='center')
+                c4.alignment = Alignment(horizontal='left', vertical='center')
+                c5.alignment = Alignment(horizontal='right', vertical='center')
+                c5.number_format = '#,##0'
+                c6.alignment = Alignment(horizontal='right', vertical='center')
+                c6.number_format = '#,##0'
+                c7.alignment = Alignment(horizontal='right', vertical='center')
+                c7.number_format = '#,##0'
+
+                if stock_est <= 0:
+                    c7.fill = fill_stock_cero
+                    c7.font = font_stock_cero
+                else:
+                    c7.font = font_total
+
+                c8.alignment = Alignment(horizontal='right', vertical='center')
+                c8.number_format = '"$"#,##0.00'
+                c9.alignment = Alignment(horizontal='right', vertical='center')
+                c9.number_format = '"$"#,##0.00'
+                c10.alignment = Alignment(horizontal='center', vertical='center')
+                c11.alignment = Alignment(horizontal='right', vertical='center')
+                if isinstance(c11.value, float):
+                    c11.number_format = '"$"#,##0.00'
+
+                for col_c in range(1, 12):
+                    cell_cur = ws4.cell(row=current_row, column=col_c)
+                    cell_cur.border = border_thin
+                    if col_c != 7:
+                        cell_cur.font = font_data
+
+                current_row += 1
+
+            last_row = current_row - 1
+
+            # Regla de formato condicional dinámico en Columna Stock
+            rule_stock_cero = CellIsRule(
+                operator='lessThanOrEqual',
+                formula=['0'],
+                stopIfTrue=True,
+                fill=fill_stock_cero,
+                font=font_stock_cero
+            )
+            ws4.conditional_formatting.add(f"G{start_row}:G{last_row}", rule_stock_cero)
+
+            # Fila final de totales
+            ws4.row_dimensions[current_row].height = 22
+            ws4.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=4)
+            lbl = ws4.cell(row=current_row, column=1, value="TOTALES")
+            lbl.font = font_total
+            lbl.alignment = Alignment(horizontal='right', vertical='center')
+
+            tot_ent = ws4.cell(row=current_row, column=5, value=f"=SUM(E{start_row}:E{last_row})")
+            tot_ent.font = font_total
+            tot_ent.alignment = Alignment(horizontal='right', vertical='center')
+            tot_ent.number_format = '#,##0'
+
+            tot_sal = ws4.cell(row=current_row, column=6, value=f"=SUM(F{start_row}:F{last_row})")
+            tot_sal.font = font_total
+            tot_sal.alignment = Alignment(horizontal='right', vertical='center')
+            tot_sal.number_format = '#,##0'
+
+            tot_stk = ws4.cell(row=current_row, column=7, value=f"=SUM(G{start_row}:G{last_row})")
+            tot_stk.font = font_total
+            tot_stk.alignment = Alignment(horizontal='right', vertical='center')
+            tot_stk.number_format = '#,##0'
+
+            tot_val_venta = ws4.cell(row=current_row, column=8, value=f"=SUMPRODUCT(G{start_row}:G{last_row}, H{start_row}:H{last_row})")
+            tot_val_venta.font = font_total
+            tot_val_venta.alignment = Alignment(horizontal='right', vertical='center')
+            tot_val_venta.number_format = '"$"#,##0.00'
+
+            tot_val_costo = ws4.cell(row=current_row, column=9, value=f"=SUMPRODUCT(G{start_row}:G{last_row}, I{start_row}:I{last_row})")
+            tot_val_costo.font = font_total
+            tot_val_costo.alignment = Alignment(horizontal='right', vertical='center')
+            tot_val_costo.number_format = '"$"#,##0.00'
+
+            for col_c in range(1, 12):
+                c_tot = ws4.cell(row=current_row, column=col_c)
+                c_tot.border = border_total
+                c_tot.fill = fill_total
+        else:
+            ws4.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=11)
+            c_empty = ws4.cell(row=current_row, column=1, value="No se encontraron productos activos en el catálogo de inventario.")
+            c_empty.font = font_empty
+            c_empty.alignment = Alignment(horizontal='center', vertical='center')
+            for col_c in range(1, 12):
+                ws4.cell(row=current_row, column=col_c).border = border_thin
+
+        # ── Ajustar anchos automáticos de columnas y visibilidad de cuadrícula ─
+        for ws in [ws1, ws2, ws3, ws4]:
+            ws.views.sheetView[0].showGridLines = True
+            for col in ws.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    val = cell.value
+                    if val is not None:
+                        val_str = str(val)
+                        if val_str.startswith('='):
+                            val_str = "123,456.78"
+                        elif isinstance(val, (int, float)) and cell.number_format and '"$"#' in cell.number_format:
+                            val_str = f"${val:,.2f}"
+                        max_len = max(max_len, len(val_str))
+                ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+        # ── Generar respuesta HTTP ───────────────────────────────────────────
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        nombre_archivo = f"reporte_contable_emirs_{fecha_inicio}_{fecha_fin}.xlsx"
+        resp = HttpResponse(
+            buf.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        resp['Content-Disposition'] = f'attachment; filename="{nombre_archivo}"'
+        return resp
+
+
 

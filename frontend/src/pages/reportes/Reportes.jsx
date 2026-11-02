@@ -1347,8 +1347,40 @@ export default function Reportes() {
   const [inicio, setInicio] = useState(primerDiaMes)
   const [fin, setFin] = useState(hoy)
   const [descargando, setDescargando] = useState(false)
+  const [descargandoExcel, setDescargandoExcel] = useState(false)
   const [modalBackupOpen, setModalBackupOpen] = useState(false)
   const [alarma, setAlarma] = useState({ isOpen: false, titulo: '', mensaje: '', tipo: 'error' })
+
+  const descargarExcel = async () => {
+    setDescargandoExcel(true)
+    try {
+      const res = await fetch(`/api/reportes/contable-excel/?fecha_inicio=${inicio}&fecha_fin=${fin}`, { headers: tok() })
+      if (!res.ok) {
+        let msg = 'Error al generar el Libro Contable Excel'
+        try {
+          const errData = await res.json()
+          if (errData?.error || errData?.detail) msg = errData.error || errData.detail
+        } catch (_) {}
+        throw new Error(msg)
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `reporte_contable_emirs_${inicio}_${fin}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setAlarma({
+        isOpen: true,
+        titulo: 'Error al Descargar Libro Contable',
+        mensaje: e.message || 'No se pudo generar ni descargar el Libro Contable Excel.',
+        tipo: 'error',
+      })
+    } finally {
+      setDescargandoExcel(false)
+    }
+  }
 
   const descargarPDF = async () => {
     setDescargando(true)
@@ -1388,6 +1420,15 @@ export default function Reportes() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={descargarExcel}
+            disabled={descargandoExcel}
+            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md shadow-emerald-950/20 cursor-pointer"
+          >
+            <i className={`ri-file-excel-2-line text-base ${descargandoExcel ? 'animate-spin' : ''}`}></i>
+            <span>{descargandoExcel ? 'Generando Excel...' : 'Libro Contable Excel (4 Hojas)'}</span>
+          </button>
           <button
             type="button"
             onClick={() => setModalBackupOpen(true)}

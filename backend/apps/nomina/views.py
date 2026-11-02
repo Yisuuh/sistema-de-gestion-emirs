@@ -1,10 +1,11 @@
 from decimal import Decimal
 
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters, serializers, status, viewsets
+from rest_framework import filters, permissions, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.usuarios.permissions import IsAdmin
 from .models import Empleado, LineaNomina, PeriodoNomina
 from .serializers import (
     EmpleadoSerializer,
@@ -17,6 +18,7 @@ from .serializers import (
 class EmpleadoViewSet(viewsets.ModelViewSet):
     queryset = Empleado.objects.all()
     serializer_class = EmpleadoSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['activo', 'puesto', 'metodo_pago', 'tipo_pago']
     search_fields = ['nombre', 'apellido', 'telefono', 'puesto']
@@ -26,6 +28,7 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
 
 class PeriodoNominaViewSet(viewsets.ModelViewSet):
     queryset = PeriodoNomina.objects.all()
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['estado']
     ordering_fields = ['fecha_inicio', 'fecha_fin']
@@ -163,6 +166,7 @@ class PeriodoNominaViewSet(viewsets.ModelViewSet):
 class LineaNominaViewSet(viewsets.ModelViewSet):
     queryset = LineaNomina.objects.select_related('empleado', 'periodo').all()
     serializer_class = LineaNominaSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['periodo', 'empleado']
 

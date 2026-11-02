@@ -306,7 +306,7 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
   const toArr = async r => r.ok ? r.json().then(d => Array.isArray(d) ? d : (d.results || [])) : [];
 
   const { data: cajaActivaData, isLoading: loadingCaja } = useQuery({
-    queryKey: ['caja-activa'],
+    queryKey: ['caja-activa-pos'],
     queryFn: async () => {
       const r = await fetch('/api/caja/cajas/caja_actual/', { headers: tok() });
       if (!r.ok) return null;
@@ -319,7 +319,7 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
 
   const { data: productos = [], isLoading: loadingProductos } = useQuery({
     queryKey: ['pos-productos'],
-    queryFn: () => fetch('/api/inventario/productos/?activos=true', { headers: tok() }).then(toArr),
+    queryFn: () => fetch('/api/inventario/productos/?activo=true', { headers: tok() }).then(toArr),
     staleTime: 5 * 60 * 1000,
   });
   const { data: servicios = [], isLoading: loadingServicios } = useQuery({
@@ -509,7 +509,8 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
         const venta = await r.json();
         setVentaOk(venta);
         setTicketVenta(venta);
-        queryClient.invalidateQueries({ queryKey: ['caja-activa'] });
+        queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+        queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
         queryClient.invalidateQueries({ queryKey: ['cajas'] });
         queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
         queryClient.invalidateQueries({ queryKey: ['balance-global'] });

@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
 import {
   Home, Package, ShoppingCart, Wallet, Users, FileText,
-  LogOut, CreditCard, Bell, Menu, X, Banknote, Receipt, TrendingDown, Truck,
+  LogOut, CreditCard, Bell, Menu, X, Banknote, Receipt, TrendingDown, Truck, UserCog,
 } from 'lucide-react'
 
-const NAV_SECTIONS = [
+const getNavSections = (rol) => [
   {
     label: 'Operaciones',
     links: [
@@ -26,7 +26,7 @@ const NAV_SECTIONS = [
     label: 'Clientes',
     links: [
       { to: '/clientes', icon: Users,    label: 'Clientes' },
-      { to: '/nomina',   icon: Banknote, label: 'Nómina' },
+      ...(rol !== 'vendedor' ? [{ to: '/nomina', icon: Banknote, label: 'Nómina' }] : []),
     ],
   },
   {
@@ -41,6 +41,7 @@ const NAV_SECTIONS = [
     label: 'Sistema',
     links: [
       { to: '/notificaciones', icon: Bell, label: 'Notificaciones' },
+      ...(rol === 'admin' ? [{ to: '/usuarios', icon: UserCog, label: 'Usuarios y Roles' }] : []),
     ],
   },
 ]
@@ -50,12 +51,16 @@ export default function MainLayout() {
   const location   = useLocation()
   const [open, setOpen] = useState(false)
   const username   = localStorage.getItem('username') || 'Usuario'
+  const rol        = localStorage.getItem('rol') || 'vendedor'
   const initial    = username.charAt(0).toUpperCase()
+  const navSections = getNavSections(rol)
 
   const handleLogout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('refreshToken')
     localStorage.removeItem('username')
+    localStorage.removeItem('rol')
+    localStorage.removeItem('nombre')
     navigate('/auth/login')
   }
 
@@ -123,7 +128,7 @@ export default function MainLayout() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto scrollbar-hide px-3 py-4 space-y-5">
-          {NAV_SECTIONS.map(({ label, links }) => (
+          {navSections.map(({ label, links }) => (
             <div key={label}>
               <p
                 className="px-2 mb-1.5 font-display font-semibold uppercase"

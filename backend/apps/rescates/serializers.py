@@ -93,6 +93,7 @@ class RescateSerializer(serializers.ModelSerializer):
             'vehiculo_marca_modelo', 'vehiculo_placas', 'medida_llanta',
             'caja', 'metodo_pago', 'tipo_tarjeta',
             'monto_efectivo', 'monto_electronico', 'num_operacion', 'num_referencia',
+            'costo_traslado', 'distancia_km', 'total_servicios', 'total_productos',
             'subtotal', 'descuento', 'total', 'notas',
             'detalles', 'created_at', 'updated_at'
         ]
@@ -143,25 +144,31 @@ class RescateSerializer(serializers.ModelSerializer):
             rescate = Rescate.objects.create(**validated_data)
 
             # Calcular subtotales de detalles si vienen incluidos
-            total_calc = Decimal('0.00')
+            total_serv = Decimal(str(rescate.costo_traslado or 0))
+            total_prod = Decimal('0.00')
             for det in detalles_data:
                 cant = det.get('cantidad', 1)
                 pu = Decimal(str(det.get('precio_unitario', 0)))
                 subt = Decimal(str(cant)) * pu
                 det['subtotal'] = subt
-                total_calc += subt
+                if det.get('producto'):
+                    total_prod += subt
+                else:
+                    total_serv += subt
                 DetalleRescate.objects.create(rescate=rescate, **det)
 
-            # Si se crearon detalles y el total era 0, actualizar totales
-            if detalles_data and (rescate.total == 0 or rescate.subtotal == 0):
-                rescate.subtotal = total_calc
-                rescate.total = max(Decimal('0.00'), total_calc - Decimal(str(rescate.descuento or 0)))
+            # Si se crearon detalles, actualizar totales segregados
+            if detalles_data:
+                rescate.total_servicios = total_serv
+                rescate.total_productos = total_prod
+                rescate.subtotal = total_serv + total_prod
+                rescate.total = max(Decimal('0.00'), rescate.subtotal - Decimal(str(rescate.descuento or 0)))
                 # Si el método de pago es efectivo y monto_efectivo era 0, ajustar al total
                 if rescate.metodo_pago == 'efectivo' and rescate.monto_efectivo == 0:
                     rescate.monto_efectivo = rescate.total
                 elif rescate.metodo_pago in ['tarjeta', 'transferencia'] and rescate.monto_electronico == 0:
                     rescate.monto_electronico = rescate.total
-                rescate.save(update_fields=['subtotal', 'total', 'monto_efectivo', 'monto_electronico'])
+                rescate.save(update_fields=['total_servicios', 'total_productos', 'subtotal', 'total', 'monto_efectivo', 'monto_electronico'])
 
         rescate.refresh_from_db()
         return rescate
@@ -176,19 +183,24 @@ class RescateSerializer(serializers.ModelSerializer):
 
             if detalles_data is not None:
                 instance.detalles.all().delete()
-                total_calc = Decimal('0.00')
+                total_serv = Decimal(str(instance.costo_traslado or 0))
+                total_prod = Decimal('0.00')
                 for det in detalles_data:
                     cant = det.get('cantidad', 1)
                     pu = Decimal(str(det.get('precio_unitario', 0)))
                     subt = Decimal(str(cant)) * pu
                     det['subtotal'] = subt
-                    total_calc += subt
+                    if det.get('producto'):
+                        total_prod += subt
+                    else:
+                        total_serv += subt
                     DetalleRescate.objects.create(rescate=instance, **det)
 
-                if total_calc > 0:
-                    instance.subtotal = total_calc
-                    instance.total = max(Decimal('0.00'), total_calc - Decimal(str(instance.descuento or 0)))
-                    instance.save(update_fields=['subtotal', 'total'])
+                instance.total_servicios = total_serv
+                instance.total_productos = total_prod
+                instance.subtotal = total_serv + total_prod
+                instance.total = max(Decimal('0.00'), instance.subtotal - Decimal(str(instance.descuento or 0)))
+                instance.save(update_fields=['total_servicios', 'total_productos', 'subtotal', 'total'])
 
         instance.refresh_from_db()
         return instance
@@ -210,6 +222,7 @@ class RescateListSerializer(serializers.ModelSerializer):
             'nombre_cliente', 'telefono_cliente',
             'ubicacion_texto', 'coordenadas_gps', 'vehiculo_marca_modelo', 'vehiculo_placas',
             'medida_llanta', 'metodo_pago', 'tipo_tarjeta', 'monto_efectivo', 'monto_electronico',
+            'costo_traslado', 'distancia_km', 'total_servicios', 'total_productos',
             'subtotal', 'descuento', 'total', 'notas',
             'total_detalles', 'detalles'
         ]

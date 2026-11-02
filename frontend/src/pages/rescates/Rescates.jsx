@@ -76,6 +76,8 @@ export default function Rescates() {
         }
       }
     },
+    refetchInterval: 10000,
+    refetchIntervalInBackground: false,
   })
 
   const { data: serviciosCatalogo = [] } = useQuery({
@@ -148,6 +150,8 @@ export default function Rescates() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rescates-lista'] })
+      queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] })
+      queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] })
       queryClient.invalidateQueries({ queryKey: ['reporte-balance-global'] })
     },
     onError: (err) => {
@@ -169,7 +173,8 @@ export default function Rescates() {
       const rescateFinal = data?.rescate || data
       queryClient.invalidateQueries({ queryKey: ['rescates-lista'] })
       queryClient.invalidateQueries({ queryKey: ['reporte-balance-global'] })
-      queryClient.invalidateQueries({ queryKey: ['caja-activa'] })
+      queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] })
+      queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] })
       queryClient.invalidateQueries({ queryKey: ['cajas'] })
       queryClient.invalidateQueries({ queryKey: ['historial-cajas'] })
       queryClient.invalidateQueries({ queryKey: ['balance-global'] })
@@ -699,7 +704,8 @@ export default function Rescates() {
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['rescates-lista'] })
             queryClient.invalidateQueries({ queryKey: ['reporte-balance-global'] })
-            queryClient.invalidateQueries({ queryKey: ['caja-activa'] })
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] })
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] })
             queryClient.invalidateQueries({ queryKey: ['cajas'] })
             queryClient.invalidateQueries({ queryKey: ['historial-cajas'] })
             queryClient.invalidateQueries({ queryKey: ['balance-global'] })

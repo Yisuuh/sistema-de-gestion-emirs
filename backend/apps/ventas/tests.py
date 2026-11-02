@@ -673,11 +673,21 @@ class VentasAndFeaturesTestCase(TestCase):
         self.assertEqual(Decimal(str(op_econ['utilidad_unitaria'])), Decimal('315.00'))
         self.assertEqual(Decimal(str(op_econ['utilidad_total'])), Decimal('1260.00'))
 
-        # Verificar generación de PDF para cliente
+        # Verificar generación de PDF para cliente y confidencialidad absoluta
         res_pdf = self.client.get(f'/api/ventas/cotizaciones/{cot_id}/pdf/')
         self.assertEqual(res_pdf.status_code, 200)
         self.assertEqual(res_pdf['Content-Type'], 'application/pdf')
         self.assertTrue(res_pdf.content.startswith(b'%PDF'))
+
+        # REGLA DE ORO DE SEGURIDAD: Jamás filtrar costos, márgenes, notas internas ni proveedor en el PDF
+        pdf_raw = res_pdf.content.decode('latin-1', errors='ignore')
+        self.assertNotIn('NOTA CONFIDENCIAL INTERNA PROVEEDOR MAYORISTA', pdf_raw)
+        self.assertNotIn('Bodega Mayorista Secreta', pdf_raw)
+        self.assertNotIn('costo_proveedor', pdf_raw)
+        self.assertNotIn('costo_con_iva', pdf_raw)
+        self.assertNotIn('valor_margen', pdf_raw)
+        self.assertNotIn('margen_unitario', pdf_raw)
+        self.assertNotIn('notas_internas', pdf_raw)
 
         # Cambiar estado a aceptada
         res_est = self.client.post(
@@ -722,6 +732,488 @@ class VentasAndFeaturesTestCase(TestCase):
         res_pdf = self.client.get(f'/api/ventas/cotizaciones/{cot_id}/pdf/')
         self.assertEqual(res_pdf.status_code, 200)
         self.assertTrue(res_pdf.content.startswith(b'%PDF'))
+
+    def test_cotizacion_tabulador_iva_y_desglose_msi(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            'cliente': self.cliente.id,
+            'nombre_cliente': 'Cliente Tabulador MSI',
+            'medida_solicitada': '205/55R16',
+            'cantidad_requerida': 4,
+            'mostrar_msi': True,
+            'opciones': [
+                {
+                    'gama': 'media',
+                    'origen': 'stock',
+                    'marca': 'Pirelli',
+                    'modelo': 'Cinturato P7',
+                    'medida': '205/55R16',
+                    'costo_proveedor': '1000.00',
+                    'costo_incluye_iva': False,
+                    'costo_con_iva': '1160.00',
+                    'utiliza_tabulador': True,
+                    'categoria_rin': 'rin_16',
+                    'margen_unitario_1': '450.00',
+                    'margen_unitario_2': '400.00',
+                    'margen_unitario_4': '350.00',
+                    'precio_unitario_publico': '1610.00',
+                    'precio_par': '3120.00',
+                    'precio_juego_4': '6040.00',
+                    'precio_cantidad_solicitada': '6040.00',
+                }
+            ]
+        }
+        res = self.client.post('/api/ventas/cotizaciones/', payload, format='json')
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertTrue(res.data['mostrar_msi'])
+
+        op = res.data['opciones'][0]
+        self.assertFalse(op['costo_incluye_iva'])
+        self.assertEqual(Decimal(str(op['costo_con_iva'])), Decimal('1160.00'))
+        self.assertEqual(op['categoria_rin'], 'rin_16')
+        self.assertTrue(op['utiliza_tabulador'])
+        self.assertEqual(Decimal(str(op['margen_unitario_1'])), Decimal('450.00'))
+        self.assertEqual(Decimal(str(op['margen_unitario_2'])), Decimal('400.00'))
+        self.assertEqual(Decimal(str(op['margen_unitario_4'])), Decimal('350.00'))
+
+        # Validar cálculo de MSI oficial (únicamente 3 Meses Sin Intereses, precio ya incluye interés)
+        self.assertIn('factor_interes', res.data)
+        msi = op['desglose_msi']
+        self.assertIn('3_meses', msi)
+        self.assertNotIn('6_meses', msi)
+        self.assertNotIn('9_meses', msi)
+        self.assertNotIn('12_meses', msi)
+
+        # Total 6040.00 (sin recargo adicional, factor 1.0) / 3 = 2013.33
+        self.assertEqual(Decimal(str(msi['3_meses']['total'])), Decimal('6040.00'))
+        self.assertEqual(Decimal(str(msi['3_meses']['mensualidad'])), Decimal('2013.33'))
+        self.assertEqual(msi['3_meses']['factor'], 1.0)
+        self.assertEqual(msi['3_meses']['label'], '3 Meses Sin Intereses')
+
+        cot_id = res.data['id']
+        # Validar PDF con MSI activo
+        res_pdf = self.client.get(f'/api/ventas/cotizaciones/{cot_id}/pdf/')
+        self.assertEqual(res_pdf.status_code, 200)
+        self.assertTrue(res_pdf.content.startswith(b'%PDF'))
+
+        # Desactivar MSI y validar PDF
+        res_patch = self.client.patch(f'/api/ventas/cotizaciones/{cot_id}/', {'mostrar_msi': False}, format='json')
+        self.assertEqual(res_patch.status_code, 200)
+        self.assertFalse(res_patch.data['mostrar_msi'])
+        res_pdf_no_msi = self.client.get(f'/api/ventas/cotizaciones/{cot_id}/pdf/')
+        self.assertEqual(res_pdf_no_msi.status_code, 200)
+        self.assertTrue(res_pdf_no_msi.content.startswith(b'%PDF'))
+
+    def test_cotizacion_msi_defensivo_ceros_y_nulos(self):
+        """
+        Verifica robustez matemática y defensiva cuando los precios o cantidades son 0 o nulos.
+        No debe ocurrir ZeroDivisionError ni fallos de redondeo.
+        """
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            'cliente': self.cliente.id,
+            'nombre_cliente': 'Cliente Caso Borde Ceros',
+            'medida_solicitada': '205/55R16',
+            'cantidad_requerida': 0,
+            'mostrar_msi': True,
+            'opciones': [
+                {
+                    'gama': 'economica',
+                    'origen': 'stock',
+                    'marca': 'Generica',
+                    'modelo': 'Basic',
+                    'medida': '205/55R16',
+                    'costo_proveedor': '0.00',
+                    'precio_unitario_publico': '0.00',
+                    'precio_par': '0.00',
+                    'precio_juego_4': '0.00',
+                    'precio_cantidad_solicitada': '0.00',
+                }
+            ]
+        }
+        res = self.client.post('/api/ventas/cotizaciones/', payload, format='json')
+        self.assertEqual(res.status_code, 201, res.data)
+        op = res.data['opciones'][0]
+        msi = op['desglose_msi']
+        self.assertIn('3_meses', msi)
+        self.assertEqual(msi['3_meses']['total'], 0.0)
+        self.assertEqual(msi['3_meses']['mensualidad'], 0.0)
+        self.assertEqual(msi['3_meses']['total_solicitado'], 0.0)
+        self.assertEqual(msi['3_meses']['mensualidad_solicitada'], 0.0)
+
+        # PDF tampoco debe fallar con valores en 0
+        cot_id = res.data['id']
+        res_pdf = self.client.get(f'/api/ventas/cotizaciones/{cot_id}/pdf/')
+        self.assertEqual(res_pdf.status_code, 200)
+        self.assertTrue(res_pdf.content.startswith(b'%PDF'))
+
+    def test_cotizacion_pdf_plantilla_institucional_completa(self):
+        """
+        Valida que el PDF comercial de cotización se genere exitosamente
+        con la plantilla institucional que incluye:
+        - Condiciones de compra y beneficios exclusivos
+        - Condiciones de pago
+        - Tabla institucional de datos bancarios Santander
+        - Bloque de atención, horarios y ubicación
+        """
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            'cliente': self.cliente.id,
+            'nombre_cliente': 'Juan Pérez González',
+            'telefono_cliente': '9991234567',
+            'vehiculo_referencia': 'Toyota Corolla 2021',
+            'medida_solicitada': '205/55R16',
+            'cantidad_requerida': 4,
+            'mostrar_msi': True,
+            'incluye_alineacion': True,
+            'servicios_adicionales': ['Balanceo dinámico computarizado', 'Válvulas cromadas de alta presión'],
+            'notas_cliente': 'Precios netos con IVA incluido. Válido hasta agotar existencias.',
+            'opciones': [
+                {
+                    'gama': 'media',
+                    'origen': 'stock',
+                    'marca': 'Pirelli',
+                    'modelo': 'Cinturato P7',
+                    'medida': '205/55R16',
+                    'costo_proveedor': '1100.00',
+                    'precio_unitario_publico': '1650.00',
+                    'precio_par': '3300.00',
+                    'precio_juego_4': '6600.00',
+                    'precio_cantidad_solicitada': '6600.00',
+                },
+                {
+                    'gama': 'premium',
+                    'origen': 'stock',
+                    'marca': 'Michelin',
+                    'modelo': 'Primacy 4',
+                    'medida': '205/55R16',
+                    'costo_proveedor': '1400.00',
+                    'precio_unitario_publico': '2100.00',
+                    'precio_par': '4200.00',
+                    'precio_juego_4': '8400.00',
+                    'precio_cantidad_solicitada': '8400.00',
+                    'recomendada': True,
+                }
+            ]
+        }
+        res = self.client.post('/api/ventas/cotizaciones/', payload, format='json')
+        self.assertEqual(res.status_code, 201)
+        cot_id = res.data['id']
+        folio = res.data['folio']
+
+        res_pdf = self.client.get(f'/api/ventas/cotizaciones/{cot_id}/pdf/')
+        self.assertEqual(res_pdf.status_code, 200)
+        self.assertEqual(res_pdf['Content-Type'], 'application/pdf')
+        self.assertIn(f'inline; filename="Cotizacion_{folio}.pdf"', res_pdf['Content-Disposition'])
+        self.assertTrue(res_pdf.content.startswith(b'%PDF'))
+        # Asegurar tamaño consistente y no vacío
+        self.assertGreater(len(res_pdf.content), 5000)
+
+    def test_cotizacion_formula_oficial_default_1_0790_y_precios_unitarios(self):
+        """
+        Valida que el factor de financiamiento por defecto sea 1.0790 (7.9%),
+        que la columna 'P. Unitario' mantenga el precio completo de 1 llanta
+        (sin dividir el juego entre 4), y que el desglose a 3 MSI calcule exactamente tot_3 / 3.
+        """
+        from apps.ventas.models import Cotizacion
+
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            'cliente': self.cliente.id,
+            'nombre_cliente': 'Cliente Formula Oficial 1.0790',
+            'medida_solicitada': '205/55R16',
+            'cantidad_requerida': 4,
+            'mostrar_msi': True,
+            'opciones': [
+                {
+                    'gama': 'media',
+                    'origen': 'stock',
+                    'marca': 'Yokohama',
+                    'modelo': 'BluEarth ES32',
+                    'medida': '205/55R16',
+                    'costo_proveedor': '1150.00',
+                    'precio_unitario_publico': '1865.00',
+                    'precio_par': '3615.00',
+                    'precio_juego_4': '7015.00',
+                    'precio_cantidad_solicitada': '7015.00',
+                    'recomendada': True,
+                }
+            ]
+        }
+        res = self.client.post('/api/ventas/cotizaciones/', payload, format='json')
+        self.assertEqual(res.status_code, 201)
+
+        # 1. Validar factor_interes default 1.0790 tanto en serializer como en BD
+        self.assertEqual(Decimal(str(res.data['factor_interes'])), Decimal('1.0790'))
+        cot_bd = Cotizacion.objects.get(id=res.data['id'])
+        self.assertEqual(cot_bd.factor_interes, Decimal('1.0790'))
+
+        # 2. Validar precios unitarios de 1 llanta completa vs juego
+        op_data = res.data['opciones'][0]
+        self.assertEqual(Decimal(str(op_data['precio_unitario_publico'])), Decimal('1865.00'))
+        self.assertEqual(Decimal(str(op_data['precio_par'])), Decimal('3615.00'))
+        self.assertEqual(Decimal(str(op_data['precio_juego_4'])), Decimal('7015.00'))
+
+        # 3. Validar desglose a 3 MSI
+        msi = op_data['desglose_msi']
+        self.assertIn('3_meses', msi)
+        self.assertEqual(Decimal(str(msi['3_meses']['total'])), Decimal('7015.00'))
+        self.assertEqual(Decimal(str(msi['3_meses']['mensualidad'])), Decimal('2338.33'))
+
+        # 4. Validar generación de PDF
+        res_pdf = self.client.get(f'/api/ventas/cotizaciones/{cot_bd.id}/pdf/')
+        self.assertEqual(res_pdf.status_code, 200)
+        self.assertEqual(res_pdf['Content-Type'], 'application/pdf')
+        self.assertTrue(res_pdf.content.startswith(b'%PDF'))
+
+
+    def test_vendedor_edicion_con_pin_admin_y_trazabilidad(self):
+        """Un vendedor puede editar una venta ingresando el PIN maestro del administrador"""
+        self.admin_user.set_pin('1234')
+        self.admin_user.save()
+
+        vendedor = Usuario.objects.create_user(
+            username='vendedor_pin',
+            password='password123',
+            rol='vendedor'
+        )
+
+        venta = Venta.objects.create(
+            folio='V-PIN001',
+            caja=self.caja,
+            empleado=self.empleado,
+            metodo_pago='efectivo',
+            monto_efectivo=Decimal('500.00'),
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            servicio=self.servicio,
+            cantidad=1,
+            precio_unitario=Decimal('500.00'),
+            subtotal=Decimal('500.00')
+        )
+
+        update_payload = {
+            'total': '700.00',
+            'subtotal': '700.00',
+            'monto_efectivo': '700.00',
+            'pin_admin': '1234',
+            'motivo': 'Ajuste de precio solicitado por cliente',
+            'detalles': [
+                {
+                    'servicio': self.servicio.id,
+                    'cantidad': 1,
+                    'precio_unitario': '700.00'
+                }
+            ]
+        }
+
+        self.client.force_authenticate(user=vendedor)
+        res = self.client.patch(f'/api/ventas/ventas/{venta.id}/', update_payload, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['fue_editada'])
+        self.assertEqual(Decimal(str(res.data['total_original'])), Decimal('500.00'))
+        self.assertEqual(Decimal(str(res.data['diferencia_monetaria'])), Decimal('200.00'))
+        self.assertEqual(res.data['autorizada_por_nombre'], self.admin_user.get_full_name() or self.admin_user.username)
+        self.assertEqual(res.data['motivo_edicion'], 'Ajuste de precio solicitado por cliente')
+
+        venta.refresh_from_db()
+        self.assertTrue(venta.fue_editada)
+        self.assertEqual(venta.total, Decimal('700.00'))
+        self.assertEqual(venta.total_original, Decimal('500.00'))
+        self.assertEqual(venta.diferencia_monetaria, Decimal('200.00'))
+        self.assertEqual(venta.autorizada_por, self.admin_user)
+        self.assertEqual(venta.editada_por, vendedor)
+
+    def test_vendedor_edicion_con_codigo_otp(self):
+        """Un vendedor puede editar una venta usando un código OTP de SolicitudAutorizacion"""
+        from apps.ventas.models import SolicitudAutorizacion
+
+        vendedor = Usuario.objects.create_user(
+            username='vendedor_otp',
+            password='password123',
+            rol='vendedor'
+        )
+
+        venta = Venta.objects.create(
+            folio='V-OTP001',
+            caja=self.caja,
+            empleado=self.empleado,
+            metodo_pago='efectivo',
+            monto_efectivo=Decimal('500.00'),
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            servicio=self.servicio,
+            cantidad=1,
+            precio_unitario=Decimal('500.00'),
+            subtotal=Decimal('500.00')
+        )
+
+        solicitud = SolicitudAutorizacion.objects.create(
+            venta=venta,
+            accion='editar_venta',
+            solicitado_por=vendedor,
+            autorizado_por=self.admin_user,
+            motivo='Error en captura de servicio',
+            codigo_otp='987654',
+            estado='aprobada',
+            expires_at=timezone.now() + timezone.timedelta(minutes=15)
+        )
+
+        update_payload = {
+            'total': '650.00',
+            'subtotal': '650.00',
+            'monto_efectivo': '650.00',
+            'codigo_autorizacion': '987654',
+            'detalles': [
+                {
+                    'servicio': self.servicio.id,
+                    'cantidad': 1,
+                    'precio_unitario': '650.00'
+                }
+            ]
+        }
+
+        self.client.force_authenticate(user=vendedor)
+        res = self.client.patch(f'/api/ventas/ventas/{venta.id}/', update_payload, format='json')
+        self.assertEqual(res.status_code, 200)
+
+        # La solicitud debe marcarse como consumida
+        solicitud.refresh_from_db()
+        self.assertEqual(solicitud.estado, 'consumida')
+
+        # Si se intenta reutilizar el mismo código OTP -> 403
+        res_reuso = self.client.patch(f'/api/ventas/ventas/{venta.id}/', update_payload, format='json')
+        self.assertEqual(res_reuso.status_code, 403)
+
+    def test_vendedor_eliminacion_con_pin_admin_y_reversion_inventario(self):
+        """Eliminar una venta revierte exactamente las salidas de inventario y descuenta de caja"""
+        self.admin_user.set_pin('4321')
+        self.admin_user.save()
+
+        vendedor = Usuario.objects.create_user(
+            username='vendedor_del',
+            password='password123',
+            rol='vendedor'
+        )
+
+        # Stock inicial es 10 (creado en setUp)
+        self.assertEqual(self.producto.stock_actual, 10)
+
+        # Crear venta que consume 2 llantas
+        venta = Venta.objects.create(
+            folio='V-DEL001',
+            caja=self.caja,
+            empleado=self.empleado,
+            metodo_pago='efectivo',
+            monto_efectivo=Decimal('3000.00'),
+            subtotal=Decimal('3000.00'),
+            total=Decimal('3000.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            producto=self.producto,
+            descripcion=self.producto.descripcion_completa,
+            cantidad=2,
+            precio_unitario=Decimal('1500.00'),
+            subtotal=Decimal('3000.00')
+        )
+        SalidaInventario.objects.create(
+            producto=self.producto,
+            venta=venta,
+            cantidad=2,
+            precio_venta=Decimal('1500.00'),
+            precio_costo=Decimal('1000.00'),
+            fecha_venta=timezone.localdate()
+        )
+
+        self.assertEqual(self.producto.stock_actual, 8)
+        self.assertEqual(self.caja.total_ventas, Decimal('3000.00'))
+
+        # Eliminar con PIN admin
+        self.client.force_authenticate(user=vendedor)
+        res = self.client.delete(
+            f'/api/ventas/ventas/{venta.id}/',
+            data={'pin_admin': '4321', 'motivo': 'Cliente canceló compra'},
+            format='json'
+        )
+        self.assertEqual(res.status_code, 204)
+
+        # Stock vuelve a 10
+        self.assertEqual(self.producto.stock_actual, 10)
+        # Salida eliminada
+        self.assertFalse(SalidaInventario.objects.filter(venta_id=venta.id).exists())
+        # Total en caja vuelve a 0
+        self.assertEqual(self.caja.total_ventas, Decimal('0.00'))
+
+    def test_reimpresion_ticket_ventas_caja(self):
+        """Endpoint ventas_caja devuelve VentaSerializer completo con detalles para ticket térmico"""
+        venta = Venta.objects.create(
+            folio='V-TICKET001',
+            caja=self.caja,
+            empleado=self.empleado,
+            cliente=self.cliente,
+            metodo_pago='efectivo',
+            monto_efectivo=Decimal('1200.00'),
+            subtotal=Decimal('1200.00'),
+            total=Decimal('1200.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            servicio=self.servicio,
+            descripcion='Alineación y balanceo',
+            cantidad=1,
+            precio_unitario=Decimal('1200.00'),
+            subtotal=Decimal('1200.00')
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        res = self.client.get(f'/api/caja/cajas/{self.caja.id}/ventas_caja/')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('ventas', res.data)
+        self.assertEqual(len(res.data['ventas']), 1)
+        venta_data = res.data['ventas'][0]
+        self.assertEqual(venta_data['folio'], 'V-TICKET001')
+        self.assertIn('detalles', venta_data)
+        self.assertEqual(len(venta_data['detalles']), 1)
+        self.assertEqual(venta_data['detalles'][0]['descripcion'], 'Alineación y balanceo')
+        self.assertEqual(venta_data['cliente_nombre'], 'Cliente Test')
+        self.assertEqual(venta_data['empleado_nombre'], 'Juan Pérez')
+
+    def test_gastos_metodos_pago_tarjeta_debito_y_credito(self):
+        """Gasto acepta tarjeta_debito y tarjeta_credito"""
+        from apps.gastos.models import Gasto, CategoriaGasto
+
+        cat = CategoriaGasto.objects.create(nombre='Insumos Taller')
+
+        self.client.force_authenticate(user=self.admin_user)
+
+        res_debito = self.client.post('/api/gastos/gastos/', {
+            'concepto': 'Compra herramientas débito',
+            'monto': '450.00',
+            'categoria': cat.id,
+            'metodo_pago': 'tarjeta_debito',
+        }, format='json')
+        self.assertEqual(res_debito.status_code, 201)
+        self.assertEqual(res_debito.data['metodo_pago'], 'tarjeta_debito')
+
+        res_credito = self.client.post('/api/gastos/gastos/', {
+            'concepto': 'Refacciones crédito',
+            'monto': '1200.00',
+            'categoria': cat.id,
+            'metodo_pago': 'tarjeta_credito',
+        }, format='json')
+        self.assertEqual(res_credito.status_code, 201)
+        self.assertEqual(res_credito.data['metodo_pago'], 'tarjeta_credito')
+
+
+
+
 
 
 

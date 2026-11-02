@@ -25,7 +25,9 @@ export default function Login() {
         const data = await response.json();
         localStorage.setItem('token', data.access);
         localStorage.setItem('refreshToken', data.refresh);
-        localStorage.setItem('username', username);
+        localStorage.setItem('username', data.username || username);
+        localStorage.setItem('rol', data.rol || 'vendedor');
+        localStorage.setItem('nombre', data.nombre_completo || data.username || username);
         navigate('/dashboard');
       } else {
         const errorData = await response.json();

@@ -23,14 +23,14 @@ function TireIcon() {
   )
 }
 
-function LogoOrTire() {
+function LogoOrTire({ className = 'w-full h-full object-contain drop-shadow-2xl' }) {
   const [imgError, setImgError] = useState(false)
   if (!imgError) {
     return (
       <img
         src="/images/logo.jpeg"
-        alt="Centro Llantero EmirS"
-        className="w-full h-full object-contain drop-shadow-2xl"
+        alt="Emir's Centro Llantero"
+        className={className}
         onError={() => setImgError(true)}
       />
     )
@@ -66,9 +66,11 @@ export default function AuthLayout() {
         <div className="flex-1 flex flex-col items-center justify-center px-14 py-12 relative z-10">
 
           {/* Logo grande — protagonista */}
-          <div className="w-72 h-72 mb-8"
-            style={{ filter: 'drop-shadow(0 0 32px rgba(223,0,10,0.35))' }}>
-            <LogoOrTire />
+          <div
+            className="w-80 h-80 xl:w-96 xl:h-96 mb-6 rounded-3xl overflow-hidden flex items-center justify-center"
+            style={{ filter: 'drop-shadow(0 0 36px rgba(223,0,10,0.35))' }}
+          >
+            <LogoOrTire className="w-full h-full object-contain scale-105" />
           </div>
 
           {/* Tagline */}
@@ -108,12 +110,20 @@ export default function AuthLayout() {
         <div className="absolute top-0 right-0 w-40 h-1 bg-gradient-to-l from-[#df000a] to-transparent opacity-60" />
         <div className="absolute bottom-0 left-0 w-40 h-1 bg-gradient-to-r from-[#df000a] to-transparent opacity-30" />
 
-        {/* Logo móvil */}
-        <div className="lg:hidden text-center mb-10">
-          <div className="w-32 h-32 mx-auto mb-4">
-            <LogoOrTire />
+        {/* Logo móvil — logo completo oficial */}
+        <div className="lg:hidden w-full max-w-sm text-center mb-8">
+          <div
+            className="w-64 h-48 sm:w-72 sm:h-52 mx-auto mb-3 rounded-2xl overflow-hidden flex items-center justify-center bg-black border border-white/5"
+            style={{ filter: 'drop-shadow(0 0 24px rgba(223,0,10,0.35))' }}
+          >
+            <LogoOrTire className="w-full h-full object-cover object-center" />
           </div>
-          <p className="text-gray-500 text-sm">Sistema de Gestión</p>
+          <p className="font-display font-semibold text-gray-300 text-sm tracking-wider uppercase">
+            Sistema integral de gestión
+          </p>
+          <p className="text-gray-600 text-[11px] tracking-widest mt-0.5">
+            VENTAS · INVENTARIO · CAJA · REPORTES
+          </p>
         </div>
 
         <div className="w-full max-w-sm page-in">

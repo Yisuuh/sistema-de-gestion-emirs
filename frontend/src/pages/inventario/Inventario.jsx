@@ -10,13 +10,12 @@ import {
   BuildingStorefrontIcon,
   DocumentTextIcon,
   ArrowPathIcon,
-  FunnelIcon,
   TableCellsIcon,
-  ListBulletIcon,
   ChartBarIcon,
   DocumentArrowUpIcon,
 } from '@heroicons/react/24/outline';
 import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib/medidaUtils';
+import ModalProducto from './ModalProducto';
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 const fmt = (n, d = 2) => Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -43,14 +42,22 @@ function Spinner() {
 
 // ─── Vista Consolidado ────────────────────────────────────────────────────────
 function TabConsolidado({ onVerKardex }) {
+  const queryClient = useQueryClient();
   const [busqueda, setBusqueda] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('todos');
   const [filtroMarca, setFiltroMarca]   = useState('');
+  const [filtroActivo, setFiltroActivo] = useState('activos'); // 'activos' | 'archivados' | 'todos'
+  const [modalProductoOpen, setModalProductoOpen] = useState(false);
+  const [productoAEditar, setProductoAEditar] = useState(null);
+  const [msg, setMsg] = useState(null);
 
   const { data, isLoading: loading, refetch } = useQuery({
-    queryKey: ['inventario-consolidado'],
+    queryKey: ['inventario-consolidado', filtroActivo],
     queryFn: async () => {
-      const r = await fetch('/api/inventario/productos/consolidado/', { headers: tok() });
+      let param = 'true';
+      if (filtroActivo === 'archivados') param = 'false';
+      if (filtroActivo === 'todos') param = 'all';
+      const r = await fetch(`/api/inventario/productos/consolidado/?activo=${param}`, { headers: tok() });
       return r.json();
     },
   });
@@ -71,8 +78,76 @@ function TabConsolidado({ onVerKardex }) {
     }
   };
 
+  const toggleActivoMut = useMutation({
+    mutationFn: async ({ id, activo }) => {
+      const res = await fetch(`/api/inventario/productos/${id}/`, {
+        method: 'PATCH',
+        headers: { ...tok(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || 'Error al actualizar estado del producto');
+      }
+      return res.json();
+    },
+    onSuccess: (_, { activo }) => {
+      setMsg({
+        tipo: 'ok',
+        txt: activo ? 'Producto reactivado en el catálogo.' : 'Producto archivado/descontinuado.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
+      queryClient.invalidateQueries({ queryKey: ['inventario-productos'] });
+      setTimeout(() => setMsg(null), 4000);
+    },
+    onError: (err) => {
+      setMsg({ tipo: 'err', txt: err.message });
+      setTimeout(() => setMsg(null), 4000);
+    },
+  });
+
+  const eliminarMut = useMutation({
+    mutationFn: async (id) => {
+      const res = await fetch(`/api/inventario/productos/${id}/`, {
+        method: 'DELETE',
+        headers: tok(),
+      });
+      if (!res.ok && res.status !== 204) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || 'Error al eliminar el producto');
+      }
+    },
+    onSuccess: () => {
+      setMsg({ tipo: 'ok', txt: 'Producto eliminado permanentemente del catálogo.' });
+      queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
+      queryClient.invalidateQueries({ queryKey: ['inventario-productos'] });
+      setTimeout(() => setMsg(null), 4000);
+    },
+    onError: (err) => {
+      setMsg({ tipo: 'err', txt: err.message });
+      setTimeout(() => setMsg(null), 4000);
+    },
+  });
+
+  const toggleActivo = (p, activo) => {
+    const accion = activo ? 'reactivar' : 'archivar';
+    if (window.confirm(`¿Desea ${accion} el producto "${p.codigo} - ${p.marca} ${p.modelo}"?`)) {
+      toggleActivoMut.mutate({ id: p.id, activo });
+    }
+  };
+
+  const handleEliminar = (p) => {
+    if (
+      window.confirm(
+        `¿Está seguro de eliminar definitivamente el producto "${p.codigo} - ${p.marca} ${p.modelo}"? Esta acción no se puede revertir.`
+      )
+    ) {
+      eliminarMut.mutate(p.id);
+    }
+  };
+
   const marcas = useMemo(
-    () => data ? [...new Set(data.productos.map(p => p.marca))] : [],
+    () => (data?.productos ? [...new Set(data.productos.map(p => p.marca))] : []),
     [data]
   );
 
@@ -92,14 +167,28 @@ function TabConsolidado({ onVerKardex }) {
 
   return (
     <div>
+      {/* Toast de confirmación/error */}
+      {msg && (
+        <div
+          className={`mb-4 px-4 py-3 rounded-lg text-sm flex items-center gap-2 ${
+            msg.tipo === 'ok'
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : 'bg-red-50 text-red-700 border border-red-200'
+          }`}
+        >
+          {msg.tipo === 'ok' ? <CheckCircleIcon className="h-5 w-5" /> : <XCircleIcon className="h-5 w-5" />}
+          <span className="font-medium">{msg.txt}</span>
+        </div>
+      )}
+
       {/* KPI cards */}
       {totales && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           {[
-            { label: 'Productos',      val: totales.total_productos,                    cls: 'text-[#df000a]' },
-            { label: 'Piezas en stock',val: totales.total_piezas,                       cls: 'text-green-700' },
+            { label: 'Productos',       val: totales.total_productos,                    cls: 'text-[#df000a]' },
+            { label: 'Piezas en stock', val: totales.total_piezas,                       cls: 'text-green-700' },
             { label: 'Valor inventario',val: `$${fmt(totales.valor_inventario_total)}`, cls: 'text-indigo-700' },
-            { label: 'Agotados',       val: totales.agotados,                           cls: 'text-red-700' },
+            { label: 'Agotados',        val: totales.agotados,                           cls: 'text-red-700' },
           ].map(c => (
             <div key={c.label} className="bg-white rounded-lg border p-3">
               <p className="text-xs text-gray-500">{c.label}</p>
@@ -109,44 +198,94 @@ function TabConsolidado({ onVerKardex }) {
         </div>
       )}
 
-      {/* Filtros */}
-      <div className="flex flex-wrap gap-2 mb-3 items-start">
-        <div className="flex-1 min-w-[200px]">
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
-              placeholder="Buscar código, medida (ej. 2055516), marca, modelo…"
-              value={busqueda}
-              onChange={e => setBusqueda(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]"
-            />
+      {/* Barra superior de herramientas y filtros */}
+      <div className="flex flex-col gap-3 mb-4">
+        {/* Fila 1: Filtro de catálogo + Botones de acción principales */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Selector de Catálogo */}
+          <div className="inline-flex rounded-lg border border-gray-300 bg-gray-100 p-1 text-xs font-semibold">
+            {[
+              { id: 'activos',    label: 'Activos' },
+              { id: 'archivados', label: 'Archivados / Descontinuados' },
+              { id: 'todos',      label: 'Todos los productos' },
+            ].map(op => (
+              <button
+                key={op.id}
+                type="button"
+                onClick={() => setFiltroActivo(op.id)}
+                className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                  filtroActivo === op.id
+                    ? 'bg-white text-gray-900 shadow-xs font-bold'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {op.label}
+              </button>
+            ))}
           </div>
-          {medidaDetectada && (
-            <div className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-xs font-bold text-[#df000a]">
-              <i className="ri-focus-3-line"></i>
-              <span>Medida detectada: {medidaDetectada}</span>
-            </div>
-          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setProductoAEditar(null);
+                setModalProductoOpen(true);
+              }}
+              className="flex items-center gap-2 px-3.5 py-2 bg-[#df000a] text-white rounded-lg text-sm font-semibold hover:bg-[#c4000a] shadow-xs transition-colors cursor-pointer"
+            >
+              <i className="ri-add-line text-base"></i>
+              <span>+ Nuevo Producto</span>
+            </button>
+
+            <button
+              onClick={exportarCSV}
+              className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
+            >
+              <i className="ri-download-2-line text-base"></i> Exportar CSV
+            </button>
+          </div>
         </div>
-        <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]">
-          <option value="todos">Todos los estados</option>
-          <option value="disponible">Disponible</option>
-          <option value="stock_bajo">Stock bajo</option>
-          <option value="agotado">Agotado</option>
-        </select>
-        <select value={filtroMarca} onChange={e => setFiltroMarca(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]">
-          <option value="">Todas las marcas</option>
-          {marcas.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <button onClick={refetch} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50" title="Recargar">
-          <ArrowPathIcon className="h-5 w-5 text-gray-500" />
-        </button>
-        <button onClick={exportarCSV}
-          className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">
-          <ArrowDownTrayIcon className="h-4 w-4" /> Exportar CSV
-        </button>
+
+        {/* Fila 2: Búsqueda y selects */}
+        <div className="flex flex-wrap gap-2 items-start">
+          <div className="flex-1 min-w-[200px]">
+            <div className="relative">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                placeholder="Buscar código, medida (ej. 2055516), marca, modelo…"
+                value={busqueda}
+                onChange={e => setBusqueda(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]"
+              />
+            </div>
+            {medidaDetectada && (
+              <div className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-xs font-bold text-[#df000a]">
+                <i className="ri-focus-3-line"></i>
+                <span>Medida detectada: {medidaDetectada}</span>
+              </div>
+            )}
+          </div>
+          <select
+            value={filtroEstado}
+            onChange={e => setFiltroEstado(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]"
+          >
+            <option value="todos">Todos los estados</option>
+            <option value="disponible">Disponible</option>
+            <option value="stock_bajo">Stock bajo</option>
+            <option value="agotado">Agotado</option>
+          </select>
+          <select
+            value={filtroMarca}
+            onChange={e => setFiltroMarca(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#df000a]"
+          >
+            <option value="">Todas las marcas</option>
+            {marcas.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <button onClick={refetch} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50" title="Recargar">
+            <ArrowPathIcon className="h-5 w-5 text-gray-500" />
+          </button>
+        </div>
       </div>
 
       {loading ? <Spinner /> : (
@@ -154,7 +293,7 @@ function TabConsolidado({ onVerKardex }) {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {['Código','Medida','Marca / Modelo','IC/IV','Entradas','Salidas','Stock','P. Venta','P. Compra','Factura','Estado',''].map(h => (
+                {['Código','Medida','Marca / Modelo','IC/IV','Entradas','Salidas','Stock','P. Venta','P. Compra','Factura','Estado','Acciones'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -163,40 +302,132 @@ function TabConsolidado({ onVerKardex }) {
               {filas.length === 0 && (
                 <tr><td colSpan={12} className="text-center py-10 text-gray-400">Sin resultados</td></tr>
               )}
-              {filas.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-mono text-gray-800 whitespace-nowrap">{p.codigo}</td>
-                  <td className="px-4 py-3 font-mono font-medium text-[#df000a] whitespace-nowrap">{p.medida}</td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">{p.marca}</div>
-                    <div className="text-gray-500 text-xs">{p.modelo}</div>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-gray-600 whitespace-nowrap">{p.indice_carga}{p.indice_velocidad}</td>
-                  <td className="px-4 py-3 text-center text-green-700 font-semibold">{p.entradas_total}</td>
-                  <td className="px-4 py-3 text-center text-red-600 font-semibold">{p.salidas_total}</td>
-                  <td className="px-4 py-3 text-center">
-                    <span className={`font-bold text-base ${p.estado_stock === 'agotado' ? 'text-red-600' : p.estado_stock === 'stock_bajo' ? 'text-yellow-600' : 'text-green-600'}`}>
-                      {p.stock_actual}
-                    </span>
-                    <span className="text-gray-400 text-xs ml-1">/ {p.stock_minimo}</span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono whitespace-nowrap">${fmt(p.precio_venta)}</td>
-                  <td className="px-4 py-3 text-right font-mono whitespace-nowrap text-gray-500">
-                    {p.ultimo_precio_compra ? `$${fmt(p.ultimo_precio_compra)}` : '—'}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{p.ultima_factura ?? '—'}</td>
-                  <td className="px-4 py-3 whitespace-nowrap"><Badge val={p.estado_stock} map={STOCK_LABELS} /></td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <button onClick={() => onVerKardex(p)} className="text-xs text-[#df000a] hover:underline">Kardex</button>
-                  </td>
-                </tr>
-              ))}
+              {filas.map(p => {
+                const esInactivo = p.activo === false;
+                const sinMovimientos = (p.entradas_total === 0 && p.salidas_total === 0);
+
+                return (
+                  <tr key={p.id} className={`hover:bg-gray-50 transition-colors ${esInactivo ? 'bg-gray-50/70 opacity-80' : ''}`}>
+                    <td className="px-4 py-3 font-mono text-gray-800 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <span>{p.codigo}</span>
+                        {esInactivo && (
+                          <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">
+                            Archivado
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-mono font-medium text-[#df000a] whitespace-nowrap">{p.medida}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900">{p.marca}</div>
+                      <div className="text-gray-500 text-xs">{p.modelo}</div>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-gray-600 whitespace-nowrap">{p.indice_carga}{p.indice_velocidad}</td>
+                    <td className="px-4 py-3 text-center text-green-700 font-semibold">{p.entradas_total}</td>
+                    <td className="px-4 py-3 text-center text-red-600 font-semibold">{p.salidas_total}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`font-bold text-base ${p.estado_stock === 'agotado' ? 'text-red-600' : p.estado_stock === 'stock_bajo' ? 'text-yellow-600' : 'text-green-600'}`}>
+                        {p.stock_actual}
+                      </span>
+                      <span className="text-gray-400 text-xs ml-1">/ {p.stock_minimo}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono whitespace-nowrap">${fmt(p.precio_venta)}</td>
+                    <td className="px-4 py-3 text-right font-mono whitespace-nowrap text-gray-500">
+                      {p.ultimo_precio_compra ? `$${fmt(p.ultimo_precio_compra)}` : '—'}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{p.ultima_factura ?? '—'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap"><Badge val={p.estado_stock} map={STOCK_LABELS} /></td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {/* Editar */}
+                        <button
+                          onClick={() => {
+                            setProductoAEditar(p);
+                            setModalProductoOpen(true);
+                          }}
+                          className="p-1 rounded text-gray-600 hover:text-indigo-600 hover:bg-gray-100 transition-colors"
+                          title="Editar producto"
+                        >
+                          <i className="ri-edit-line text-base"></i>
+                        </button>
+
+                        {/* Archivar / Desactivar o Reactivar */}
+                        {!esInactivo ? (
+                          <button
+                            onClick={() => toggleActivo(p, false)}
+                            className="p-1 rounded text-gray-600 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                            title="Archivar / Desactivar producto"
+                          >
+                            <i className="ri-inbox-archive-line text-base"></i>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => toggleActivo(p, true)}
+                            className="p-1 rounded text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 transition-colors"
+                            title="Reactivar producto en catálogo"
+                          >
+                            <i className="ri-refresh-line text-base"></i>
+                          </button>
+                        )}
+
+                        {/* Kardex */}
+                        <button
+                          onClick={() => onVerKardex(p)}
+                          className="p-1 rounded text-[#df000a] hover:text-[#b80008] hover:bg-red-50 transition-colors"
+                          title="Ver Kárdex"
+                        >
+                          <i className="ri-line-chart-line text-base"></i>
+                        </button>
+
+                        {/* Eliminar Definitivo (solo sin movimientos) */}
+                        {sinMovimientos && (
+                          <button
+                            onClick={() => handleEliminar(p)}
+                            className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            title="Eliminar producto permanentemente (sin movimientos)"
+                          >
+                            <i className="ri-delete-bin-line text-base"></i>
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-          <div className="px-4 py-2 text-xs text-gray-500 border-t">
-            Mostrando {filas.length} de {data?.productos.length ?? 0} productos
+          <div className="px-4 py-2 text-xs text-gray-500 border-t flex justify-between items-center">
+            <span>Mostrando {filas.length} de {data?.productos?.length ?? 0} productos</span>
+            <span className="text-[11px] text-gray-400">
+              {filtroActivo === 'activos' && 'Filtro: Solo productos activos'}
+              {filtroActivo === 'archivados' && 'Filtro: Solo productos archivados'}
+              {filtroActivo === 'todos' && 'Filtro: Todos los productos'}
+            </span>
           </div>
         </div>
+      )}
+
+      {/* Modal Producto (Creación / Edición) */}
+      {modalProductoOpen && (
+        <ModalProducto
+          isOpen={modalProductoOpen}
+          producto={productoAEditar}
+          onClose={() => {
+            setModalProductoOpen(false);
+            setProductoAEditar(null);
+          }}
+          onGuardado={(pGuardado) => {
+            setMsg({
+              tipo: 'ok',
+              txt: productoAEditar
+                ? `Producto ${pGuardado.codigo} actualizado correctamente.`
+                : `Producto ${pGuardado.codigo} registrado exitosamente.`,
+            });
+            refetch();
+            setTimeout(() => setMsg(null), 4000);
+          }}
+        />
       )}
     </div>
   );
@@ -323,10 +554,12 @@ function ModalVincularFactura({ entrada, onGuardado, onClose }) {
 // ─── Vista Entradas ───────────────────────────────────────────────────────────
 function TabEntradas({ proveedores, productos }) {
   const queryClient = useQueryClient();
-  const [modal, setModal]               = useState(false);
-  const [modalVincular, setModalVincular] = useState(null);
-  const [msg, setMsg]                   = useState(null);
-  const [filtros, setFiltros]           = useState({ fecha_inicio: '', fecha_fin: '', proveedor: '', estado: '' });
+  const [modal, setModal]                           = useState(false);
+  const [modalNuevoProducto, setModalNuevoProducto] = useState(false);
+  const [modalVincular, setModalVincular]           = useState(null);
+  const [msg, setMsg]                               = useState(null);
+  const [filtroRapido, setFiltroRapido]             = useState('todas'); // 'todas' | 'disponible' | 'consumidas' | 'remisiones'
+  const [filtros, setFiltros]                       = useState({ fecha_inicio: '', fecha_fin: '', proveedor: '', estado: '' });
   const [form, setForm] = useState({
     producto: '', proveedor: '', cantidad: 1, precio_compra: '',
     fecha_compra: new Date().toISOString().split('T')[0],
@@ -396,13 +629,28 @@ function TabEntradas({ proveedores, productos }) {
 
   const cambiarEstado = (id, estado) => cambiarEstadoMut.mutate({ id, estado });
 
+  const entradasFiltradas = useMemo(() => {
+    return entradas.filter(e => {
+      if (filtroRapido === 'disponible') {
+        return e.estado === 'disponible' && e.en_inventario !== false;
+      }
+      if (filtroRapido === 'consumidas') {
+        return e.estado === 'consumido' || e.factura_consumida === true;
+      }
+      if (filtroRapido === 'remisiones') {
+        return Boolean(e.factura_pendiente);
+      }
+      return true;
+    });
+  }, [entradas, filtroRapido]);
+
   const totalPiezas = useMemo(
-    () => entradas.reduce((s, e) => s + (e.cantidad ?? 0), 0),
-    [entradas]
+    () => entradasFiltradas.reduce((s, e) => s + (e.cantidad ?? 0), 0),
+    [entradasFiltradas]
   );
   const totalCosto = useMemo(
-    () => entradas.reduce((s, e) => s + (e.cantidad ?? 0) * parseFloat(e.precio_compra ?? 0), 0),
-    [entradas]
+    () => entradasFiltradas.reduce((s, e) => s + (e.cantidad ?? 0) * parseFloat(e.precio_compra ?? 0), 0),
+    [entradasFiltradas]
   );
 
   const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a]';
@@ -415,6 +663,54 @@ function TabEntradas({ proveedores, productos }) {
           {msg.txt}
         </div>
       )}
+
+      {/* Pills de filtros rápidos */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {[
+          { id: 'todas', label: 'Todas las entradas', count: entradas.length },
+          {
+            id: 'disponible',
+            label: 'Con Stock Disponible',
+            count: entradas.filter(e => e.estado === 'disponible' && e.en_inventario !== false).length,
+          },
+          {
+            id: 'consumidas',
+            label: 'Facturas Consumidas',
+            count: entradas.filter(e => e.estado === 'consumido' || e.factura_consumida === true).length,
+          },
+          {
+            id: 'remisiones',
+            label: 'Facturas Pendientes (Remisiones)',
+            count: entradas.filter(e => Boolean(e.factura_pendiente)).length,
+            badgeCls: 'bg-amber-100 text-amber-800',
+          },
+        ].map(pill => {
+          const isActivo = filtroRapido === pill.id;
+          return (
+            <button
+              key={pill.id}
+              type="button"
+              onClick={() => setFiltroRapido(pill.id)}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                isActivo
+                  ? 'bg-gray-900 text-white shadow-xs'
+                  : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <span>{pill.label}</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[11px] font-bold ${
+                  isActivo
+                    ? 'bg-white/20 text-white'
+                    : pill.badgeCls || 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {pill.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       {/* Filtros */}
       <div className="flex flex-wrap gap-2 mb-3">
@@ -433,14 +729,14 @@ function TabEntradas({ proveedores, productos }) {
           {Object.entries(ESTADO_LABELS).map(([v, l]) => <option key={v} value={v}>{l.label}</option>)}
         </select>
         <button onClick={() => setModal(true)}
-          className="w-full sm:w-auto ml-auto flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
-          + Nueva entrada
+          className="w-full sm:w-auto ml-auto flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 cursor-pointer">
+          <i className="ri-add-line text-base"></i> Nueva entrada
         </button>
       </div>
 
       {/* Totales */}
       <div className="flex gap-4 mb-3 text-sm">
-        <span className="text-gray-500">Registros: <strong>{entradas.length}</strong></span>
+        <span className="text-gray-500">Registros: <strong>{entradasFiltradas.length}</strong></span>
         <span className="text-gray-500">Piezas: <strong className="text-green-700">{totalPiezas}</strong></span>
         <span className="text-gray-500">Costo total: <strong className="text-indigo-700">${fmt(totalCosto)}</strong></span>
       </div>
@@ -456,10 +752,10 @@ function TabEntradas({ proveedores, productos }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {entradas.length === 0 && (
+              {entradasFiltradas.length === 0 && (
                 <tr><td colSpan={12} className="text-center py-10 text-gray-400">Sin entradas para los filtros seleccionados</td></tr>
               )}
-              {entradas.map(e => (
+              {entradasFiltradas.map(e => (
                 <tr key={e.id} className="hover:bg-gray-50">
                   <td className="px-3 py-3 whitespace-nowrap text-gray-600">{e.fecha_compra}</td>
                   <td className="px-3 py-3 whitespace-nowrap">
@@ -496,10 +792,10 @@ function TabEntradas({ proveedores, productos }) {
                     {e.factura_pendiente ? (
                       <button
                         onClick={() => setModalVincular(e)}
-                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors inline-flex items-center gap-1"
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors inline-flex items-center gap-1 cursor-pointer"
                         title="Vincular Factura Comercial"
                       >
-                        <DocumentTextIcon className="w-3.5 h-3.5" />
+                        <i className="ri-file-text-line text-sm"></i>
                         Vincular Factura
                       </button>
                     ) : (
@@ -510,6 +806,9 @@ function TabEntradas({ proveedores, productos }) {
               ))}
             </tbody>
           </table>
+          <div className="px-4 py-2 text-xs text-gray-500 border-t">
+            Mostrando {entradasFiltradas.length} de {entradas.length} entradas
+          </div>
         </div>
       )}
 
@@ -521,7 +820,17 @@ function TabEntradas({ proveedores, productos }) {
             <form onSubmit={guardar} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Producto *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm font-medium text-gray-700">Producto *</label>
+                    <button
+                      type="button"
+                      onClick={() => setModalNuevoProducto(true)}
+                      className="inline-flex items-center gap-1 text-xs text-[#df000a] hover:text-[#b80008] font-semibold cursor-pointer"
+                      title="Registrar un nuevo producto en catálogo y seleccionarlo"
+                    >
+                      <i className="ri-add-line text-sm"></i> + Nuevo Producto
+                    </button>
+                  </div>
                   <select value={form.producto} onChange={e => setForm(f => ({...f, producto: e.target.value}))} className={inputCls} required>
                     <option value="">Seleccionar…</option>
                     {productos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.descripcion_completa}</option>)}
@@ -633,6 +942,20 @@ function TabEntradas({ proveedores, productos }) {
             setTimeout(() => setMsg(null), 4000);
           }}
           onClose={() => setModalVincular(null)}
+        />
+      )}
+
+      {/* Modal Crear Producto en caliente */}
+      {modalNuevoProducto && (
+        <ModalProducto
+          isOpen={modalNuevoProducto}
+          onClose={() => setModalNuevoProducto(false)}
+          onGuardado={(nuevoProd) => {
+            queryClient.invalidateQueries({ queryKey: ['inventario-productos'] });
+            setForm(f => ({ ...f, producto: nuevoProd.id }));
+            setMsg({ tipo: 'ok', txt: `Producto ${nuevoProd.codigo} registrado y seleccionado para la entrada.` });
+            setTimeout(() => setMsg(null), 4000);
+          }}
         />
       )}
     </div>
@@ -920,7 +1243,7 @@ function TabXml({ onImportado }) {
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50"><tr>
-                {['Código','Descripción','Medida','Marca','Modelo','IC/IV','Cant.','P. Compra'].map(h =>
+                {['Código','Descripción','Medida','Marca','Modelo','IC/IV','Cant.','P. Compra','P. Venta Sugerido'].map(h =>
                   <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{h}</th>)}
               </tr></thead>
               <tbody className="divide-y divide-gray-100">
@@ -936,13 +1259,14 @@ function TabXml({ onImportado }) {
                     <td className="px-4 py-3 font-mono text-xs text-center">{item.indice_carga}{item.indice_velocidad}</td>
                     <td className="px-4 py-3 text-center font-bold">{item.cantidad}</td>
                     <td className="px-4 py-3 text-right font-mono">${item.precio_compra?.toLocaleString('es-MX', { minimumFractionDigits: 4 })}</td>
+                    <td className="px-4 py-3 text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">${fmt(item.precio_venta_sugerido)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <div className="px-6 py-3 bg-yellow-50 border-t border-yellow-100 text-xs text-yellow-800">
-            Si el código ya existe se registrará la entrada sin duplicarlo. Si es nuevo, se crea con precio de venta sugerido (+30% margen).
+            Los productos nuevos y actualizados calcularán su precio de venta sugerido con el Tabulador de Utilidad según su Rin (IVA 16% + financiamiento bancario 1.079 + margen Rin redondeado a múltiplo de 5).
           </div>
           <div className="px-6 py-4 border-t border-gray-200 flex gap-3 justify-end">
             <button onClick={cancelar} disabled={xmlLoading} className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancelar</button>
