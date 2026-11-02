@@ -32,9 +32,10 @@ def generar_siguiente_folio_atomico(codigo, model_class, prefijo, digitos=6):
                 .exclude(folio='')
                 .values_list('folio', flat=True)
             )
+            patron_prefijo = rf"^{re.escape(prefijo)}(\d+)$"
             for f in folios:
                 if f:
-                    match = re.search(r'(\d+)$', str(f).strip())
+                    match = re.search(patron_prefijo, str(f).strip())
                     if match:
                         try:
                             num = int(match.group(1))
