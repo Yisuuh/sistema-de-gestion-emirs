@@ -96,8 +96,29 @@ class CajaViewSet(viewsets.ModelViewSet):
         
         serializer = CerrarCajaSerializer(data=request.data)
         if serializer.is_valid():
+            monto_final = serializer.validated_data['monto_final']
+            tiene_movimientos = (
+                caja.num_ventas > 0 or
+                caja.total_ventas > Decimal('0.00') or
+                caja.total_ingresos_extra > Decimal('0.00') or
+                caja.total_egresos > Decimal('0.00') or
+                caja.monto_inicial > Decimal('0.00') or
+                caja.saldo_esperado > Decimal('0.00')
+            )
+            if monto_final <= Decimal('0.00') and tiene_movimientos:
+                return Response(
+                    {
+                        'error': (
+                            f'No es posible cerrar la caja en $0.00 porque tiene movimientos registrados '
+                            f'(saldo esperado ${caja.saldo_esperado:,.2f} con {caja.num_ventas} operaciones). '
+                            f'Debe realizar el conteo de efectivo correspondiente.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             caja.empleado_cierre_id = serializer.validated_data['empleado_cierre']
-            caja.monto_final = serializer.validated_data['monto_final']
+            caja.monto_final = monto_final
             caja.notas_cierre = serializer.validated_data.get('notas_cierre', '')
             caja.fecha_cierre = timezone.now()
             caja.estado = 'cerrada'

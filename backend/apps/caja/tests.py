@@ -340,4 +340,21 @@ class CajaModuleTestCase(TestCase):
         folios = [c['folio'] for c in res.data['cajas']]
         self.assertNotIn('C-ACCIDENTAL-01', folios)
 
+    def test_caja_con_movimientos_no_puede_cerrar_en_cero(self):
+        """Verificar que una caja que tiene movimientos o saldo esperado no pueda cerrarse en 0.00"""
+        caja = Caja.objects.create(
+            folio='C-VENTAS-88',
+            monto_inicial=Decimal('1000.00'),
+            empleado_apertura=self.empleado,
+            estado='abierta'
+        )
+        res = self.client.post(f'/api/caja/cajas/{caja.id}/cerrar/', {
+            'monto_final': '0.00',
+            'empleado_cierre': self.empleado.id,
+            'notas_cierre': 'Intento de cerrar en 0'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('No es posible cerrar la caja en $0.00', res.data.get('error', ''))
+
+
 

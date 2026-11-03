@@ -158,6 +158,13 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
   const totalArqueo = calcTotalArqueo(arqueo);
   const diferencia  = totalArqueo - parseFloat(caja.saldo_esperado || 0);
 
+  const tieneMovimientos =
+    (caja.num_ventas || 0) > 0 ||
+    parseFloat(caja.saldo_esperado || 0) > 0 ||
+    parseFloat(caja.monto_inicial || 0) > 0 ||
+    parseFloat(caja.total_ingresos || 0) > 0 ||
+    parseFloat(caja.total_egresos || 0) > 0;
+
   const setDenom = (d, val) =>
     setArqueo((prev) => ({ ...prev, [d]: val === '' ? '' : val }));
 
@@ -289,6 +296,15 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
               <span className="text-xl font-bold text-[#8c0007]">{fmt(totalArqueo)}</span>
             </div>
 
+            {totalArqueo === 0 && tieneMovimientos && (
+              <div className="text-xs text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 flex items-start gap-2">
+                <i className="ri-error-warning-line text-sm text-rose-600 mt-0.5"></i>
+                <span>
+                  <strong>Caja con movimientos:</strong> Registra {caja.num_ventas || 0} operaciones y un saldo esperado de {fmt(caja.saldo_esperado)}. No es posible cerrarla en $0.00; ingrese el conteo físico de billetes y monedas.
+                </span>
+              </div>
+            )}
+
             <div className="flex gap-3">
               <button type="button" onClick={onClose}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
@@ -296,8 +312,9 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
               </button>
               <button
                 type="button"
+                disabled={totalArqueo === 0 && tieneMovimientos}
                 onClick={() => setPaso(2)}
-                className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] flex items-center justify-center gap-2">
+                className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 <CalculatorIcon className="h-4 w-4" />
                 Continuar
               </button>
