@@ -10,6 +10,17 @@ import {
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const normStr = (t) => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const CHIPS_SERVICIOS_RAPIDOS = [
+  { label: 'Parche', icon: '🩹', termino: 'parche' },
+  { label: 'Balanceo', icon: '⚖️', termino: 'balanceo' },
+  { label: 'Montaje', icon: '🔧', termino: 'montaje' },
+  { label: 'Rotación', icon: '🔄', termino: 'rotacion' },
+  { label: 'Válvula', icon: '🔘', termino: 'valvula' },
+  { label: 'Nitrógeno', icon: '💨', termino: 'nitrogeno' },
+  { label: 'Alineación', icon: '📐', termino: 'alineacion' },
+];
 
 function Spinner({ sm }) {
   return (
@@ -319,12 +330,12 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
 
   const { data: productos = [], isLoading: loadingProductos } = useQuery({
     queryKey: ['pos-productos'],
-    queryFn: () => fetch('/api/inventario/productos/?activo=true', { headers: tok() }).then(toArr),
+    queryFn: () => fetch('/api/inventario/productos/?activo=true&page_size=1000', { headers: tok() }).then(toArr),
     staleTime: 5 * 60 * 1000,
   });
   const { data: servicios = [], isLoading: loadingServicios } = useQuery({
     queryKey: ['pos-servicios'],
-    queryFn: () => fetch('/api/ventas/servicios/?activos=true', { headers: tok() }).then(toArr),
+    queryFn: () => fetch('/api/ventas/servicios/?activos=true&page_size=1000', { headers: tok() }).then(toArr),
     staleTime: 5 * 60 * 1000,
   });
   const { data: clientes = [], isLoading: loadingClientes } = useQuery({
@@ -410,6 +421,38 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
         cantidad: 1, precio_unitario: precio, subtotal: precio,
         stock_max: esProducto ? (item.stock_actual ?? 999) : 999,
       }]);
+    }
+  };
+
+  const handleChipRapido = (chip) => {
+    const term = normStr(chip.termino);
+    const encontrado = servicios.find(s => normStr(s.nombre).includes(term) || normStr(s.descripcion).includes(term));
+    if (encontrado) {
+      const key = `s-${encontrado.id}`;
+      const precio = parseFloat(encontrado.precio) || 0;
+      setCarrito(prev => {
+        const existente = prev.find(i => i._key === key);
+        if (existente) {
+          return prev.map(i => i._key === key
+            ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precio_unitario }
+            : i
+          );
+        }
+        return [...prev, {
+          _key: key,
+          id: Date.now(),
+          producto: null,
+          servicio: encontrado,
+          descripcion: encontrado.nombre,
+          cantidad: 1,
+          precio_unitario: precio,
+          subtotal: precio,
+          stock_max: 999,
+        }];
+      });
+    } else {
+      setTabItems('servicios');
+      setBusqueda(chip.label);
     }
   };
 
@@ -613,7 +656,7 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
 
       {/* ── Catálogo ── */}
       <div className="md:col-span-1 lg:col-span-2 space-y-3">
-        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3 sticky top-0 z-10 shadow-xs">
           <div className="flex gap-2">
             {[{ id: 'productos', label: 'Productos' }, { id: 'servicios', label: 'Servicios' }].map(t => (
               <button key={t.id} onClick={() => { setTabItems(t.id); setBusqueda(''); }}
@@ -623,6 +666,28 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
               </button>
             ))}
           </div>
+
+          {/* Chips táctiles de servicios más usados */}
+          <div className="pt-0.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+              <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex-shrink-0 mr-1 flex items-center gap-1 select-none">
+                <i className="ri-flashlight-line text-amber-500"></i> Rápidos:
+              </span>
+              {CHIPS_SERVICIOS_RAPIDOS.map(chip => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => handleChipRapido(chip)}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 hover:bg-[#df000a]/15 hover:text-[#df000a] hover:border-[#df000a]/40 text-gray-700 border border-gray-200 transition-all flex items-center gap-1.5 whitespace-nowrap active:scale-95 shadow-2xs cursor-pointer flex-shrink-0"
+                  title={`Agregar directo o buscar: ${chip.label}`}
+                >
+                  <span className="text-sm leading-none">{chip.icon}</span>
+                  <span>{chip.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="relative">
             <MagnifyingGlassIcon className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
             <input
@@ -631,16 +696,26 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
               className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a] focus:border-transparent"
             />
           </div>
-          {medidaDetectadaPOS && (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-xs font-bold text-[#df000a]">
-              <i className="ri-focus-3-line"></i>
-              <span>Medida detectada: {medidaDetectadaPOS}</span>
-            </div>
-          )}
+
+          <div className="flex items-center justify-between text-xs text-gray-500 px-0.5 pt-0.5">
+            {medidaDetectadaPOS ? (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 border border-red-200 text-xs font-bold text-[#df000a]">
+                <i className="ri-focus-3-line"></i>
+                <span>Medida detectada: {medidaDetectadaPOS}</span>
+              </div>
+            ) : (
+              <span className="text-gray-400">
+                Catálogo de {tabItems === 'productos' ? 'productos' : 'servicios'}
+              </span>
+            )}
+            <span className="font-semibold text-gray-400 ml-auto">
+              {itemsFiltrados.length} disponibles
+            </span>
+          </div>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+          <div className="h-[540px] max-h-[calc(100vh-280px)] overflow-y-auto divide-y divide-gray-100 scrollbar-thin">
             {itemsFiltrados.length === 0 ? (
               <p className="px-4 py-8 text-center text-gray-400 text-sm">Sin resultados</p>
             ) : itemsFiltrados.map(item => (

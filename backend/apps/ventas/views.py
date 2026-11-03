@@ -22,6 +22,18 @@ from .serializers import (
     OpcionCotizacionSerializer,
     SolicitudAutorizacionSerializer,
 )
+from rest_framework.pagination import PageNumberPagination
+
+
+class StandardPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 2000
+
+    def paginate_queryset(self, queryset, request, view=None):
+        if request.query_params.get('paginate') == 'false' or request.query_params.get('all') == 'true':
+            return None
+        return super().paginate_queryset(queryset, request, view)
 
 
 class ServicioViewSet(viewsets.ModelViewSet):
@@ -31,6 +43,7 @@ class ServicioViewSet(viewsets.ModelViewSet):
     queryset = Servicio.objects.all()
     serializer_class = ServicioSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['nombre', 'descripcion']
     ordering_fields = ['nombre', 'precio']
@@ -445,6 +458,300 @@ class VentaViewSet(viewsets.ModelViewSet):
         venta = self.get_object()
         serializer = VentaSerializer(venta)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def ticket_pdf(self, request, pk=None):
+        """
+        Genera el ticket de venta en PDF térmico continuo de 80mm (1 sola página)
+        """
+        import io
+        import os
+        from django.http import HttpResponse
+        from reportlab.lib.units import mm
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
+        )
+
+        venta = self.get_object()
+
+        buf = io.BytesIO()
+        avail_width = 72 * mm  # 80mm - 4mm margen izq - 4mm margen der
+
+        styles = getSampleStyleSheet()
+        NORMAL = styles['Normal']
+
+        header_title_style = ParagraphStyle(
+            'TKHeaderTitle', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=11, leading=13, alignment=1, textColor=colors.black
+        )
+        header_sub_style = ParagraphStyle(
+            'TKHeaderSub', parent=NORMAL, fontName='Helvetica',
+            fontSize=7.5, leading=9.5, alignment=1, textColor=colors.HexColor('#333333')
+        )
+        ticket_title_style = ParagraphStyle(
+            'TKTitulo', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=10, leading=12, alignment=1, textColor=colors.HexColor('#df000a')
+        )
+        folio_style = ParagraphStyle(
+            'TKFolio', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=11, leading=13, alignment=1, textColor=colors.black
+        )
+        badge_style = ParagraphStyle(
+            'TKBadge', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=7.5, leading=9.5, alignment=1, textColor=colors.HexColor('#1f2937')
+        )
+        meta_label_style = ParagraphStyle(
+            'TKMetaLabel', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=7.5, leading=9.5, textColor=colors.HexColor('#4b5563')
+        )
+        meta_val_style = ParagraphStyle(
+            'TKMetaVal', parent=NORMAL, fontName='Helvetica',
+            fontSize=7.5, leading=9.5, alignment=2, textColor=colors.black
+        )
+        table_hdr_cant = ParagraphStyle(
+            'TKHdrCant', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=7.5, leading=9, alignment=1, textColor=colors.black
+        )
+        table_hdr_desc = ParagraphStyle(
+            'TKHdrDesc', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=7.5, leading=9, alignment=0, textColor=colors.black
+        )
+        table_hdr_imp = ParagraphStyle(
+            'TKHdrImp', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=7.5, leading=9, alignment=2, textColor=colors.black
+        )
+        cell_cant = ParagraphStyle(
+            'TKCellCant', parent=NORMAL, fontName='Helvetica',
+            fontSize=7.5, leading=9, alignment=1, textColor=colors.black
+        )
+        cell_desc = ParagraphStyle(
+            'TKCellDesc', parent=NORMAL, fontName='Helvetica',
+            fontSize=7.5, leading=9, alignment=0, textColor=colors.black
+        )
+        cell_imp = ParagraphStyle(
+            'TKCellImp', parent=NORMAL, fontName='Helvetica',
+            fontSize=7.5, leading=9, alignment=2, textColor=colors.black
+        )
+        total_lbl_style = ParagraphStyle(
+            'TKTotalLbl', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=10.5, leading=12.5, textColor=colors.black
+        )
+        total_val_style = ParagraphStyle(
+            'TKTotalVal', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=10.5, leading=12.5, alignment=2, textColor=colors.black
+        )
+        footer_style = ParagraphStyle(
+            'TKFooter', parent=NORMAL, fontName='Helvetica',
+            fontSize=7.5, leading=9.5, alignment=1, textColor=colors.HexColor('#4b5563')
+        )
+        footer_bold = ParagraphStyle(
+            'TKFooterBold', parent=NORMAL, fontName='Helvetica-Bold',
+            fontSize=8, leading=10, alignment=1, textColor=colors.black
+        )
+
+        story = []
+
+        # 1. Logo si existe
+        logo_path = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', '..', '..', 'frontend', 'public', 'images', 'logo_hd.png'
+        ))
+        if os.path.exists(logo_path):
+            try:
+                logo_img = Image(logo_path, width=38 * mm, height=14 * mm)
+                logo_img.hAlign = 'CENTER'
+                story.append(logo_img)
+                story.append(Spacer(1, 1.5 * mm))
+            except Exception:
+                pass
+
+        # 2. Encabezado
+        story.append(Paragraph('Centro Llantero EmirS', header_title_style))
+        story.append(Spacer(1, 0.8 * mm))
+        story.append(Paragraph('Calle 42 #282 por 45, Fracc. Francisco de Montejo', header_sub_style))
+        story.append(Paragraph('Mérida, Yucatán | Tel: 999 371 8502', header_sub_style))
+
+        # Línea divisoria roja
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#df000a'), spaceBefore=2 * mm, spaceAfter=2 * mm))
+
+        # 3. Folio de venta, vouchers
+        story.append(Paragraph('TICKET DE VENTA', ticket_title_style))
+        story.append(Paragraph(f'<b>{venta.folio}</b>', folio_style))
+
+        if venta.num_voucher_efectivo is not None:
+            story.append(Paragraph(f'TICKET EFECTIVO #{venta.num_voucher_efectivo}', badge_style))
+        if venta.num_voucher_tarjeta is not None:
+            tipo_tarj = f" ({venta.tipo_tarjeta.upper()})" if venta.tipo_tarjeta else ""
+            story.append(Paragraph(f'VOUCHER TARJETA #{venta.num_voucher_tarjeta}{tipo_tarj}', badge_style))
+        if venta.num_voucher_transferencia is not None:
+            story.append(Paragraph(f'COMPROBANTE TRANSFERENCIA #{venta.num_voucher_transferencia}', badge_style))
+
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#cccccc'), spaceBefore=1.5 * mm, spaceAfter=1.5 * mm))
+
+        # Datos de la venta
+        fecha_str = timezone.localtime(venta.fecha).strftime('%d/%m/%Y %H:%M') if venta.fecha else timezone.now().strftime('%d/%m/%Y %H:%M')
+        vendedor_str = str(venta.empleado) if venta.empleado else '—'
+        cliente_str = venta.cliente.nombre if venta.cliente else 'Público General'
+
+        meta_data = [
+            [Paragraph('Fecha:', meta_label_style), Paragraph(fecha_str, meta_val_style)],
+            [Paragraph('Vendedor:', meta_label_style), Paragraph(vendedor_str, meta_val_style)],
+            [Paragraph('Cliente:', meta_label_style), Paragraph(cliente_str, meta_val_style)],
+        ]
+        meta_table = Table(meta_data, colWidths=[20 * mm, 52 * mm])
+        meta_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 0.8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0.8),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        story.append(meta_table)
+
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#999999'), spaceBefore=1.5 * mm, spaceAfter=1.5 * mm))
+
+        # 4. Tabla de partidas: Cant, Descripción, Importe
+        items_data = [
+            [Paragraph('Cant', table_hdr_cant), Paragraph('Descripción', table_hdr_desc), Paragraph('Importe', table_hdr_imp)]
+        ]
+        detalles = venta.detalles.all()
+        for det in detalles:
+            items_data.append([
+                Paragraph(str(det.cantidad), cell_cant),
+                Paragraph(det.descripcion or (det.producto.medida if det.producto else '') or 'Artículo', cell_desc),
+                Paragraph(f"${det.subtotal:,.2f}", cell_imp)
+            ])
+
+        items_table = Table(items_data, colWidths=[10 * mm, 42 * mm, 20 * mm])
+        items_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 1.2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1.2),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.8, colors.HexColor('#333333')),
+        ]))
+        story.append(items_table)
+
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#999999'), spaceBefore=1.5 * mm, spaceAfter=1.5 * mm))
+
+        # 5. Totales
+        subtotal_val = Decimal(str(venta.subtotal or '0.00'))
+        descuento_val = Decimal(str(venta.descuento or '0.00'))
+        total_val = Decimal(str(venta.total or '0.00'))
+
+        totales_data = [
+            [Paragraph('Subtotal:', meta_label_style), Paragraph(f"${subtotal_val:,.2f}", meta_val_style)]
+        ]
+        if descuento_val > Decimal('0.00'):
+            totales_data.append([
+                Paragraph('Descuento:', meta_label_style),
+                Paragraph(f"-${descuento_val:,.2f}", meta_val_style)
+            ])
+        totales_data.append([
+            Paragraph('TOTAL:', total_lbl_style),
+            Paragraph(f"${total_val:,.2f}", total_val_style)
+        ])
+
+        totales_table = Table(totales_data, colWidths=[36 * mm, 36 * mm])
+        totales_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 1.2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1.2),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('LINEABOVE', (0, -1), (-1, -1), 0.8, colors.black),
+        ]))
+        story.append(totales_table)
+
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#999999'), spaceBefore=1.5 * mm, spaceAfter=1.5 * mm))
+
+        # 6. Método de pago y desglose
+        metodo_map = {
+            'efectivo': 'EFECTIVO',
+            'tarjeta': f"TARJETA ({venta.tipo_tarjeta.upper() if venta.tipo_tarjeta else 'DÉBITO/CRÉDITO'})",
+            'transferencia': 'TRANSFERENCIA',
+            'mixto': 'PAGO MIXTO',
+        }
+        metodo_titulo = metodo_map.get(venta.metodo_pago, str(venta.metodo_pago).upper())
+        story.append(Paragraph(f'<b>FORMA DE PAGO: {metodo_titulo}</b>', badge_style))
+        story.append(Spacer(1, 0.8 * mm))
+
+        pago_data = []
+        monto_efectivo = Decimal(str(venta.monto_efectivo or '0.00'))
+        monto_electronico = Decimal(str(venta.monto_electronico or '0.00'))
+
+        if venta.metodo_pago in ('efectivo', 'mixto') and monto_efectivo > Decimal('0.00'):
+            pago_data.append([
+                Paragraph('Efectivo:', meta_label_style),
+                Paragraph(f"${monto_efectivo:,.2f}", meta_val_style)
+            ])
+            cambio = max(Decimal('0.00'), (monto_efectivo + monto_electronico) - total_val)
+            if cambio > Decimal('0.00'):
+                pago_data.append([
+                    Paragraph('Cambio:', meta_label_style),
+                    Paragraph(f"${cambio:,.2f}", meta_val_style)
+                ])
+
+        if venta.metodo_pago in ('tarjeta', 'transferencia', 'mixto') and monto_electronico > Decimal('0.00'):
+            lbl = 'Tarjeta:' if venta.metodo_pago == 'tarjeta' else ('Transferencia:' if venta.metodo_pago == 'transferencia' else 'Electrónico:')
+            pago_data.append([
+                Paragraph(lbl, meta_label_style),
+                Paragraph(f"${monto_electronico:,.2f}", meta_val_style)
+            ])
+
+        if venta.num_operacion:
+            pago_data.append([
+                Paragraph('Núm. Operación:', meta_label_style),
+                Paragraph(str(venta.num_operacion), meta_val_style)
+            ])
+        if venta.num_referencia:
+            pago_data.append([
+                Paragraph('Núm. Referencia:', meta_label_style),
+                Paragraph(str(venta.num_referencia), meta_val_style)
+            ])
+
+        if pago_data:
+            pago_table = Table(pago_data, colWidths=[36 * mm, 36 * mm])
+            pago_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('TOPPADDING', (0, 0), (-1, -1), 0.8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.8),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ]))
+            story.append(pago_table)
+
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#cccccc'), spaceBefore=2 * mm, spaceAfter=2 * mm))
+
+        # 7. Mensaje de pie
+        story.append(Paragraph('¡Gracias por su preferencia!', footer_bold))
+        story.append(Spacer(1, 0.5 * mm))
+        story.append(Paragraph('Centro Llantero EmirS', footer_style))
+
+        # Cálculo dinámico de altura mediante two-pass wrap
+        altura_contenido = sum(e.wrap(avail_width, 100000)[1] for e in story)
+        page_height = (3 * mm) + (3 * mm) + altura_contenido + (4 * mm)
+        pagesize = (80 * mm, max(page_height, 60 * mm))
+
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=pagesize,
+            leftMargin=4 * mm,
+            rightMargin=4 * mm,
+            topMargin=3 * mm,
+            bottomMargin=3 * mm
+        )
+        doc.build(story)
+
+        pdf_content = buf.getvalue()
+        buf.close()
+
+        response = HttpResponse(pdf_content, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="Ticket_{venta.folio}.pdf"'
+        return response
     
     @action(detail=False, methods=['get'])
     def productos_mas_vendidos(self, request):

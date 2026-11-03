@@ -1,8 +1,37 @@
-import { XMarkIcon, PrinterIcon } from '@heroicons/react/24/outline';
+import { useState } from 'react';
+import { XMarkIcon, PrinterIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import TicketImpresion from './TicketImpresion';
 
 export default function ModalTicket({ venta, onClose }) {
+  const [descargando, setDescargando] = useState(false);
+
   if (!venta) return null;
+
+  const descargarPDF = async () => {
+    if (!venta?.id) return;
+    try {
+      setDescargando(true);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/ventas/ventas/${venta.id}/ticket_pdf/`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('No se pudo generar el PDF del ticket');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ticket_${venta.folio || venta.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      console.warn('Fallback a apertura de PDF en nueva pestaña:', e);
+      window.open(`/api/ventas/ventas/${venta.id}/ticket_pdf/`, '_blank');
+    } finally {
+      setDescargando(false);
+    }
+  };
 
   return (
     <div
@@ -46,14 +75,14 @@ export default function ModalTicket({ venta, onClose }) {
 
         {/* Footer */}
         <div
-          className="flex justify-end gap-3 px-5 py-4 flex-shrink-0"
+          className="flex justify-end gap-2.5 px-5 py-4 flex-shrink-0"
           style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}
         >
           <button
             onClick={onClose}
             style={{
-              padding: '8px 16px',
-              fontSize: '14px',
+              padding: '8px 14px',
+              fontSize: '13px',
               color: '#374151',
               border: '1px solid #d1d5db',
               borderRadius: '8px',
@@ -64,13 +93,36 @@ export default function ModalTicket({ venta, onClose }) {
             Cerrar
           </button>
           <button
+            type="button"
+            onClick={descargarPDF}
+            disabled={descargando}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              fontSize: '13px',
+              fontWeight: '500',
+              color: '#374151',
+              border: '1px solid #d1d5db',
+              borderRadius: '8px',
+              background: '#fff',
+              cursor: descargando ? 'not-allowed' : 'pointer',
+              opacity: descargando ? 0.7 : 1,
+            }}
+            title="Descargar ticket en formato PDF"
+          >
+            <ArrowDownTrayIcon style={{ width: '16px', height: '16px', color: '#4b5563' }} />
+            {descargando ? 'Generando...' : 'Descargar PDF'}
+          </button>
+          <button
             onClick={() => window.print()}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '8px 20px',
-              fontSize: '14px',
+              padding: '8px 18px',
+              fontSize: '13px',
               fontWeight: '600',
               color: '#fff',
               background: '#df000a',

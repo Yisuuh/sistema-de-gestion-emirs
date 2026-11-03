@@ -24,6 +24,7 @@ from .serializers import (
     EntradaInventarioSerializer, SalidaInventarioSerializer,
     PagoProveedorSerializer,
 )
+from apps.ventas.views import StandardPagination
 
 INDICES_VELOCIDAD_VALIDOS = ['T', 'H', 'V', 'W', 'Y', 'Z']
 
@@ -678,6 +679,7 @@ def normalizar_termino_medida(termino: str) -> list:
 class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.select_related('marca').all()
     serializer_class = ProductoSerializer
+    pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['marca', 'activo', 'indice_velocidad']
     search_fields = ['codigo', 'medida', 'modelo', 'marca__nombre']

@@ -319,6 +319,20 @@ export default function Nomina() {
   };
 
   // ── Empleados API ─────────────────────────────────────────────────────────
+  const invalidarQueriesEmpleadosGlobal = () => {
+    queryClient.invalidateQueries({ queryKey: ['nomina-empleados'] });
+    queryClient.invalidateQueries({ queryKey: ['nomina-empleados-activos'] });
+    queryClient.invalidateQueries({ queryKey: ['pos-empleados'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-empleados'] });
+    queryClient.invalidateQueries({ queryKey: ['empleados'] });
+    queryClient.invalidateQueries({
+      predicate: (q) => {
+        const k = q.queryKey[0];
+        return typeof k === 'string' && (k.includes('emplead') || k.includes('tecnico') || k.includes('operador'));
+      }
+    });
+  };
+
   const guardarEmpMut = useMutation({
     mutationFn: async (form) => {
       const url = empEditando ? `${API}/empleados/${empEditando}/` : `${API}/empleados/`;
@@ -326,11 +340,25 @@ export default function Nomina() {
       return $fetch(url, { method, body: JSON.stringify(form) });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['nomina-empleados'] });
+      invalidarQueriesEmpleadosGlobal();
       setModalEmp(false);
       showExito(empEditando ? 'Empleado actualizado' : 'Empleado registrado');
     },
     onError: (e) => setError('Error al guardar: ' + e.message),
+  });
+
+  const toggleActivoEmpMut = useMutation({
+    mutationFn: async (emp) => {
+      return $fetch(`${API}/empleados/${emp.id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ activo: !emp.activo }),
+      });
+    },
+    onSuccess: () => {
+      invalidarQueriesEmpleadosGlobal();
+      showExito('Estado del empleado actualizado');
+    },
+    onError: (e) => setError('Error al actualizar estado: ' + e.message),
   });
 
   const eliminarEmpMut = useMutation({
@@ -339,7 +367,7 @@ export default function Nomina() {
       return id;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['nomina-empleados'] });
+      invalidarQueriesEmpleadosGlobal();
       showExito('Empleado eliminado');
     },
     onError: (e) => setError(e.message),
@@ -884,7 +912,15 @@ export default function Nomina() {
                         <td className="px-4 py-3 text-right text-gray-600">{e.comision_porcentaje}%</td>
                         <td className="px-4 py-3 text-right text-gray-600">${fmt(e.pago_dominical)}</td>
                         <td className="px-4 py-3 text-center">
-                          <Badge text={e.activo ? 'Activo' : 'Inactivo'} color={e.activo ? 'green' : 'gray'} />
+                          <button
+                            type="button"
+                            onClick={() => toggleActivoEmpMut.mutate(e)}
+                            disabled={toggleActivoEmpMut.isPending}
+                            title={e.activo ? 'Clic para desactivar' : 'Clic para activar'}
+                            className="hover:scale-105 transition-transform cursor-pointer focus:outline-none"
+                          >
+                            <Badge text={e.activo ? 'Activo' : 'Inactivo'} color={e.activo ? 'green' : 'gray'} />
+                          </button>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-center gap-2">

@@ -269,35 +269,48 @@ tbody tr:hover {
    ══════════════════════════════════════════════════════════════ */
 .bg-black.bg-opacity-50 { background-color: rgba(0,0,0,0.75) !important; }
 
-/* ── Impresión Ticket Térmico 58mm / 80mm ──────────────────────────────────── */
+/* ── Impresión Ticket Térmico 80mm (1 sola página) ────────────────────────── */
 @media print {
+  html, body {
+    width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
   body * {
     visibility: hidden !important;
   }
+
   #ticket-print, #ticket-print *,
   #ticket-rescate-print, #ticket-rescate-print * {
     visibility: visible !important;
   }
+
   #ticket-print,
   #ticket-rescate-print {
-    position: fixed !important;
-    top: 0 !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
+    position: static !important;
+    transform: none !important;
+    width: 76mm !important;
+    max-width: 76mm !important;
     margin: 0 auto !important;
-    width: 100% !important;
-    max-width: 72mm !important;
-    padding: 2mm 3mm !important;
+    padding: 1.5mm 1mm 1mm 1mm !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
     background: #ffffff !important;
     color: #000000 !important;
     border: none !important;
     box-shadow: none !important;
     font-size: 11px !important;
     line-height: 1.35 !important;
-    z-index: 999999 !important;
   }
+
   @page {
-    size: 58mm auto;
-    margin: 0;
+    size: 80mm auto;
+    margin: 0mm;
   }
 }

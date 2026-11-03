@@ -1211,6 +1211,77 @@ class VentasAndFeaturesTestCase(TestCase):
         self.assertEqual(res_credito.status_code, 201)
         self.assertEqual(res_credito.data['metodo_pago'], 'tarjeta_credito')
 
+    def test_ticket_pdf_generates_valid_pdf(self):
+        """Verifica que el endpoint ticket_pdf genere un PDF térmico continuo de 80mm de una sola página"""
+        venta = Venta.objects.create(
+            folio='V-TESTPDF001',
+            empleado=self.empleado,
+            cliente=self.cliente,
+            caja=self.caja,
+            metodo_pago='mixto',
+            tipo_tarjeta='debito',
+            monto_efectivo=Decimal('1000.00'),
+            monto_electronico=Decimal('1500.00'),
+            num_voucher_efectivo=10,
+            num_voucher_tarjeta=5,
+            num_operacion='AUTH-999',
+            subtotal=Decimal('2500.00'),
+            descuento=Decimal('100.00'),
+            total=Decimal('2400.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            producto=self.producto,
+            descripcion='Llanta Michelin Primacy 4 205/55R16',
+            cantidad=1,
+            precio_unitario=Decimal('2000.00'),
+            subtotal=Decimal('2000.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            servicio=self.servicio,
+            descripcion='Alineación y balanceo',
+            cantidad=1,
+            precio_unitario=Decimal('500.00'),
+            subtotal=Decimal('500.00')
+        )
+
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(f'/api/ventas/ventas/{venta.id}/ticket_pdf/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertIn('Ticket_V-TESTPDF001.pdf', response['Content-Disposition'])
+        self.assertTrue(response.content.startswith(b'%PDF'))
+        self.assertGreater(len(response.content), 500)
+
+    def test_standard_pagination_servicios_and_productos(self):
+        """Verifica que ServicioViewSet y ProductoViewSet respeten StandardPagination con page_size=1000 y paginate=false"""
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Probar servicios con page_size=1000
+        res_servicios = self.client.get('/api/ventas/servicios/?page_size=1000')
+        self.assertEqual(res_servicios.status_code, 200)
+        self.assertIn('results', res_servicios.data)
+        self.assertIn('count', res_servicios.data)
+
+        # Probar servicios con paginate=false
+        res_servicios_all = self.client.get('/api/ventas/servicios/?paginate=false')
+        self.assertEqual(res_servicios_all.status_code, 200)
+        self.assertIsInstance(res_servicios_all.data, list)
+
+        # Probar productos con page_size=1000
+        res_productos = self.client.get('/api/inventario/productos/?page_size=1000')
+        self.assertEqual(res_productos.status_code, 200)
+        self.assertIn('results', res_productos.data)
+        self.assertIn('count', res_productos.data)
+
+        # Probar productos con all=true
+        res_productos_all = self.client.get('/api/inventario/productos/?all=true')
+        self.assertEqual(res_productos_all.status_code, 200)
+        self.assertIsInstance(res_productos_all.data, list)
+
+
 
 
 
