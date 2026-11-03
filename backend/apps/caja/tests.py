@@ -322,3 +322,22 @@ class CajaModuleTestCase(TestCase):
         self.assertEqual(res.data['ventas'][0]['folio'], 'V-HISTORICA-01')
         self.assertEqual(Decimal(str(res.data['ventas'][0]['total'])), Decimal('1500.00'))
 
+    def test_caja_cero_accidental_omitida_del_historial(self):
+        """Verificar que una caja abierta por accidente en ceros y cerrada en ceros no aparezca en el historial"""
+        caja_accidental = Caja.objects.create(
+            folio='C-ACCIDENTAL-01',
+            monto_inicial=Decimal('0.00'),
+            monto_final=Decimal('0.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now(),
+            notas_cierre='Cierre en ceros (apertura accidental)'
+        )
+
+        res = self.client.get('/api/caja/cajas/historial/?periodo=hoy')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        folios = [c['folio'] for c in res.data['cajas']]
+        self.assertNotIn('C-ACCIDENTAL-01', folios)
+
+

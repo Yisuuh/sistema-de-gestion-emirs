@@ -165,11 +165,13 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
     e.preventDefault();
     setLoading(true); setErr(null);
     try {
+      const notasFinal = form.notas_cierre || (totalArqueo === 0 && parseFloat(caja.saldo_esperado || 0) === 0 ? 'Cierre en ceros (apertura accidental o sin operaciones)' : '');
       const res = await fetch(`${API_CAJA}/cajas/${caja.id}/cerrar/`, {
         method: 'POST',
         headers: jsonHdrs(),
         body: JSON.stringify({
           ...form,
+          notas_cierre: notasFinal,
           monto_final: totalArqueo,
           empleado_cierre: parseInt(form.empleado_cierre),
         }),
@@ -294,9 +296,8 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
               </button>
               <button
                 type="button"
-                disabled={totalArqueo === 0}
                 onClick={() => setPaso(2)}
-                className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-40 flex items-center justify-center gap-2">
+                className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] flex items-center justify-center gap-2">
                 <CalculatorIcon className="h-4 w-4" />
                 Continuar
               </button>
@@ -307,6 +308,14 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
         {/* --- Paso 2: Confirmar cierre ---------------------------------- */}
         {paso === 2 && (
           <form onSubmit={submit} className="px-6 py-4 space-y-4">
+            {totalArqueo === 0 && parseFloat(caja.saldo_esperado || 0) === 0 && (
+              <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-start gap-2">
+                <i className="ri-information-line text-sm text-amber-600 mt-0.5"></i>
+                <span>
+                  <strong>Caja en $0.00:</strong> Al cerrarla sin operaciones ni ventas, se descartará automáticamente para no ensuciar el historial contable.
+                </span>
+              </div>
+            )}
             <div className="rounded-lg border overflow-hidden text-sm">
               <div className="px-4 py-2 bg-gray-50 border-b grid grid-cols-2 gap-2">
                 <div>

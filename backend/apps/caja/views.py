@@ -1,6 +1,7 @@
 """
 Views para el módulo de Caja
 """
+from decimal import Decimal
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -196,6 +197,21 @@ class CajaViewSet(viewsets.ModelViewSet):
         # Construir resumen
         resultado = []
         for caja in cajas:
+            # Omitir del historial cajas accidentales cerradas en ceros sin operaciones ni movimientos
+            es_caja_cero_accidental = (
+                caja.estado == 'cerrada' and
+                caja.num_ventas == 0 and
+                caja.total_ventas == Decimal('0.00') and
+                caja.total_ingresos_extra == Decimal('0.00') and
+                caja.total_egresos == Decimal('0.00') and
+                (
+                    (caja.monto_inicial == Decimal('0.00') and (caja.monto_final == Decimal('0.00') or caja.monto_final is None))
+                    or (caja.monto_final == Decimal('0.00') and caja.saldo_esperado == Decimal('0.00'))
+                )
+            )
+            if es_caja_cero_accidental:
+                continue
+
             resultado.append({
                 'id': caja.id,
                 'folio': caja.folio,
