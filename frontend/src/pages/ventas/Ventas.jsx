@@ -13,13 +13,13 @@ const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigit
 const normStr = (t) => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 const CHIPS_SERVICIOS_RAPIDOS = [
-  { label: 'Parche', icon: '🩹', termino: 'parche' },
-  { label: 'Balanceo', icon: '⚖️', termino: 'balanceo' },
-  { label: 'Montaje', icon: '🔧', termino: 'montaje' },
-  { label: 'Rotación', icon: '🔄', termino: 'rotacion' },
-  { label: 'Válvula', icon: '🔘', termino: 'valvula' },
-  { label: 'Nitrógeno', icon: '💨', termino: 'nitrogeno' },
-  { label: 'Alineación', icon: '📐', termino: 'alineacion' },
+  { label: 'Parche', iconClass: 'ri-first-aid-kit-line', termino: 'parche' },
+  { label: 'Balanceo', iconClass: 'ri-scales-3-line', termino: 'balanceo' },
+  { label: 'Montaje', iconClass: 'ri-tools-line', termino: 'montaje' },
+  { label: 'Rotación', iconClass: 'ri-repeat-2-line', termino: 'rotacion' },
+  { label: 'Válvula', iconClass: 'ri-radio-button-line', termino: 'valvula' },
+  { label: 'Nitrógeno', iconClass: 'ri-windy-line', termino: 'nitrogeno' },
+  { label: 'Alineación', iconClass: 'ri-compass-3-line', termino: 'alineacion' },
 ];
 
 function Spinner({ sm }) {
@@ -681,7 +681,7 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
                   className="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 hover:bg-[#df000a]/15 hover:text-[#df000a] hover:border-[#df000a]/40 text-gray-700 border border-gray-200 transition-all flex items-center gap-1.5 whitespace-nowrap active:scale-95 shadow-2xs cursor-pointer flex-shrink-0"
                   title={`Agregar directo o buscar: ${chip.label}`}
                 >
-                  <span className="text-sm leading-none">{chip.icon}</span>
+                  <i className={`${chip.iconClass} text-sm text-[#df000a]`}></i>
                   <span>{chip.label}</span>
                 </button>
               ))}
