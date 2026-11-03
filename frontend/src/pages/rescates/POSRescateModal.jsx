@@ -374,16 +374,16 @@ export default function POSRescateModal({
         {/* ═════════════════════════════════════════════════════════════════════ */}
         {pasoActual === 'conceptos' && (
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-y-auto">
-              {/* Lado Izquierdo: Catálogo Táctil Rápido (7 cols) */}
-              <div className="lg:col-span-7 p-3 sm:p-4 border-b lg:border-b-0 lg:border-r border-slate-800 flex flex-col space-y-3 bg-slate-900/50">
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 min-h-0 overflow-y-auto lg:overflow-hidden">
+              {/* Lado Izquierdo: Catálogo Compacto y Ergonómico (7 cols) */}
+              <div className="lg:col-span-7 p-3 sm:p-4 border-b lg:border-b-0 lg:border-r border-slate-800 flex flex-col min-h-0 space-y-2.5 bg-slate-900/50">
                 {/* Tabs Selector de Servicios vs Llantas */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 flex-shrink-0">
                   <div className="flex p-1 rounded-xl bg-slate-950 border border-slate-800 w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={() => setTabCatalogo('servicios')}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-1 sm:flex-none justify-center cursor-pointer ${
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-1 sm:flex-none justify-center cursor-pointer ${
                         tabCatalogo === 'servicios' ? 'bg-red-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                       }`}
                     >
@@ -393,7 +393,7 @@ export default function POSRescateModal({
                     <button
                       type="button"
                       onClick={() => setTabCatalogo('productos')}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-1 sm:flex-none justify-center cursor-pointer ${
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-1 sm:flex-none justify-center cursor-pointer ${
                         tabCatalogo === 'productos' ? 'bg-red-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                       }`}
                     >
@@ -423,67 +423,75 @@ export default function POSRescateModal({
                   </div>
                 </div>
 
-                {/* Grid Táctil de Botones Grandes para Operadores */}
-                <div className="flex-1 overflow-y-auto max-h-[360px] sm:max-h-[460px] pr-1">
+                {/* Lista Compacta y Ergonómica de Filas */}
+                <div className="flex-1 min-h-0 overflow-y-auto pr-1 scrollbar-thin">
                   {tabCatalogo === 'servicios' ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    <div className="divide-y divide-slate-800/80 rounded-xl bg-slate-950 border border-slate-800 overflow-hidden">
                       {filteredServicios.map(serv => (
-                        <button
+                        <div
                           key={serv.id}
-                          type="button"
                           onClick={() => handleAddServicio(serv)}
-                          className="min-h-[72px] p-2.5 rounded-2xl bg-slate-950 border border-slate-800 hover:border-red-500/60 active:scale-95 transition-all text-left flex flex-col justify-between group cursor-pointer shadow-xs"
+                          className="px-3 py-2 hover:bg-slate-900/90 flex items-center justify-between gap-2 cursor-pointer transition-colors group select-none"
                         >
-                          <span className="text-xs font-bold text-slate-200 group-hover:text-white line-clamp-2 leading-tight">
+                          <span className="text-xs font-semibold text-slate-200 group-hover:text-white truncate flex-1 pr-2">
                             {serv.nombre}
                           </span>
-                          <div className="flex items-center justify-between mt-1 pt-1 border-t border-slate-900">
-                            <span className="text-xs font-black font-mono text-emerald-400">
+                          <div className="flex items-center gap-2.5 flex-shrink-0">
+                            <span className="text-xs font-bold font-mono text-emerald-400">
                               ${fmtMXN(serv.precio_base ?? serv.precio ?? 0)}
                             </span>
-                            <span className="w-5 h-5 rounded-full bg-red-600/20 text-red-400 flex items-center justify-center text-xs group-hover:bg-red-600 group-hover:text-white transition-colors">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleAddServicio(serv); }}
+                              className="w-6 h-6 rounded-md bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white flex items-center justify-center text-xs transition-colors cursor-pointer active:scale-95"
+                              title="Agregar servicio"
+                            >
                               <i className="ri-add-line"></i>
-                            </span>
+                            </button>
                           </div>
-                        </button>
+                        </div>
                       ))}
                       {filteredServicios.length === 0 && (
-                        <div className="col-span-full py-12 text-center text-slate-500 text-xs">
+                        <div className="py-10 text-center text-slate-500 text-xs">
                           <i className="ri-tools-line text-2xl block mb-1 text-slate-600"></i>
                           No hay servicios disponibles
                         </div>
                       )}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="divide-y divide-slate-800/80 rounded-xl bg-slate-950 border border-slate-800 overflow-hidden">
                       {filteredProductos.map(prod => (
-                        <button
+                        <div
                           key={prod.id}
-                          type="button"
                           onClick={() => handleAddProducto(prod)}
-                          className="min-h-[68px] p-2.5 rounded-2xl bg-slate-950 border border-slate-800 hover:border-red-500/60 active:scale-95 transition-all text-left flex flex-col justify-between group cursor-pointer"
+                          className="px-3 py-2 hover:bg-slate-900/90 flex items-center justify-between gap-2 cursor-pointer transition-colors group select-none"
                         >
-                          <div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-mono font-bold text-red-400">{prod.codigo}</span>
-                              <span className="text-[10px] text-slate-400 font-mono">Stock: {prod.stock_actual ?? prod.stock ?? '—'}</span>
+                          <div className="flex-1 min-w-0 pr-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-mono font-bold text-red-400">{prod.codigo}</span>
+                              <span className="text-[10px] text-slate-500 font-mono">Stock: {prod.stock_actual ?? prod.stock ?? '—'}</span>
                             </div>
-                            <p className="text-xs text-slate-200 font-medium truncate mt-0.5">
-                              {prod.marca_nombre || prod.marca?.nombre} {prod.medida || ''}
+                            <p className="text-xs text-slate-200 group-hover:text-white truncate">
+                              {prod.marca_nombre || prod.marca?.nombre} {prod.modelo || ''} {prod.medida || ''}
                             </p>
                           </div>
-                          <div className="flex items-center justify-between mt-1 pt-1 border-t border-slate-900">
-                            <span className="text-xs font-black font-mono text-emerald-400">
+                          <div className="flex items-center gap-2.5 flex-shrink-0">
+                            <span className="text-xs font-bold font-mono text-emerald-400">
                               ${fmtMXN(prod.precio_venta || prod.precio)}
                             </span>
-                            <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
-                              <i className="ri-add-line"></i> Agregar
-                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleAddProducto(prod); }}
+                              className="w-6 h-6 rounded-md bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white flex items-center justify-center text-xs transition-colors cursor-pointer active:scale-95"
+                              title="Agregar llanta"
+                            >
+                              <i className="ri-add-line"></i>
+                            </button>
                           </div>
-                        </button>
+                        </div>
                       ))}
                       {filteredProductos.length === 0 && (
-                        <div className="col-span-full py-12 text-center text-slate-500 text-xs">
+                        <div className="py-10 text-center text-slate-500 text-xs">
                           <i className="ri-archive-line text-2xl block mb-1 text-slate-600"></i>
                           No se encontraron llantas ni insumos
                         </div>
@@ -493,11 +501,11 @@ export default function POSRescateModal({
                 </div>
               </div>
 
-              {/* Lado Derecho: Lista de Items + Traslado (5 cols) */}
-              <div className="lg:col-span-5 p-3 sm:p-4 flex flex-col justify-between space-y-3 bg-slate-950">
+              {/* Lado Derecho: Lista de Items Compacta + Traslado (5 cols) */}
+              <div className="lg:col-span-5 p-3 sm:p-4 flex flex-col justify-between min-h-0 space-y-2.5 bg-slate-950">
                 {/* Lista de Items Agregados */}
                 <div className="flex-1 min-h-0 flex flex-col">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 flex-shrink-0">
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                       <i className="ri-shopping-cart-2-line text-slate-400"></i>
                       <span>Detalle a Cobrar ({items.length})</span>
@@ -513,49 +521,53 @@ export default function POSRescateModal({
                     )}
                   </div>
 
-                  <div className="space-y-2 max-h-[220px] sm:max-h-[260px] overflow-y-auto mt-2 pr-1">
+                  <div className="flex-1 min-h-[90px] max-h-[180px] sm:max-h-[220px] overflow-y-auto space-y-1.5 mt-1.5 pr-1 scrollbar-thin">
                     {items.map(item => (
-                      <div key={item.id} className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-white truncate">{item.descripcion}</p>
-                          <p className="text-[11px] font-mono text-emerald-400">${fmtMXN(item.precio)} c/u</p>
+                      <div key={item.id} className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between gap-2 shadow-2xs">
+                        <div className="flex-1 min-w-0 pr-1">
+                          <p className="text-xs font-semibold text-white truncate leading-tight" title={item.descripcion}>
+                            {item.descripcion}
+                          </p>
+                          <p className="text-[10px] font-mono text-slate-400">${fmtMXN(item.precio)} c/u</p>
                         </div>
 
-                        {/* Stepper cantidad táctil */}
-                        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                        {/* Stepper compacto de cantidad [-] Q [+] */}
+                        <div className="flex items-center gap-0.5 bg-slate-950 px-1 py-0.5 rounded border border-slate-800 flex-shrink-0">
                           <button
                             type="button"
                             onClick={() => handleUpdateCantidad(item.id, -1)}
-                            className="w-6 h-6 flex items-center justify-center rounded bg-slate-800 text-slate-300 hover:text-white cursor-pointer active:scale-95"
+                            className="w-5 h-5 flex items-center justify-center rounded bg-slate-800 text-slate-300 hover:text-white cursor-pointer active:scale-95"
+                            title="Disminuir"
                           >
-                            <i className="ri-subtract-line text-xs"></i>
+                            <i className="ri-subtract-line text-[10px]"></i>
                           </button>
-                          <span className="text-xs font-mono font-bold w-6 text-center">{item.cantidad}</span>
+                          <span className="text-xs font-mono font-bold w-5 text-center text-white">{item.cantidad}</span>
                           <button
                             type="button"
                             onClick={() => handleUpdateCantidad(item.id, 1)}
-                            className="w-6 h-6 flex items-center justify-center rounded bg-slate-800 text-slate-300 hover:text-white cursor-pointer active:scale-95"
+                            className="w-5 h-5 flex items-center justify-center rounded bg-slate-800 text-slate-300 hover:text-white cursor-pointer active:scale-95"
+                            title="Aumentar"
                           >
-                            <i className="ri-add-line text-xs"></i>
+                            <i className="ri-add-line text-[10px]"></i>
                           </button>
                         </div>
 
-                        <span className="font-mono font-bold text-xs text-white min-w-[55px] text-right">
+                        <span className="font-mono font-bold text-xs text-emerald-400 min-w-[50px] text-right flex-shrink-0">
                           ${fmtMXN(item.precio * item.cantidad)}
                         </span>
 
                         <button
                           type="button"
                           onClick={() => handleRemoveItem(item.id)}
-                          className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer transition-colors"
+                          className="text-slate-500 hover:text-rose-400 p-0.5 cursor-pointer transition-colors flex-shrink-0"
                           title="Eliminar concepto"
                         >
-                          <i className="ri-delete-bin-line text-sm"></i>
+                          <i className="ri-delete-bin-line text-xs"></i>
                         </button>
                       </div>
                     ))}
                     {items.length === 0 && (
-                      <div className="py-8 text-center text-slate-600 text-xs">
+                      <div className="py-6 text-center text-slate-600 text-xs">
                         <i className="ri-hand-coin-line text-2xl block mb-1 text-slate-700"></i>
                         Toca un servicio o llanta para agregar
                       </div>
@@ -564,7 +576,7 @@ export default function POSRescateModal({
                 </div>
 
                 {/* Bloque Prominente: Costo de Traslado / Desplazamiento */}
-                <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5 flex-shrink-0">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                       <i className="ri-roadster-line text-red-500 text-sm"></i>
@@ -613,7 +625,7 @@ export default function POSRescateModal({
                           const actual = parseFloat(costoTraslado || 0)
                           setCostoTraslado((actual + preset.val).toString())
                         }}
-                        className="py-1.5 rounded-lg bg-slate-950 hover:bg-red-950/60 border border-slate-800 hover:border-red-600/50 text-slate-200 hover:text-white font-mono text-[11px] font-bold active:scale-95 transition-all cursor-pointer text-center"
+                        className="py-1 rounded-lg bg-slate-950 hover:bg-red-950/60 border border-slate-800 hover:border-red-600/50 text-slate-200 hover:text-white font-mono text-[11px] font-bold active:scale-95 transition-all cursor-pointer text-center"
                       >
                         {preset.label}
                       </button>
@@ -622,7 +634,7 @@ export default function POSRescateModal({
                 </div>
 
                 {/* Subtotales en Paso 1 */}
-                <div className="pt-2 border-t border-slate-800 space-y-1 text-xs">
+                <div className="pt-1.5 border-t border-slate-800 space-y-1 text-xs flex-shrink-0">
                   {subtotalServiciosYProductos > 0 && (
                     <div className="flex justify-between text-slate-400">
                       <span>Servicios & Llantas:</span>
@@ -635,9 +647,9 @@ export default function POSRescateModal({
                       <span className="font-mono font-bold">+${fmtMXN(costoTrasladoNum)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between text-base font-black text-white pt-1 border-t border-slate-900">
+                  <div className="flex justify-between text-sm sm:text-base font-black text-white pt-1 border-t border-slate-900">
                     <span>Subtotal Estimado:</span>
-                    <span className="font-mono text-lg text-emerald-400">${fmtMXN(subtotal)}</span>
+                    <span className="font-mono text-base sm:text-lg text-emerald-400">${fmtMXN(subtotal)}</span>
                   </div>
                 </div>
               </div>

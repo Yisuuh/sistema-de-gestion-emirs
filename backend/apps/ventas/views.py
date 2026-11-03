@@ -761,7 +761,10 @@ class VentaViewSet(viewsets.ModelViewSet):
         # Parámetros de fecha
         fecha_inicio = request.query_params.get('fecha_inicio')
         fecha_fin = request.query_params.get('fecha_fin')
-        limite = int(request.query_params.get('limite', 10))
+        try:
+            limite = max(1, min(int(request.query_params.get('limite', 10)), 100))
+        except (ValueError, TypeError):
+            limite = 10
         
         # Filtrar detalles de venta por fecha
         detalles = DetalleVenta.objects.filter(producto__isnull=False)
@@ -772,7 +775,7 @@ class VentaViewSet(viewsets.ModelViewSet):
             detalles = detalles.filter(venta__fecha__lte=fecha_fin)
         
         # Agrupar por producto
-        productos_vendidos = detalles.values(
+        productos_vendidos = list(detalles.values(
             'producto__id',
             'producto__codigo',
             'producto__marca__nombre',
@@ -780,15 +783,24 @@ class VentaViewSet(viewsets.ModelViewSet):
             'producto__medida',
             'producto__indice_carga',
             'producto__indice_velocidad',
+            'producto__precio_venta',
             'descripcion',
         ).annotate(
             cantidad_total=Sum('cantidad'),
             ventas_total=Sum('subtotal'),
             num_ventas=Count('venta', distinct=True)
-        ).order_by('-cantidad_total')[:limite]
+        ).order_by('-cantidad_total')[:limite])
+        
+        from apps.inventario.models import Producto
+        prod_ids = [p['producto__id'] for p in productos_vendidos if p.get('producto__id')]
+        productos_map = {prod.id: prod for prod in Producto.objects.filter(id__in=prod_ids)}
         
         data = []
         for p in productos_vendidos:
+            prod_obj = productos_map.get(p.get('producto__id'))
+            stock_actual = prod_obj.stock_actual if prod_obj else 0
+            p['producto__stock_actual'] = stock_actual
+
             marca = p.get('producto__marca__nombre') or ''
             modelo = p.get('producto__modelo') or ''
             medida = p.get('producto__medida') or ''
@@ -796,15 +808,26 @@ class VentaViewSet(viewsets.ModelViewSet):
             iv = p.get('producto__indice_velocidad') or ''
             desc = f"{marca} {modelo} {medida} {ic}{iv}".strip() or p.get('descripcion')
             data.append({
+                'id': p['producto__id'],
+                'codigo': p['producto__codigo'],
+                'marca_nombre': marca,
+                'modelo': modelo,
+                'medida': medida,
+                'descripcion_completa': desc,
+                'precio_venta': p['producto__precio_venta'],
+                'stock_actual': p['producto__stock_actual'],
+                'cantidad_total': p['cantidad_total'],
+                'ventas_total': p['ventas_total'],
+                'num_ventas': p['num_ventas'],
+                'tipo': 'producto',
+                # Claves de compatibilidad con vistas y reportes existentes
                 'producto__id': p['producto__id'],
                 'producto__codigo': p['producto__codigo'],
                 'producto__marca__nombre': marca,
                 'producto__modelo': modelo,
                 'producto__medida': medida,
                 'producto__descripcion_completa': desc,
-                'cantidad_total': p['cantidad_total'],
-                'ventas_total': p['ventas_total'],
-                'num_ventas': p['num_ventas'],
+                'descripcion': desc,
             })
         
         return Response(data)
@@ -817,7 +840,10 @@ class VentaViewSet(viewsets.ModelViewSet):
         # Parámetros de fecha
         fecha_inicio = request.query_params.get('fecha_inicio')
         fecha_fin = request.query_params.get('fecha_fin')
-        limite = int(request.query_params.get('limite', 10))
+        try:
+            limite = max(1, min(int(request.query_params.get('limite', 10)), 100))
+        except (ValueError, TypeError):
+            limite = 10
         
         # Filtrar detalles de venta por fecha
         detalles = DetalleVenta.objects.filter(servicio__isnull=False)
@@ -830,14 +856,34 @@ class VentaViewSet(viewsets.ModelViewSet):
         # Agrupar por servicio
         servicios_vendidos = detalles.values(
             'servicio__id',
-            'servicio__nombre'
+            'servicio__nombre',
+            'servicio__precio',
+            'servicio__descripcion'
         ).annotate(
             cantidad_total=Sum('cantidad'),
             ventas_total=Sum('subtotal'),
             num_ventas=Count('venta', distinct=True)
         ).order_by('-cantidad_total')[:limite]
         
-        return Response(list(servicios_vendidos))
+        data = []
+        for s in servicios_vendidos:
+            data.append({
+                'id': s['servicio__id'],
+                'nombre': s['servicio__nombre'],
+                'precio': s['servicio__precio'],
+                'descripcion': s['servicio__descripcion'] or '',
+                'cantidad_total': s['cantidad_total'],
+                'ventas_total': s['ventas_total'],
+                'num_ventas': s['num_ventas'],
+                'tipo': 'servicio',
+                # Claves de compatibilidad
+                'servicio__id': s['servicio__id'],
+                'servicio__nombre': s['servicio__nombre'],
+                'servicio__precio': s['servicio__precio'],
+                'servicio__descripcion': s['servicio__descripcion'] or '',
+            })
+        
+        return Response(data)
 
     @action(detail=False, methods=['get'])
     def acumulado_vendedor(self, request):

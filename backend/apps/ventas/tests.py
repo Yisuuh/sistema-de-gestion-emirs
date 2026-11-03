@@ -1281,6 +1281,70 @@ class VentasAndFeaturesTestCase(TestCase):
         self.assertEqual(res_productos_all.status_code, 200)
         self.assertIsInstance(res_productos_all.data, list)
 
+    def test_productos_y_servicios_mas_vendidos_pos_format(self):
+        """Verifica formato POS optimizado para agregar al carrito en productos_mas_vendidos y servicios_mas_vendidos"""
+        self.client.force_authenticate(user=self.admin_user)
+
+        venta = Venta.objects.create(
+            folio='V-MV-TEST-01',
+            caja=self.caja,
+            empleado=self.empleado,
+            cliente=self.cliente,
+            metodo_pago='efectivo',
+            monto_efectivo=Decimal('2500.00'),
+            subtotal=Decimal('2500.00'),
+            total=Decimal('2500.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            producto=self.producto,
+            descripcion='Michelin Primacy 4 205/55R16 91V',
+            cantidad=2,
+            precio_unitario=Decimal('2000.00'),
+            subtotal=Decimal('4000.00')
+        )
+        DetalleVenta.objects.create(
+            venta=venta,
+            servicio=self.servicio,
+            descripcion='Alineación y Balanceo',
+            cantidad=1,
+            precio_unitario=Decimal('500.00'),
+            subtotal=Decimal('500.00')
+        )
+
+        # Probar productos_mas_vendidos
+        res_prod = self.client.get('/api/ventas/ventas/productos_mas_vendidos/')
+        self.assertEqual(res_prod.status_code, 200)
+        prods = res_prod.json()
+        self.assertGreaterEqual(len(prods), 1)
+        item_prod = prods[0]
+        self.assertEqual(item_prod['id'], self.producto.id)
+        self.assertEqual(item_prod['codigo'], self.producto.codigo)
+        self.assertEqual(item_prod['marca_nombre'], 'Michelin')
+        self.assertEqual(item_prod['modelo'], 'Primacy 4')
+        self.assertEqual(item_prod['medida'], '205/55R16')
+        self.assertIn('205/55R16', item_prod['descripcion_completa'])
+        self.assertEqual(Decimal(str(item_prod['precio_venta'])), Decimal('2000.00'))
+        self.assertEqual(item_prod['stock_actual'], self.producto.stock_actual)
+        self.assertEqual(item_prod['tipo'], 'producto')
+        self.assertIn('cantidad_total', item_prod)
+        self.assertIn('ventas_total', item_prod)
+        self.assertIn('num_ventas', item_prod)
+
+        # Probar servicios_mas_vendidos
+        res_serv = self.client.get('/api/ventas/ventas/servicios_mas_vendidos/')
+        self.assertEqual(res_serv.status_code, 200)
+        servs = res_serv.json()
+        self.assertGreaterEqual(len(servs), 1)
+        item_serv = servs[0]
+        self.assertEqual(item_serv['id'], self.servicio.id)
+        self.assertEqual(item_serv['nombre'], self.servicio.nombre)
+        self.assertEqual(Decimal(str(item_serv['precio'])), Decimal('500.00'))
+        self.assertEqual(item_serv['tipo'], 'servicio')
+        self.assertIn('descripcion', item_serv)
+        self.assertEqual(item_serv['cantidad_total'], 1)
+
+
 
 
 

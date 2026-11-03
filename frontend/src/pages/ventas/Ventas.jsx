@@ -10,17 +10,6 @@ import {
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const normStr = (t) => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-
-const CHIPS_SERVICIOS_RAPIDOS = [
-  { label: 'Parche', iconClass: 'ri-first-aid-kit-line', termino: 'parche' },
-  { label: 'Balanceo', iconClass: 'ri-scales-3-line', termino: 'balanceo' },
-  { label: 'Montaje', iconClass: 'ri-tools-line', termino: 'montaje' },
-  { label: 'Rotación', iconClass: 'ri-repeat-2-line', termino: 'rotacion' },
-  { label: 'Válvula', iconClass: 'ri-radio-button-line', termino: 'valvula' },
-  { label: 'Nitrógeno', iconClass: 'ri-windy-line', termino: 'nitrogeno' },
-  { label: 'Alineación', iconClass: 'ri-compass-3-line', termino: 'alineacion' },
-];
 
 function Spinner({ sm }) {
   return (
@@ -349,6 +338,72 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: masVendidosData = { productos: [], servicios: [] } } = useQuery({
+    queryKey: ['pos-mas-vendidos'],
+    queryFn: async () => {
+      const [rProd, rServ] = await Promise.all([
+        fetch('/api/ventas/ventas/productos_mas_vendidos/?limite=25', { headers: tok() }).then(toArr),
+        fetch('/api/ventas/ventas/servicios_mas_vendidos/?limite=15', { headers: tok() }).then(toArr),
+      ]);
+      return { productos: rProd || [], servicios: rServ || [] };
+    },
+    staleTime: 60 * 1000,
+  });
+
+  const productosMap = useMemo(() => new Map(productos.map(p => [p.id, p])), [productos]);
+  const serviciosMap = useMemo(() => new Map(servicios.map(s => [s.id, s])), [servicios]);
+
+  const masVendidosLista = useMemo(() => {
+    const list = [];
+    (masVendidosData.productos || []).forEach(item => {
+      const p = productosMap.get(item.producto__id);
+      const codigo = item.producto__codigo || p?.codigo || '';
+      const medida = item.producto__medida || p?.medida || '';
+      const marca = item.producto__marca__nombre || p?.marca_nombre || p?.marca?.nombre || '';
+      const modelo = item.producto__modelo || p?.modelo || '';
+      const desc = item.producto__descripcion_completa || p?.descripcion_completa || `${marca} ${modelo} ${medida}`.trim() || codigo;
+      const precio = parseFloat(p?.precio_descuento || p?.precio_venta || (item.ventas_total && item.cantidad_total ? (item.ventas_total / item.cantidad_total) : 0)) || 0;
+      const stock = p?.stock_actual ?? 0;
+      const stockMinimo = p?.stock_minimo ?? 0;
+      list.push({
+        _tipo: 'producto',
+        id: item.producto__id,
+        itemOriginal: p || { id: item.producto__id, codigo, descripcion_completa: desc, precio_venta: precio, stock_actual: stock },
+        codigo,
+        medida,
+        marca,
+        modelo,
+        descripcion: desc,
+        precio,
+        stock_actual: stock,
+        stock_minimo: stockMinimo,
+        cantidad_total: item.cantidad_total,
+      });
+    });
+
+    (masVendidosData.servicios || []).forEach(item => {
+      const s = serviciosMap.get(item.servicio__id);
+      const nombre = item.servicio__nombre || s?.nombre || '';
+      const desc = s?.descripcion || '';
+      const precio = parseFloat(s?.precio ?? (item.ventas_total && item.cantidad_total ? (item.ventas_total / item.cantidad_total) : 0)) || 0;
+      list.push({
+        _tipo: 'servicio',
+        id: item.servicio__id,
+        itemOriginal: s || { id: item.servicio__id, nombre, descripcion: desc, precio },
+        codigo: '',
+        medida: '',
+        marca: '',
+        modelo: '',
+        descripcion: nombre,
+        detalles_adicionales: desc,
+        precio,
+        cantidad_total: item.cantidad_total,
+      });
+    });
+
+    return list;
+  }, [masVendidosData, productosMap, serviciosMap]);
+
   // Precargar opción enviada desde el Cotizador Multimarca
   useEffect(() => {
     if (itemPrecargado && itemPrecargado.producto) {
@@ -394,15 +449,29 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
 
   const loadingData = loadingProductos || loadingServicios || loadingClientes || loadingEmpleados;
 
-  const itemsFiltrados = tabItems === 'productos'
-    ? productos.filter(p => coincideProductoInteligente(p, busqueda))
-    : servicios.filter(s =>
+  const itemsFiltrados = useMemo(() => {
+    if (tabItems === 'productos') {
+      return productos.filter(p => coincideProductoInteligente(p, busqueda));
+    }
+    if (tabItems === 'servicios') {
+      return servicios.filter(s =>
         (s.nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
         (s.descripcion || '').toLowerCase().includes(busqueda.toLowerCase())
       );
+    }
+    if (!busqueda.trim()) return masVendidosLista;
+    const q = busqueda.toLowerCase();
+    return masVendidosLista.filter(item =>
+      (item.codigo || '').toLowerCase().includes(q) ||
+      (item.descripcion || '').toLowerCase().includes(q) ||
+      (item.medida || '').toLowerCase().includes(q) ||
+      (item.marca || '').toLowerCase().includes(q) ||
+      (item.modelo || '').toLowerCase().includes(q)
+    );
+  }, [tabItems, productos, servicios, masVendidosLista, busqueda]);
 
-  const agregarAlCarrito = (item) => {
-    const esProducto = tabItems === 'productos';
+  const agregarAlCarrito = (item, tipoForzado = null) => {
+    const esProducto = tipoForzado ? tipoForzado === 'producto' : (tabItems === 'productos');
     const key = esProducto ? `p-${item.id}` : `s-${item.id}`;
     const existente = carrito.find(i => i._key === key);
     if (existente) {
@@ -417,42 +486,10 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
         _key: key, id: Date.now(),
         producto: esProducto ? item : null,
         servicio: esProducto ? null : item,
-        descripcion: esProducto ? (item.descripcion_completa || item.codigo) : item.nombre,
+        descripcion: esProducto ? (item.descripcion_completa || item.codigo) : (item.nombre || item.descripcion),
         cantidad: 1, precio_unitario: precio, subtotal: precio,
         stock_max: esProducto ? (item.stock_actual ?? 999) : 999,
       }]);
-    }
-  };
-
-  const handleChipRapido = (chip) => {
-    const term = normStr(chip.termino);
-    const encontrado = servicios.find(s => normStr(s.nombre).includes(term) || normStr(s.descripcion).includes(term));
-    if (encontrado) {
-      const key = `s-${encontrado.id}`;
-      const precio = parseFloat(encontrado.precio) || 0;
-      setCarrito(prev => {
-        const existente = prev.find(i => i._key === key);
-        if (existente) {
-          return prev.map(i => i._key === key
-            ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precio_unitario }
-            : i
-          );
-        }
-        return [...prev, {
-          _key: key,
-          id: Date.now(),
-          producto: null,
-          servicio: encontrado,
-          descripcion: encontrado.nombre,
-          cantidad: 1,
-          precio_unitario: precio,
-          subtotal: precio,
-          stock_max: 999,
-        }];
-      });
-    } else {
-      setTabItems('servicios');
-      setBusqueda(chip.label);
     }
   };
 
@@ -658,41 +695,25 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
       <div className="md:col-span-1 lg:col-span-2 space-y-3">
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3 sticky top-0 z-10 shadow-xs">
           <div className="flex gap-2">
-            {[{ id: 'productos', label: 'Productos' }, { id: 'servicios', label: 'Servicios' }].map(t => (
+            {[
+              { id: 'productos', label: 'Productos', icon: 'ri-archive-line' },
+              { id: 'servicios', label: 'Servicios', icon: 'ri-tools-line' },
+              { id: 'mas_vendidos', label: 'Más Vendidos', icon: 'ri-fire-line text-amber-500' }
+            ].map(t => (
               <button key={t.id} onClick={() => { setTabItems(t.id); setBusqueda(''); }}
-                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors
-                  ${tabItems === t.id ? 'bg-[#df000a] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                {t.label}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer
+                  ${tabItems === t.id ? 'bg-[#df000a] text-white shadow-xs' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                <i className={t.icon}></i>
+                <span>{t.label}</span>
               </button>
             ))}
-          </div>
-
-          {/* Chips táctiles de servicios más usados */}
-          <div className="pt-0.5">
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
-              <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex-shrink-0 mr-1 flex items-center gap-1 select-none">
-                <i className="ri-flashlight-line text-amber-500"></i> Rápidos:
-              </span>
-              {CHIPS_SERVICIOS_RAPIDOS.map(chip => (
-                <button
-                  key={chip.label}
-                  type="button"
-                  onClick={() => handleChipRapido(chip)}
-                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 hover:bg-[#df000a]/15 hover:text-[#df000a] hover:border-[#df000a]/40 text-gray-700 border border-gray-200 transition-all flex items-center gap-1.5 whitespace-nowrap active:scale-95 shadow-2xs cursor-pointer flex-shrink-0"
-                  title={`Agregar directo o buscar: ${chip.label}`}
-                >
-                  <i className={`${chip.iconClass} text-sm text-[#df000a]`}></i>
-                  <span>{chip.label}</span>
-                </button>
-              ))}
-            </div>
           </div>
 
           <div className="relative">
             <MagnifyingGlassIcon className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
             <input
               type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
-              placeholder={tabItems === 'productos' ? 'Código, medida (ej. 2055516), marca, modelo…' : 'Buscar servicio…'}
+              placeholder={tabItems === 'productos' ? 'Código, medida (ej. 2055516), marca, modelo…' : tabItems === 'servicios' ? 'Buscar servicio…' : 'Buscar en más vendidos…'}
               className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#df000a] focus:border-transparent"
             />
           </div>
@@ -705,7 +726,7 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
               </div>
             ) : (
               <span className="text-gray-400">
-                Catálogo de {tabItems === 'productos' ? 'productos' : 'servicios'}
+                {tabItems === 'productos' ? 'Catálogo de productos' : tabItems === 'servicios' ? 'Catálogo de servicios' : 'Ranking de más vendidos'}
               </span>
             )}
             <span className="font-semibold text-gray-400 ml-auto">
@@ -718,41 +739,87 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
           <div className="h-[540px] max-h-[calc(100vh-280px)] overflow-y-auto divide-y divide-gray-100 scrollbar-thin">
             {itemsFiltrados.length === 0 ? (
               <p className="px-4 py-8 text-center text-gray-400 text-sm">Sin resultados</p>
-            ) : itemsFiltrados.map(item => (
-              <button key={item.id} onClick={() => agregarAlCarrito(item)}
-                disabled={tabItems === 'productos' && (item.stock_actual ?? 0) <= 0}
-                className="w-full px-4 py-3 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed flex justify-between items-center text-left transition-colors">
-                {tabItems === 'productos' ? (
-                  <>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">{item.codigo}</p>
-                      <p className="text-xs text-gray-500">{item.descripcion_completa}</p>
-                      <p className={`text-xs mt-0.5 ${
-                        (item.stock_actual ?? 0) <= 0 ? 'text-red-500 font-medium'
-                        : (item.stock_actual ?? 0) <= (item.stock_minimo ?? 0) ? 'text-orange-500'
-                        : 'text-gray-400'
-                      }`}>
-                        Stock: {item.stock_actual ?? 0}
-                        {(item.stock_actual ?? 0) <= 0 ? ' — Sin existencia' : ''}
-                        {(item.stock_actual ?? 0) > 0 && (item.stock_actual ?? 0) <= (item.stock_minimo ?? 0) ? ' — Stock bajo' : ''}
-                      </p>
+            ) : itemsFiltrados.map(item => {
+              if (tabItems === 'mas_vendidos') {
+                const esProd = item._tipo === 'producto';
+                const sinStock = esProd && (item.stock_actual ?? 0) <= 0;
+                return (
+                  <button
+                    key={`${item._tipo}-${item.id}`}
+                    onClick={() => agregarAlCarrito(item.itemOriginal, item._tipo)}
+                    disabled={sinStock}
+                    className="w-full px-4 py-3 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed flex justify-between items-center text-left transition-colors cursor-pointer"
+                  >
+                    <div className="flex-1 min-w-0 pr-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {esProd ? (
+                          <span className="text-xs font-mono font-bold text-gray-900">{item.codigo}</span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">Servicio</span>
+                        )}
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-full">
+                          <i className="ri-fire-line text-amber-500"></i>
+                          <span>{item.cantidad_total} vendidos</span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-700 mt-1 truncate">{item.descripcion}</p>
+                      {esProd ? (
+                        <p className={`text-xs mt-0.5 ${
+                          (item.stock_actual ?? 0) <= 0 ? 'text-red-500 font-medium'
+                          : (item.stock_actual ?? 0) <= (item.stock_minimo ?? 0) ? 'text-orange-500'
+                          : 'text-gray-400'
+                        }`}>
+                          Stock: {item.stock_actual ?? 0}
+                          {(item.stock_actual ?? 0) <= 0 ? ' — Sin existencia' : ''}
+                          {(item.stock_actual ?? 0) > 0 && (item.stock_actual ?? 0) <= (item.stock_minimo ?? 0) ? ' — Stock bajo' : ''}
+                        </p>
+                      ) : item.detalles_adicionales ? (
+                        <p className="text-[11px] text-gray-400 truncate mt-0.5">{item.detalles_adicionales}</p>
+                      ) : null}
                     </div>
                     <div className="text-right ml-3 flex-shrink-0">
-                      <p className="font-bold text-[#df000a]">${fmt(item.precio_descuento || item.precio_venta)}</p>
-                      {item.precio_descuento && <p className="text-xs text-gray-400 line-through">${fmt(item.precio_venta)}</p>}
+                      <p className="font-bold text-[#df000a]">${fmt(item.precio)}</p>
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">{item.nombre}</p>
-                      {item.descripcion && <p className="text-xs text-gray-500">{item.descripcion}</p>}
-                    </div>
-                    <p className="font-bold text-[#df000a] ml-3 flex-shrink-0">${fmt(item.precio)}</p>
-                  </>
-                )}
-              </button>
-            ))}
+                  </button>
+                );
+              }
+
+              return (
+                <button key={item.id} onClick={() => agregarAlCarrito(item)}
+                  disabled={tabItems === 'productos' && (item.stock_actual ?? 0) <= 0}
+                  className="w-full px-4 py-3 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed flex justify-between items-center text-left transition-colors cursor-pointer">
+                  {tabItems === 'productos' ? (
+                    <>
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{item.codigo}</p>
+                        <p className="text-xs text-gray-500">{item.descripcion_completa}</p>
+                        <p className={`text-xs mt-0.5 ${
+                          (item.stock_actual ?? 0) <= 0 ? 'text-red-500 font-medium'
+                          : (item.stock_actual ?? 0) <= (item.stock_minimo ?? 0) ? 'text-orange-500'
+                          : 'text-gray-400'
+                        }`}>
+                          Stock: {item.stock_actual ?? 0}
+                          {(item.stock_actual ?? 0) <= 0 ? ' — Sin existencia' : ''}
+                          {(item.stock_actual ?? 0) > 0 && (item.stock_actual ?? 0) <= (item.stock_minimo ?? 0) ? ' — Stock bajo' : ''}
+                        </p>
+                      </div>
+                      <div className="text-right ml-3 flex-shrink-0">
+                        <p className="font-bold text-[#df000a]">${fmt(item.precio_descuento || item.precio_venta)}</p>
+                        {item.precio_descuento && <p className="text-xs text-gray-400 line-through">${fmt(item.precio_venta)}</p>}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{item.nombre}</p>
+                        {item.descripcion && <p className="text-xs text-gray-500">{item.descripcion}</p>}
+                      </div>
+                      <p className="font-bold text-[#df000a] ml-3 flex-shrink-0">${fmt(item.precio)}</p>
+                    </>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
