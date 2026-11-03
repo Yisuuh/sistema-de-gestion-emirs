@@ -220,6 +220,17 @@ _Seguridad y confianza en su camino._`
           >
             {/* Header */}
             <div style={{ textAlign: 'center', paddingBottom: '6px' }}>
+              <img
+                src="/images/logo_hd.png"
+                alt={NEGOCIO.nombre}
+                style={{
+                  display: 'block',
+                  margin: '0 auto 8px',
+                  maxWidth: '72%',
+                  maxHeight: '60px',
+                  objectFit: 'contain',
+                }}
+              />
               <p style={{ fontWeight: 'bold', fontSize: '20px', margin: '3px 0' }}>
                 {NEGOCIO.nombre.toUpperCase()}
               </p>
@@ -305,24 +316,30 @@ _Seguridad y confianza en su camino._`
             {/* Items */}
             <div style={{ margin: '4px 0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '15px', paddingBottom: '3px', gap: '6px' }}>
-                <span>CANT / ARTICULO</span>
-                <span>IMPORTE</span>
+                <span style={{ flex: 1 }}>Descripción</span>
+                <span style={{ flexShrink: 0, textAlign: 'right', minWidth: '28px' }}>Cant</span>
+                <span style={{ flexShrink: 0, textAlign: 'right', minWidth: '68px' }}>Importe</span>
               </div>
+              <div style={{ height: '2px', background: '#000', margin: '0 0 4px' }} />
               {detalles.length > 0 ? (
                 detalles.map((d, i) => (
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', margin: '3px 0', gap: '6px', fontSize: '15px' }}>
                     <span style={{ flex: 1, wordBreak: 'break-word' }}>
-                      {d.cantidad > 1 ? `${d.cantidad}x ` : ''}{d.descripcion}
+                      {d.descripcion}
                     </span>
-                    <span style={{ flexShrink: 0, textAlign: 'right', fontWeight: 'bold' }}>
+                    <span style={{ flexShrink: 0, textAlign: 'right', minWidth: '28px' }}>
+                      {d.cantidad || 1}
+                    </span>
+                    <span style={{ flexShrink: 0, textAlign: 'right', minWidth: '68px', fontWeight: 'bold' }}>
                       ${fmtMXN(d.subtotal)}
                     </span>
                   </div>
                 ))
               ) : (
                 <div style={{ display: 'flex', justifyContent: 'space-between', margin: '3px 0', gap: '6px', fontSize: '15px' }}>
-                  <span style={{ flex: 1 }}>1x Servicio de Rescate</span>
-                  <span style={{ flexShrink: 0, fontWeight: 'bold' }}>${fmtMXN(total)}</span>
+                  <span style={{ flex: 1 }}>Servicio de Rescate Vial</span>
+                  <span style={{ flexShrink: 0, textAlign: 'right', minWidth: '28px' }}>1</span>
+                  <span style={{ flexShrink: 0, textAlign: 'right', minWidth: '68px', fontWeight: 'bold' }}>${fmtMXN(total)}</span>
                 </div>
               )}
             </div>
@@ -362,8 +379,9 @@ _Seguridad y confianza en su camino._`
                   <span style={{ fontWeight: '600' }}>-${fmtMXN(descuento)}</span>
                 </div>
               )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '20px', margin: '4px 0 2px', paddingTop: '4px', borderTop: '1px solid #000' }}>
-                <span>Total a Pagar:</span>
+              <div style={{ height: '3px', background: '#000', margin: '5px 0 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '21px', margin: '0 0 3px', paddingTop: '4px' }}>
+                <span>TOTAL:</span>
                 <span>${fmtMXN(total)}</span>
               </div>
             </div>
@@ -422,7 +440,7 @@ _Seguridad y confianza en su camino._`
               className="min-h-[42px] flex items-center justify-center gap-1.5 bg-[#df000a] hover:bg-[#b80008] active:scale-98 text-white rounded-xl font-bold text-xs transition-all cursor-pointer shadow-xs shadow-red-900/30"
             >
               <Printer className="w-4 h-4" />
-              <span>Imprimir (58mm)</span>
+              <span>Imprimir</span>
             </button>
           </div>
 
