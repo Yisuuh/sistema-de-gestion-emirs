@@ -57,6 +57,8 @@ Thumbs.db
 node_modules/
 /frontend/dist
 /frontend/.vite
+/frontend/dev-dist
+dev-dist/
 
 # Backups
 /backend/backups/
