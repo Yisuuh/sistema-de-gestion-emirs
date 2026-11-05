@@ -31,15 +31,42 @@ const jsonHdrs = () => ({ ...hdrs(), 'Content-Type': 'application/json' });
 const fmt = (n) => Number(n || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
 // --- Denominaciones MXN -------------------------------------------------------
-const BILLETES = [1000, 500, 200, 100, 50, 20];
-const MONEDAS  = [20, 10, 5, 2, 1, 0.5];
-const DENOM_INITIAL = Object.fromEntries([...BILLETES, ...MONEDAS].map((d) => [d, '']));
+export const DENOMINACIONES_BILLETES = [
+  { key: 'billetes_1000', valor: 1000, label: '$1,000' },
+  { key: 'billetes_500',  valor: 500,  label: '$500' },
+  { key: 'billetes_200',  valor: 200,  label: '$200' },
+  { key: 'billetes_100',  valor: 100,  label: '$100' },
+  { key: 'billetes_50',   valor: 50,   label: '$50' },
+  { key: 'billetes_20',   valor: 20,   label: '$20' },
+];
 
-function calcTotalArqueo(arqueo) {
-  return [...BILLETES, ...MONEDAS].reduce(
-    (sum, d) => sum + d * (parseFloat(arqueo[d]) || 0),
+export const DENOMINACIONES_MONEDAS = [
+  { key: 'monedas_20',  valor: 20,  label: '$20' },
+  { key: 'monedas_10',  valor: 10,  label: '$10' },
+  { key: 'monedas_5',   valor: 5,   label: '$5' },
+  { key: 'monedas_2',   valor: 2,   label: '$2' },
+  { key: 'monedas_1',   valor: 1,   label: '$1' },
+  { key: 'monedas_050', valor: 0.5, label: '$0.50' },
+];
+
+export const DENOM_INITIAL = {
+  billetes_1000: '', billetes_500: '', billetes_200: '',
+  billetes_100: '', billetes_50: '', billetes_20: '',
+  monedas_20: '', monedas_10: '', monedas_5: '',
+  monedas_2: '', monedas_1: '', monedas_050: '',
+};
+
+export function calcTotalArqueo(arqueo) {
+  if (!arqueo) return 0;
+  const totalBilletes = DENOMINACIONES_BILLETES.reduce(
+    (sum, d) => sum + d.valor * (parseInt(arqueo[d.key], 10) || 0),
     0
   );
+  const totalMonedas = DENOMINACIONES_MONEDAS.reduce(
+    (sum, d) => sum + d.valor * (parseFloat(arqueo[d.key]) || 0),
+    0
+  );
+  return totalBilletes + totalMonedas;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -231,15 +258,15 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 Billetes
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {BILLETES.map((d) => (
-                  <div key={d} className="flex flex-col">
-                    <label className="text-xs text-gray-500 mb-0.5 font-medium">${d}</label>
+                {DENOMINACIONES_BILLETES.map((d) => (
+                  <div key={d.key} className="flex flex-col">
+                    <label className="text-xs text-gray-500 mb-0.5 font-medium">{d.label}</label>
                     <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden">
                       <input
                         type="number"
                         min="0"
-                        value={arqueo[d]}
-                        onChange={(e) => setDenom(d, e.target.value)}
+                        value={arqueo[d.key] || ''}
+                        onChange={(e) => setDenom(d.key, e.target.value)}
                         placeholder="0"
                         className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
                       />
@@ -247,9 +274,9 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                         pzs
                       </span>
                     </div>
-                    {(parseFloat(arqueo[d]) || 0) > 0 && (
-                      <span className="text-xs text-green-600 mt-0.5 text-right">
-                        = {fmt(d * parseFloat(arqueo[d]))}
+                    {(parseFloat(arqueo[d.key]) || 0) > 0 && (
+                      <span className="text-xs text-green-600 mt-0.5 text-right font-medium">
+                        = {fmt(d.valor * (parseInt(arqueo[d.key], 10) || 0))}
                       </span>
                     )}
                   </div>
@@ -264,15 +291,15 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                 Monedas
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {MONEDAS.map((d) => (
-                  <div key={d} className="flex flex-col">
-                    <label className="text-xs text-gray-500 mb-0.5 font-medium">${d}</label>
+                {DENOMINACIONES_MONEDAS.map((d) => (
+                  <div key={d.key} className="flex flex-col">
+                    <label className="text-xs text-gray-500 mb-0.5 font-medium">{d.label}</label>
                     <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden">
                       <input
                         type="number"
                         min="0"
-                        value={arqueo[d]}
-                        onChange={(e) => setDenom(d, e.target.value)}
+                        value={arqueo[d.key] || ''}
+                        onChange={(e) => setDenom(d.key, e.target.value)}
                         placeholder="0"
                         className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
                       />
@@ -280,9 +307,9 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
                         pzs
                       </span>
                     </div>
-                    {(parseFloat(arqueo[d]) || 0) > 0 && (
-                      <span className="text-xs text-green-600 mt-0.5 text-right">
-                        = {fmt(d * parseFloat(arqueo[d]))}
+                    {(parseFloat(arqueo[d.key]) || 0) > 0 && (
+                      <span className="text-xs text-green-600 mt-0.5 text-right font-medium">
+                        = {fmt(d.valor * (parseFloat(arqueo[d.key]) || 0))}
                       </span>
                     )}
                   </div>
@@ -387,6 +414,516 @@ function ModalCierre({ caja, empleados, onGuardado, onClose }) {
             </div>
           </form>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Arqueo (Conteo Físico) ─────────────────────────────────────────────
+function ModalArqueo({ caja, empleados, onGuardado, onClose }) {
+  const [arqueo, setArqueo] = useState(DENOM_INITIAL);
+  const [empleado, setEmpleado] = useState('');
+  const [notas, setNotas] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const totalArqueo = calcTotalArqueo(arqueo);
+  const diferencia = totalArqueo - parseFloat(caja?.saldo_esperado || 0);
+
+  const setDenom = (k, val) =>
+    setArqueo((prev) => ({ ...prev, [k]: val === '' ? '' : val }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!empleado) {
+      setErr('Selecciona el empleado que realiza el arqueo.');
+      return;
+    }
+    setLoading(true);
+    setErr(null);
+    try {
+      const payload = {
+        caja: caja.id,
+        empleado: parseInt(empleado, 10),
+        billetes_1000: parseInt(arqueo.billetes_1000, 10) || 0,
+        billetes_500: parseInt(arqueo.billetes_500, 10) || 0,
+        billetes_200: parseInt(arqueo.billetes_200, 10) || 0,
+        billetes_100: parseInt(arqueo.billetes_100, 10) || 0,
+        billetes_50: parseInt(arqueo.billetes_50, 10) || 0,
+        billetes_20: parseInt(arqueo.billetes_20, 10) || 0,
+        monedas_20: parseInt(arqueo.monedas_20, 10) || 0,
+        monedas_10: parseInt(arqueo.monedas_10, 10) || 0,
+        monedas_5: parseInt(arqueo.monedas_5, 10) || 0,
+        monedas_2: parseInt(arqueo.monedas_2, 10) || 0,
+        monedas_1: parseInt(arqueo.monedas_1, 10) || 0,
+        monedas_050: parseInt(arqueo.monedas_050, 10) || 0,
+        notas: notas.trim(),
+      };
+      const res = await fetch(`${API_CAJA}/arqueos/`, {
+        method: 'POST',
+        headers: jsonHdrs(),
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErr(data.detail || data.error || JSON.stringify(data));
+        return;
+      }
+      onGuardado(data);
+    } catch {
+      setErr('Error de conexión al registrar el arqueo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg my-4 max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <div className="flex items-center gap-3">
+            <CalculatorIcon className="h-6 w-6 text-[#df000a]" />
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Arqueo de Efectivo {caja?.folio}</h2>
+              <p className="text-xs text-gray-500">Conteo físico de dinero en turno</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mx-6 mt-4 bg-gray-50 rounded-lg px-4 py-3 text-sm grid grid-cols-2 gap-2">
+          <div>
+            <span className="text-gray-500">Saldo esperado:</span>{' '}
+            <span className="font-semibold text-gray-800">{fmt(caja?.saldo_esperado)}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Ventas en caja:</span>{' '}
+            <span className="font-semibold text-gray-800">{caja?.num_ventas || 0}</span>
+          </div>
+        </div>
+
+        {err && (
+          <div className="mx-6 mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {err}
+          </div>
+        )}
+
+        <form onSubmit={submit} className="px-6 py-4 space-y-5">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Empleado responsable *</label>
+            <select
+              required
+              value={empleado}
+              onChange={(e) => setEmpleado(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-[#df000a]"
+            >
+              <option value="">Seleccionar empleado</option>
+              {empleados.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.nombre_completo || `${e.nombre} ${e.apellido}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+              <BanknotesIcon className="h-4 w-4 text-gray-500" />
+              Billetes
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {DENOMINACIONES_BILLETES.map((d) => (
+                <div key={d.key} className="flex flex-col">
+                  <label className="text-xs text-gray-500 mb-0.5 font-medium">{d.label}</label>
+                  <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden">
+                    <input
+                      type="number"
+                      min="0"
+                      value={arqueo[d.key] || ''}
+                      onChange={(e) => setDenom(d.key, e.target.value)}
+                      placeholder="0"
+                      className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
+                    />
+                    <span className="px-2 text-xs text-gray-400 bg-gray-50 border-l border-gray-300 h-full flex items-center">
+                      pzs
+                    </span>
+                  </div>
+                  {(parseFloat(arqueo[d.key]) || 0) > 0 && (
+                    <span className="text-xs text-green-600 mt-0.5 text-right font-medium">
+                      = {fmt(d.valor * (parseInt(arqueo[d.key], 10) || 0))}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+              <CurrencyDollarIcon className="h-4 w-4 text-gray-500" />
+              Monedas
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {DENOMINACIONES_MONEDAS.map((d) => (
+                <div key={d.key} className="flex flex-col">
+                  <label className="text-xs text-gray-500 mb-0.5 font-medium">{d.label}</label>
+                  <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden">
+                    <input
+                      type="number"
+                      min="0"
+                      value={arqueo[d.key] || ''}
+                      onChange={(e) => setDenom(d.key, e.target.value)}
+                      placeholder="0"
+                      className="w-full px-2 py-1.5 text-sm text-gray-900 text-right focus:outline-none focus:ring-1 focus:ring-[#df000a]"
+                    />
+                    <span className="px-2 text-xs text-gray-400 bg-gray-50 border-l border-gray-300 h-full flex items-center">
+                      pzs
+                    </span>
+                  </div>
+                  {(parseFloat(arqueo[d.key]) || 0) > 0 && (
+                    <span className="text-xs text-green-600 mt-0.5 text-right font-medium">
+                      = {fmt(d.valor * (parseFloat(arqueo[d.key]) || 0))}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border overflow-hidden text-sm">
+            <div className="px-4 py-2 bg-gray-50 border-b grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-xs text-gray-400">Saldo esperado</p>
+                <p className="font-bold text-gray-800">{fmt(caja?.saldo_esperado)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Total arqueo contado</p>
+                <p className="font-bold text-gray-800">{fmt(totalArqueo)}</p>
+              </div>
+            </div>
+            <div className={`px-4 py-2.5 flex items-center justify-between ${diferencia >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+              <span className={`font-semibold text-sm ${diferencia >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                {diferencia >= 0 ? 'Sobrante estimado' : 'Faltante estimado'}
+              </span>
+              <span className={`text-base font-bold ${diferencia >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                {diferencia >= 0 ? '+' : ''}{fmt(diferencia)}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Notas del Arqueo</label>
+            <textarea
+              rows={2}
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
+              placeholder="Observaciones sobre billetes, diferencias, etc."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-[#df000a] resize-none"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 text-sm font-medium cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 px-4 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] disabled:opacity-50 text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : <CalculatorIcon className="h-4 w-4" />}
+              Guardar Arqueo
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Modificar Cierre (Administrador) ──────────────────────────────────
+function ModalModificarCierre({ caja, empleados, onGuardado, onClose }) {
+  const [montoFinal, setMontoFinal] = useState(caja?.monto_final != null ? String(caja.monto_final) : '');
+  const [empleadoCierre, setEmpleadoCierre] = useState(() => {
+    if (caja?.empleado_cierre_id) return String(caja.empleado_cierre_id);
+    const found = empleados.find(e => e.nombre_completo === caja?.empleado_cierre || `${e.nombre} ${e.apellido}` === caja?.empleado_cierre);
+    return found ? String(found.id) : '';
+  });
+  const [notasCierre, setNotasCierre] = useState(caja?.notas_cierre || '');
+  const [motivo, setMotivo] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const saldoEsperado = parseFloat(caja?.saldo_esperado || 0);
+  const montoFinalNum = parseFloat(montoFinal) || 0;
+  const nuevaDiferencia = montoFinalNum - saldoEsperado;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!motivo.trim()) {
+      setErr('El motivo de la modificación es obligatorio para fines de auditoría.');
+      return;
+    }
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${API_CAJA}/cajas/${caja.id}/modificar_cierre/`, {
+        method: 'POST',
+        headers: jsonHdrs(),
+        body: JSON.stringify({
+          monto_final: montoFinalNum,
+          empleado_cierre: empleadoCierre ? parseInt(empleadoCierre, 10) : undefined,
+          notas_cierre: notasCierre.trim(),
+          motivo: motivo.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErr(data.detail || data.error || JSON.stringify(data));
+        return;
+      }
+      onGuardado(data);
+    } catch {
+      setErr('Error de conexión al modificar el cierre de caja.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-4 p-6">
+        <div className="flex items-center justify-between mb-4 pb-2 border-b">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-amber-100 text-amber-700">
+              <PencilIcon className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Modificar Cierre {caja?.folio}</h2>
+              <p className="text-xs text-gray-500">Ajuste administrativo de arqueo y cierre</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 cursor-pointer">
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Resumen previo */}
+        <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 mb-4 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+          <div>
+            <span className="text-gray-400 block">Saldo Esperado</span>
+            <span className="font-bold text-gray-800 text-sm">{fmt(caja?.saldo_esperado)}</span>
+          </div>
+          <div>
+            <span className="text-gray-400 block">Monto Final Anterior</span>
+            <span className="font-bold text-gray-800 text-sm">{fmt(caja?.monto_final)}</span>
+          </div>
+          <div>
+            <span className="text-gray-400 block">Diferencia Anterior</span>
+            <span className={`font-bold text-sm ${parseFloat(caja?.diferencia || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {parseFloat(caja?.diferencia || 0) >= 0 ? '+' : ''}{fmt(caja?.diferencia)}
+            </span>
+          </div>
+        </div>
+
+        {/* Alerta de Auditoría */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-xs text-blue-900 flex items-start gap-2">
+          <i className="ri-shield-check-line text-blue-600 text-base mt-0.5 flex-shrink-0"></i>
+          <span>
+            <strong>Registro de Auditoría:</strong> Esta modificación quedará registrada con tu usuario, fecha y el motivo estipulado en la bitácora administrativa del sistema.
+          </span>
+        </div>
+
+        {err && (
+          <div className="mb-4 text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 font-medium">
+            {err}
+          </div>
+        )}
+
+        <form onSubmit={submit} className="space-y-4 text-sm">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Monto Final Contado ($) *</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              required
+              value={montoFinal}
+              onChange={(e) => setMontoFinal(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl font-mono text-base font-bold text-gray-900 focus:ring-2 focus:ring-[#df000a]"
+            />
+            <div className={`mt-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between ${
+              nuevaDiferencia >= 0 ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+            }`}>
+              <span>Nueva diferencia ({nuevaDiferencia >= 0 ? 'Sobrante' : 'Faltante'}):</span>
+              <span className="font-bold font-mono text-sm">
+                {nuevaDiferencia >= 0 ? '+' : ''}{fmt(nuevaDiferencia)}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Empleado de Cierre</label>
+            <select
+              value={empleadoCierre}
+              onChange={(e) => setEmpleadoCierre(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-gray-900 focus:ring-2 focus:ring-[#df000a]"
+            >
+              <option value="">Mantener empleado actual</option>
+              {empleados.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.nombre_completo || `${e.nombre} ${e.apellido}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Notas de Cierre</label>
+            <textarea
+              rows={2}
+              value={notasCierre}
+              onChange={(e) => setNotasCierre(e.target.value)}
+              placeholder="Notas generales del cierre"
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-gray-900 focus:ring-2 focus:ring-[#df000a] resize-none text-xs"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-[#df000a] uppercase mb-1">
+              Motivo de la Modificación * (Obligatorio)
+            </label>
+            <input
+              type="text"
+              required
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="Ej. Corrección por billete de $500 no contado en arqueo nocturno"
+              className="w-full px-3 py-2 border border-red-300 bg-red-50/20 rounded-xl text-gray-900 text-xs focus:ring-2 focus:ring-[#df000a]"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 px-4 py-2.5 bg-[#df000a] hover:bg-[#c4000a] text-white rounded-xl text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-red-950/20"
+            >
+              {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : <PencilIcon className="h-4 w-4" />}
+              Guardar Modificación
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Reabrir Caja (Administrador) ───────────────────────────────────────
+function ModalReabrirCaja({ caja, onReabierta, onClose }) {
+  const [motivo, setMotivo] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!motivo.trim()) {
+      setErr('Debes ingresar el motivo de reapertura.');
+      return;
+    }
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${API_CAJA}/cajas/${caja.id}/reabrir/`, {
+        method: 'POST',
+        headers: jsonHdrs(),
+        body: JSON.stringify({ motivo: motivo.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErr(data.detail || data.error || JSON.stringify(data));
+        return;
+      }
+      onReabierta(data);
+    } catch {
+      setErr('Error de conexión al reabrir la caja.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+          <LockOpenIcon className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-bold text-gray-900 text-center mb-1">
+          ¿Reabrir Caja {caja?.folio}?
+        </h3>
+        <p className="text-center text-xs text-gray-500 mb-4">
+          Apertura original: {caja?.fecha_apertura}
+        </p>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-900 leading-relaxed flex items-start gap-2">
+          <ExclamationTriangleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <strong>Advertencia importante:</strong> Esta acción volverá a poner la caja en estado <strong>ABIERTA</strong>. No debe existir otra caja abierta simultáneamente en el sistema.
+          </div>
+        </div>
+
+        {err && (
+          <div className="mb-4 text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 font-medium">
+            {err}
+          </div>
+        )}
+
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+              Motivo de reapertura *
+            </label>
+            <textarea
+              rows={2}
+              required
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="Ej. Se cerró por error antes de ingresar última venta del turno"
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs text-gray-900 focus:ring-2 focus:ring-emerald-500 resize-none"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold disabled:opacity-50 transition-colors shadow-md shadow-emerald-950/20 cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              {loading ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : <LockOpenIcon className="h-4 w-4" />}
+              Reabrir Caja
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -1043,16 +1580,20 @@ function CajaActiva({ caja, ventas, movimientos, empleados, clientes, onRefresh,
           </div>
         </div>
         <div className="sm:ml-auto flex gap-2 flex-wrap">
+          <button onClick={() => setModal('arqueo')}
+            className="px-3 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm flex items-center gap-1.5 cursor-pointer">
+            <CalculatorIcon className="h-4 w-4" /> Arqueo
+          </button>
           <button onClick={() => setModal('movimiento')}
-            className="px-3 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] text-sm flex items-center gap-1.5">
+            className="px-3 py-2 bg-[#df000a] text-white rounded-lg hover:bg-[#c4000a] text-sm flex items-center gap-1.5 cursor-pointer">
             <PlusIcon className="h-4 w-4" /> Movimiento
           </button>
           <button onClick={onRefresh}
-            className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm flex items-center gap-1.5 text-gray-600">
+            className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm flex items-center gap-1.5 text-gray-600 cursor-pointer">
             <ArrowPathIcon className="h-4 w-4" /> Actualizar
           </button>
           <button onClick={() => setModal('cierre')}
-            className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm flex items-center gap-1.5">
+            className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm flex items-center gap-1.5 cursor-pointer">
             <LockClosedIcon className="h-4 w-4" /> Cerrar Caja
           </button>
         </div>
@@ -1373,7 +1914,11 @@ function ModalDetalleVenta({ venta, onClose, onReimprimir }) {
 }
 
 // ─── Panel Historial ──────────────────────────────────────────────────────────
-function Historial() {
+function Historial({ empleados = [], onNotif }) {
+  const queryClient = useQueryClient();
+  const rolUsuario = (localStorage.getItem('rol') || '').toLowerCase();
+  const esAdmin = ['admin', 'administrador', 'gerente'].includes(rolUsuario);
+
   const [periodo, setPeriodo] = useState('hoy');
   const [fechaInicio, setFechaInicio] = useState('');
   const [fechaFin, setFechaFin] = useState('');
@@ -1382,6 +1927,26 @@ function Historial() {
   const [ventasCaja, setVentasCaja] = useState({});
   const [ticketVenta, setTicketVenta] = useState(null);
   const [detalleVenta, setDetalleVenta] = useState(null);
+  const [cajaAModificar, setCajaAModificar] = useState(null);
+  const [cajaAReabrir, setCajaAReabrir] = useState(null);
+
+  const handleCierreModificado = (data) => {
+    setCajaAModificar(null);
+    onNotif?.(`Cierre de caja ${data?.folio || ''} modificado con éxito.`);
+    queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
+    queryClient.invalidateQueries({ queryKey: ['cajas'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+  };
+
+  const handleCajaReabierta = (data) => {
+    setCajaAReabrir(null);
+    onNotif?.(`Caja ${data?.folio || ''} reabierta exitosamente.`);
+    queryClient.invalidateQueries({ queryKey: ['historial-cajas'] });
+    queryClient.invalidateQueries({ queryKey: ['cajas'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+    queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+  };
 
   const abrirTicketHistorial = async (id) => {
     try {
@@ -1541,6 +2106,28 @@ function Historial() {
                       </div>
                     </button>
 
+                    {/* Acciones administrativas para cajas cerradas */}
+                    {esAdmin && c.estado === 'cerrada' && (
+                      <div className="px-5 py-2.5 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => setCajaAModificar(c)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors shadow-xs cursor-pointer"
+                        >
+                          <PencilIcon className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Modificar Cierre</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCajaAReabrir(c)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors shadow-xs cursor-pointer"
+                        >
+                          <LockOpenIcon className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Reabrir Caja</span>
+                        </button>
+                      </div>
+                    )}
+
                     {/* Detalle de ventas de la caja */}
                     {abierta && vc && (
                       <div className="border-t border-gray-100 overflow-x-auto">
@@ -1623,6 +2210,25 @@ function Historial() {
             setDetalleVenta(null);
             abrirTicketHistorial(id);
           }}
+        />
+      )}
+
+      {/* Modal Modificar Cierre */}
+      {cajaAModificar && (
+        <ModalModificarCierre
+          caja={cajaAModificar}
+          empleados={empleados}
+          onGuardado={handleCierreModificado}
+          onClose={() => setCajaAModificar(null)}
+        />
+      )}
+
+      {/* Modal Reabrir Caja */}
+      {cajaAReabrir && (
+        <ModalReabrirCaja
+          caja={cajaAReabrir}
+          onReabierta={handleCajaReabierta}
+          onClose={() => setCajaAReabrir(null)}
         />
       )}
     </div>
@@ -1755,7 +2361,7 @@ export default function Caja() {
       )}
 
       {/* Tab: Historial */}
-      {tab === 'historial' && <Historial />}
+      {tab === 'historial' && <Historial empleados={empleados} onNotif={ok} />}
 
       {/* Modales */}
       {modal === 'apertura' && (
@@ -1764,6 +2370,19 @@ export default function Caja() {
           onGuardado={(data) => {
             setModal(null);
             ok(`Caja ${data.folio} abierta exitosamente.`);
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
+            queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
+          }}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'arqueo' && cajaActual && (
+        <ModalArqueo
+          caja={cajaActual}
+          empleados={empleados}
+          onGuardado={(data) => {
+            setModal(null);
+            ok(`Arqueo registrado exitosamente. Total contado: ${fmt(data.total)}`);
             queryClient.invalidateQueries({ queryKey: ['caja-activa-completa'] });
             queryClient.invalidateQueries({ queryKey: ['caja-activa-pos'] });
           }}

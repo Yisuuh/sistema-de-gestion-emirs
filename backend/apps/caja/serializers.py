@@ -203,3 +203,16 @@ class CerrarCajaSerializer(serializers.Serializer):
         if value < 0:
             raise serializers.ValidationError("El monto final no puede ser negativo")
         return value
+
+
+class ModificarCierreCajaSerializer(serializers.Serializer):
+    """
+    Serializer para modificar cierre de caja (solo administradores)
+    """
+    monto_final = serializers.DecimalField(max_digits=10, decimal_places=2, required=True)
+    empleado_cierre = serializers.IntegerField(required=False, allow_null=True)
+    notas_cierre = serializers.CharField(required=False, allow_blank=True)
+    motivo = serializers.CharField(required=True, min_length=5, error_messages={
+        'required': 'Debe especificar el motivo administrativo de la modificación',
+        'min_length': 'El motivo debe contener al menos 5 caracteres'
+    })

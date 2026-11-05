@@ -513,8 +513,47 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
   const descuentoN = parseFloat(descuento) || 0;
   const rawTotal = Math.max(0, subtotal - descuentoN);
   const total = redondearCentavos ? Math.round(rawTotal) : rawTotal;
-  const totalPagado = (parseFloat(montoEfectivo) || 0) + (parseFloat(montoElectronico) || 0);
-  const cambio = totalPagado - total;
+
+  const efectivoVal = ['efectivo', 'mixto'].includes(metodoPago) ? (parseFloat(montoEfectivo) || 0) : 0;
+  const electronicoVal = ['tarjeta', 'transferencia', 'mixto'].includes(metodoPago) ? (parseFloat(montoElectronico) || 0) : 0;
+
+  const cambio = useMemo(() => {
+    if (metodoPago === 'efectivo') {
+      return Math.max(0, efectivoVal - total);
+    }
+    if (metodoPago === 'mixto') {
+      const restanteEfectivo = Math.max(0, total - electronicoVal);
+      return Math.max(0, efectivoVal - restanteEfectivo);
+    }
+    return 0;
+  }, [metodoPago, efectivoVal, electronicoVal, total]);
+
+  const handleCambioMetodoPago = (nuevoMetodo) => {
+    setMetodoPago(nuevoMetodo);
+    setErrors(er => ({
+      ...er,
+      numOperacion: undefined,
+      numReferencia: undefined,
+      montoEfectivo: undefined,
+      montoElectronico: undefined,
+    }));
+    if (nuevoMetodo === 'efectivo') {
+      setMontoElectronico('');
+      setNumOperacion('');
+      setNumReferencia('');
+    } else if (nuevoMetodo === 'tarjeta') {
+      setMontoEfectivo('');
+      setNumReferencia('');
+      setMontoElectronico(total > 0 ? String(total) : '');
+    } else if (nuevoMetodo === 'transferencia') {
+      setMontoEfectivo('');
+      setNumOperacion('');
+      setMontoElectronico(total > 0 ? String(total) : '');
+    } else if (nuevoMetodo === 'mixto') {
+      setMontoEfectivo('');
+      setMontoElectronico('');
+    }
+  };
 
   const limpiar = () => {
     setCarrito([]); setEmpleadoSel(''); setClienteSel(''); setVehiculoSel(''); setKilometrajeActual('');
@@ -544,8 +583,8 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
     if (metodoPago === 'mixto') {
       if (!montoEfectivo || parseFloat(montoEfectivo) <= 0) e.montoEfectivo = 'Ingresa el monto en efectivo';
       if (!montoElectronico || parseFloat(montoElectronico) <= 0) e.montoElectronico = 'Ingresa el monto electrónico';
-      if (parseFloat(montoEfectivo || 0) + parseFloat(montoElectronico || 0) < total)
-        e.montoElectronico = `La suma ($${fmt(totalPagado)}) no cubre el total ($${fmt(total)})`;
+      if (efectivoVal + electronicoVal < total)
+        e.montoElectronico = `La suma ($${fmt(efectivoVal + electronicoVal)}) no cubre el total ($${fmt(total)})`;
     }
     if ((metodoPago === 'tarjeta' || metodoPago === 'mixto') && !numOperacion.trim())
       e.numOperacion = 'Ingresa el número de operación de la tarjeta';
@@ -949,11 +988,7 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
         <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
           <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Método de Pago</label>
           <select value={metodoPago}
-            onChange={e => {
-              setMetodoPago(e.target.value);
-              setNumOperacion(''); setNumReferencia('');
-              setErrors(er => ({ ...er, numOperacion: undefined, numReferencia: undefined, montoEfectivo: undefined, montoElectronico: undefined }));
-            }}
+            onChange={e => handleCambioMetodoPago(e.target.value)}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-[#df000a]">
             <option value="efectivo">Efectivo</option>
             <option value="tarjeta">Tarjeta</option>
@@ -1000,8 +1035,8 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
                 className={`w-full border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-[#df000a] focus:border-transparent
                   ${errors.montoEfectivo ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
               <FieldError name="montoEfectivo" />
-              {!errors.montoEfectivo && metodoPago === 'efectivo' && parseFloat(montoEfectivo) >= total && total > 0 && (
-                <p className="text-green-600 text-xs mt-1 font-medium">Cambio: ${fmt(Math.max(0, cambio))}</p>
+              {!errors.montoEfectivo && ['efectivo', 'mixto'].includes(metodoPago) && cambio > 0 && (
+                <p className="text-green-600 text-xs mt-1 font-medium">Cambio: ${fmt(cambio)}</p>
               )}
             </div>
           )}

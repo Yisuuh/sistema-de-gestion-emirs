@@ -149,12 +149,11 @@ class VentaSerializer(serializers.ModelSerializer):
         monto_efectivo_val = Decimal(str(monto_efectivo)) if monto_efectivo is not None else Decimal('0')
         monto_electronico_val = Decimal(str(monto_electronico)) if monto_electronico is not None else Decimal('0')
 
-        if tipo_tarjeta and tipo_tarjeta not in ['debito', 'credito']:
-            raise serializers.ValidationError({
-                "tipo_tarjeta": "Tipo de tarjeta inválido. Debe ser 'debito' o 'credito'."
-            })
-        
         if metodo_pago == 'efectivo':
+            data['monto_electronico'] = Decimal('0.00')
+            data['num_operacion'] = ''
+            data['num_referencia'] = ''
+            data['tipo_tarjeta'] = None
             if monto_efectivo_val <= Decimal('0'):
                 raise serializers.ValidationError(
                     "El monto en efectivo debe ser mayor a 0 para pago en efectivo"
@@ -164,12 +163,16 @@ class VentaSerializer(serializers.ModelSerializer):
                     'monto_efectivo': 'El monto en efectivo entregado no puede ser menor al total de la venta.'
                 })
         
-        if metodo_pago in ['tarjeta', 'transferencia'] and monto_electronico_val <= Decimal('0'):
-            raise serializers.ValidationError(
-                "El monto electrónico debe ser mayor a 0 para este método de pago"
-            )
+        elif metodo_pago in ['tarjeta', 'transferencia']:
+            data['monto_efectivo'] = Decimal('0.00')
+            data['monto_electronico'] = data.get('total', getattr(self.instance, 'total', Decimal('0.00')))
+            monto_electronico_val = Decimal(str(data['monto_electronico'])) if data['monto_electronico'] is not None else Decimal('0')
+            if monto_electronico_val <= Decimal('0'):
+                raise serializers.ValidationError(
+                    "El monto electrónico debe ser mayor a 0 para este método de pago"
+                )
         
-        if metodo_pago == 'mixto':
+        elif metodo_pago == 'mixto':
             if monto_efectivo_val <= Decimal('0') or monto_electronico_val <= Decimal('0'):
                 raise serializers.ValidationError(
                     "Para pago mixto, ambos montos deben ser mayores a 0"
@@ -178,6 +181,12 @@ class VentaSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'monto_efectivo': 'La suma del monto en efectivo y electrónico no puede ser menor al total de la venta.'
                 })
+
+        tipo_tarjeta = data.get('tipo_tarjeta', getattr(self.instance, 'tipo_tarjeta', None))
+        if tipo_tarjeta and tipo_tarjeta not in ['debito', 'credito']:
+            raise serializers.ValidationError({
+                "tipo_tarjeta": "Tipo de tarjeta inválido. Debe ser 'debito' o 'credito'."
+            })
 
         # Validar número de operación para tarjeta
         if metodo_pago == 'tarjeta' and not data.get('num_operacion', getattr(self.instance, 'num_operacion', '')).strip():

@@ -162,7 +162,14 @@ export default function TicketImpresion({ venta }) {
   const electronicoN = parseFloat(monto_electronico || 0);
   const totalN = parseFloat(total || 0);
   const descuentoN = parseFloat(descuento || 0);
-  const cambio = Math.max(0, efectivoN + electronicoN - totalN);
+  const cambio = (() => {
+    if (metodo_pago === 'efectivo') return Math.max(0, efectivoN - totalN);
+    if (metodo_pago === 'mixto') {
+      const restEfectivo = Math.max(0, totalN - electronicoN);
+      return Math.max(0, efectivoN - restEfectivo);
+    }
+    return 0;
+  })();
 
   const showEfectivo = metodo_pago === 'efectivo' || metodo_pago === 'mixto';
   const showElectronico = metodo_pago === 'tarjeta' || metodo_pago === 'transferencia' || metodo_pago === 'mixto';

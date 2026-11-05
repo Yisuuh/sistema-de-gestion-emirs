@@ -14,9 +14,11 @@ from .serializers import (
     CajaSerializer,
     CajaListSerializer,
     CerrarCajaSerializer,
+    ModificarCierreCajaSerializer,
     MovimientoCajaSerializer,
     ArqueoCajaSerializer
 )
+from apps.usuarios.models import LogAuditoria
 
 
 class CajaViewSet(viewsets.ModelViewSet):
@@ -135,6 +137,146 @@ class CajaViewSet(viewsets.ModelViewSet):
             return Response(data)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def modificar_cierre(self, request, pk=None):
+        """
+        Modificar el cierre de una caja cerrada (Solo Administradores)
+        """
+        es_admin = (
+            getattr(request.user, 'rol', None) == 'admin' or 
+            getattr(request.user, 'role', None) == 'admin' or 
+            request.user.is_staff or 
+            request.user.is_superuser or
+            getattr(request.user, 'es_admin', False)
+        )
+        if not es_admin:
+            return Response(
+                {'error': 'Solo los administradores pueden modificar el cierre de caja'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        caja = self.get_object()
+        if caja.estado != 'cerrada':
+            return Response(
+                {'error': 'Solo se pueden modificar cajas cerradas'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = ModificarCierreCajaSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        nuevo_monto_final = serializer.validated_data['monto_final']
+        if (caja.num_ventas > 0 or caja.saldo_esperado > Decimal('0.00')) and nuevo_monto_final <= Decimal('0.00'):
+            return Response(
+                {'error': 'No es posible establecer un monto final de $0.00 en una caja con movimientos registrados.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        monto_final_ant = caja.monto_final
+        diferencia_ant = caja.diferencia
+        motivo = serializer.validated_data['motivo']
+
+        caja.monto_final = nuevo_monto_final
+        if serializer.validated_data.get('empleado_cierre'):
+            caja.empleado_cierre_id = serializer.validated_data['empleado_cierre']
+
+        notas_base = serializer.validated_data.get('notas_cierre') or caja.notas_cierre or ''
+        admin_tag = f"\n[MODIFICADO POR ADMIN {request.user.username}]: {motivo} | Anterior: ${monto_final_ant} -> Nuevo: ${caja.monto_final}"
+        caja.notas_cierre = f"{notas_base}{admin_tag}".strip()
+        caja.save()
+
+        try:
+            LogAuditoria.objects.create(
+                usuario=request.user if request.user.is_authenticated else None,
+                accion='actualizar',
+                tabla='caja',
+                registro_id=caja.id,
+                datos_anteriores={
+                    'monto_final': float(monto_final_ant) if monto_final_ant is not None else None,
+                    'diferencia': float(diferencia_ant) if diferencia_ant is not None else None,
+                },
+                datos_nuevos={
+                    'monto_final': float(caja.monto_final),
+                    'diferencia': float(caja.diferencia) if caja.diferencia is not None else None,
+                    'motivo': motivo,
+                    'empleado_cierre': caja.empleado_cierre_id,
+                },
+                ip=request.META.get('REMOTE_ADDR'),
+            )
+        except Exception:
+            pass
+
+        return Response(CajaSerializer(caja).data)
+
+    @action(detail=True, methods=['post'])
+    def reabrir(self, request, pk=None):
+        """
+        Reabrir una caja cerrada (Solo Administradores)
+        """
+        es_admin = (
+            getattr(request.user, 'rol', None) == 'admin' or 
+            getattr(request.user, 'role', None) == 'admin' or 
+            request.user.is_staff or 
+            request.user.is_superuser or
+            getattr(request.user, 'es_admin', False)
+        )
+        if not es_admin:
+            return Response(
+                {'error': 'Solo los administradores pueden reabrir una caja'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        caja = self.get_object()
+        if caja.estado != 'cerrada':
+            return Response(
+                {'error': 'Solo se pueden reabrir cajas cerradas'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if Caja.objects.filter(estado='abierta').exists():
+            return Response(
+                {'error': 'Ya existe una caja abierta actualmente. No puede haber dos cajas abiertas simultáneas.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        motivo = request.data.get('motivo', '').strip()
+        if len(motivo) < 5:
+            return Response(
+                {'error': 'El motivo de reapertura debe contener al menos 5 caracteres'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        monto_final_ant = caja.monto_final
+        caja.estado = 'abierta'
+        caja.fecha_cierre = None
+        caja.monto_final = None
+        caja.empleado_cierre = None
+        admin_tag = f"\n[REAPERTURA POR ADMIN {request.user.username}]: {motivo}"
+        caja.notas_cierre = f"{caja.notas_cierre or ''}{admin_tag}".strip()
+        caja.save()
+
+        try:
+            LogAuditoria.objects.create(
+                usuario=request.user if request.user.is_authenticated else None,
+                accion='actualizar',
+                tabla='caja',
+                registro_id=caja.id,
+                datos_anteriores={
+                    'estado': 'cerrada',
+                    'monto_final': float(monto_final_ant) if monto_final_ant is not None else None,
+                },
+                datos_nuevos={
+                    'estado': 'abierta',
+                    'motivo': motivo,
+                },
+                ip=request.META.get('REMOTE_ADDR'),
+            )
+        except Exception:
+            pass
+
+        return Response(CajaSerializer(caja).data)
     
     @action(detail=True, methods=['get'])
     def ventas_caja(self, request, pk=None):

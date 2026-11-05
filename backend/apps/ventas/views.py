@@ -688,18 +688,26 @@ class VentaViewSet(viewsets.ModelViewSet):
                 Paragraph('Efectivo:', meta_label_style),
                 Paragraph(f"${monto_efectivo:,.2f}", meta_val_style)
             ])
-            cambio = max(Decimal('0.00'), (monto_efectivo + monto_electronico) - total_val)
-            if cambio > Decimal('0.00'):
-                pago_data.append([
-                    Paragraph('Cambio:', meta_label_style),
-                    Paragraph(f"${cambio:,.2f}", meta_val_style)
-                ])
 
         if venta.metodo_pago in ('tarjeta', 'transferencia', 'mixto') and monto_electronico > Decimal('0.00'):
             lbl = 'Tarjeta:' if venta.metodo_pago == 'tarjeta' else ('Transferencia:' if venta.metodo_pago == 'transferencia' else 'Electrónico:')
             pago_data.append([
                 Paragraph(lbl, meta_label_style),
                 Paragraph(f"${monto_electronico:,.2f}", meta_val_style)
+            ])
+
+        if venta.metodo_pago == 'efectivo':
+            cambio = max(Decimal('0.00'), monto_efectivo - total_val)
+        elif venta.metodo_pago == 'mixto':
+            restante_efectivo = max(Decimal('0.00'), total_val - monto_electronico)
+            cambio = max(Decimal('0.00'), monto_efectivo - restante_efectivo)
+        else:
+            cambio = Decimal('0.00')
+
+        if cambio > Decimal('0.00'):
+            pago_data.append([
+                Paragraph('Cambio:', meta_label_style),
+                Paragraph(f"${cambio:,.2f}", meta_val_style)
             ])
 
         if venta.num_operacion:

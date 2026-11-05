@@ -356,5 +356,162 @@ class CajaModuleTestCase(TestCase):
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('No es posible cerrar la caja en $0.00', res.data.get('error', ''))
 
+    def test_modificar_cierre_por_admin_exitoso(self):
+        """Verificar que un admin puede modificar el cierre de una caja cerrada y se audita"""
+        from apps.usuarios.models import LogAuditoria
+        caja = Caja.objects.create(
+            folio='C-MOD-01',
+            monto_inicial=Decimal('1000.00'),
+            monto_final=Decimal('2000.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now(),
+            notas_cierre='Cierre original'
+        )
+
+        res = self.client.post(f'/api/caja/cajas/{caja.id}/modificar_cierre/', {
+            'monto_final': '2500.00',
+            'empleado_cierre': self.empleado.id,
+            'motivo': 'Ajuste por conteo físico tardío de billetes',
+            'notas_cierre': 'Notas adicionales'
+        }, format='json')
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        caja.refresh_from_db()
+        self.assertEqual(caja.monto_final, Decimal('2500.00'))
+        self.assertIn('[MODIFICADO POR ADMIN admin_caja]', caja.notas_cierre)
+        self.assertIn('Ajuste por conteo físico tardío', caja.notas_cierre)
+        self.assertTrue(LogAuditoria.objects.filter(accion='actualizar', tabla='caja', registro_id=caja.id).exists())
+
+    def test_modificar_cierre_bloqueado_para_operador(self):
+        """Verificar que un operador no puede modificar el cierre (403 Forbidden)"""
+        caja = Caja.objects.create(
+            folio='C-MOD-02',
+            monto_inicial=Decimal('1000.00'),
+            monto_final=Decimal('2000.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now()
+        )
+        self.client.force_authenticate(user=self.operador_user)
+        res = self.client.post(f'/api/caja/cajas/{caja.id}/modificar_cierre/', {
+            'monto_final': '2500.00',
+            'motivo': 'Intento no autorizado'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_modificar_cierre_validaciones(self):
+        """Verificar validaciones de modificar_cierre: caja abierta rechazada y monto cero con movimientos"""
+        # 1. Caja abierta rechazada
+        caja_abierta = Caja.objects.create(
+            folio='C-MOD-03',
+            monto_inicial=Decimal('1000.00'),
+            empleado_apertura=self.empleado,
+            estado='abierta'
+        )
+        res1 = self.client.post(f'/api/caja/cajas/{caja_abierta.id}/modificar_cierre/', {
+            'monto_final': '1200.00',
+            'motivo': 'Ajuste administrativo'
+        }, format='json')
+        self.assertEqual(res1.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Solo se pueden modificar cajas cerradas', str(res1.data))
+
+        # 2. Caja cerrada con movimientos no puede modificarse a 0
+        caja_cerrada = Caja.objects.create(
+            folio='C-MOD-04',
+            monto_inicial=Decimal('1000.00'),
+            monto_final=Decimal('1500.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now()
+        )
+        Venta.objects.create(
+            folio='V-TEST-MOD-01',
+            caja=caja_cerrada,
+            empleado=self.empleado,
+            metodo_pago='efectivo',
+            monto_efectivo=Decimal('500.00'),
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00')
+        )
+        res2 = self.client.post(f'/api/caja/cajas/{caja_cerrada.id}/modificar_cierre/', {
+            'monto_final': '0.00',
+            'motivo': 'Intento poner en cero'
+        }, format='json')
+        self.assertEqual(res2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('No es posible establecer un monto final de $0.00', str(res2.data))
+
+    def test_reabrir_caja_por_admin_exitoso(self):
+        """Verificar que un admin puede reabrir una caja cerrada"""
+        from apps.usuarios.models import LogAuditoria
+        caja = Caja.objects.create(
+            folio='C-REAB-01',
+            monto_inicial=Decimal('1000.00'),
+            monto_final=Decimal('2000.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now(),
+            notas_cierre='Cierre previo'
+        )
+
+        res = self.client.post(f'/api/caja/cajas/{caja.id}/reabrir/', {
+            'motivo': 'Reapertura para registrar venta pendiente del turno'
+        }, format='json')
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        caja.refresh_from_db()
+        self.assertEqual(caja.estado, 'abierta')
+        self.assertIsNone(caja.fecha_cierre)
+        self.assertIsNone(caja.monto_final)
+        self.assertIsNone(caja.empleado_cierre)
+        self.assertIn('[REAPERTURA POR ADMIN admin_caja]', caja.notas_cierre)
+        self.assertIn('Reapertura para registrar venta pendiente', caja.notas_cierre)
+        self.assertTrue(LogAuditoria.objects.filter(accion='actualizar', tabla='caja', registro_id=caja.id).exists())
+
+    def test_reabrir_caja_bloqueado_para_operador(self):
+        """Verificar que operador no puede reabrir caja (403)"""
+        caja = Caja.objects.create(
+            folio='C-REAB-02',
+            monto_inicial=Decimal('1000.00'),
+            monto_final=Decimal('2000.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now()
+        )
+        self.client.force_authenticate(user=self.operador_user)
+        res = self.client.post(f'/api/caja/cajas/{caja.id}/reabrir/', {
+            'motivo': 'Intento no autorizado'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_reabrir_caja_bloqueado_si_otra_caja_abierta(self):
+        """Verificar que no se puede reabrir si ya hay otra caja abierta simultáneamente"""
+        caja_abierta = Caja.objects.create(
+            folio='C-ACTUAL-ABIERTA',
+            monto_inicial=Decimal('1000.00'),
+            empleado_apertura=self.empleado,
+            estado='abierta'
+        )
+        caja_cerrada = Caja.objects.create(
+            folio='C-ANTIGUA-CERRADA',
+            monto_inicial=Decimal('1000.00'),
+            monto_final=Decimal('1500.00'),
+            empleado_apertura=self.empleado,
+            empleado_cierre=self.empleado,
+            estado='cerrada',
+            fecha_cierre=timezone.now()
+        )
+
+        res = self.client.post(f'/api/caja/cajas/{caja_cerrada.id}/reabrir/', {
+            'motivo': 'Reapertura cuando ya hay caja abierta'
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Ya existe una caja abierta actualmente', str(res.data))
+
 
 

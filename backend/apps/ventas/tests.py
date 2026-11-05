@@ -1344,6 +1344,148 @@ class VentasAndFeaturesTestCase(TestCase):
         self.assertIn('descripcion', item_serv)
         self.assertEqual(item_serv['cantidad_total'], 1)
 
+    def test_sanitizacion_pago_efectivo(self):
+        """Verificar que en ventas en efectivo se fuerzan a 0 los campos electrónicos"""
+        data = {
+            'empleado': self.empleado.id,
+            'cliente': self.cliente.id,
+            'metodo_pago': 'efectivo',
+            'monto_efectivo': Decimal('2500.00'),
+            'monto_electronico': Decimal('500.00'),  # no debe persistir
+            'num_operacion': 'OP-999',  # no debe persistir
+            'num_referencia': 'REF-888',  # no debe persistir
+            'tipo_tarjeta': 'debito',  # no debe persistir
+            'subtotal': Decimal('2000.00'),
+            'descuento': Decimal('0.00'),
+            'total': Decimal('2000.00'),
+            'detalles': [
+                {
+                    'producto': self.producto.id,
+                    'descripcion': 'Michelin Primacy 4',
+                    'cantidad': 1,
+                    'precio_unitario': Decimal('2000.00')
+                }
+            ]
+        }
+        serializer = VentaSerializer(data=data)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        venta = serializer.save()
+        self.assertEqual(venta.monto_electronico, Decimal('0.00'))
+        self.assertEqual(venta.num_operacion, '')
+        self.assertEqual(venta.num_referencia, '')
+        self.assertIsNone(venta.tipo_tarjeta)
+        self.assertEqual(venta.monto_efectivo, Decimal('2500.00'))
+
+    def test_sanitizacion_pago_tarjeta_y_transferencia(self):
+        """Verificar que en pagos por tarjeta o transferencia se fuerza monto_efectivo a 0 y monto_electronico a total"""
+        # 1. Tarjeta
+        data_tarjeta = {
+            'empleado': self.empleado.id,
+            'cliente': self.cliente.id,
+            'metodo_pago': 'tarjeta',
+            'tipo_tarjeta': 'credito',
+            'num_operacion': 'OPERACION-TARJETA-123',
+            'monto_efectivo': Decimal('1000.00'),  # debe forzarse a 0
+            'monto_electronico': Decimal('0.00'),  # debe forzarse a total
+            'subtotal': Decimal('2000.00'),
+            'descuento': Decimal('0.00'),
+            'total': Decimal('2000.00'),
+            'detalles': [
+                {
+                    'producto': self.producto.id,
+                    'descripcion': 'Michelin Primacy 4',
+                    'cantidad': 1,
+                    'precio_unitario': Decimal('2000.00')
+                }
+            ]
+        }
+        s_tarjeta = VentaSerializer(data=data_tarjeta)
+        self.assertTrue(s_tarjeta.is_valid(), s_tarjeta.errors)
+        v_tarjeta = s_tarjeta.save()
+        self.assertEqual(v_tarjeta.monto_efectivo, Decimal('0.00'))
+        self.assertEqual(v_tarjeta.monto_electronico, Decimal('2000.00'))
+
+        # 2. Transferencia
+        data_trans = {
+            'empleado': self.empleado.id,
+            'cliente': self.cliente.id,
+            'metodo_pago': 'transferencia',
+            'num_referencia': 'REF-SPEI-777',
+            'monto_efectivo': Decimal('500.00'),
+            'subtotal': Decimal('2000.00'),
+            'descuento': Decimal('0.00'),
+            'total': Decimal('2000.00'),
+            'detalles': [
+                {
+                    'producto': self.producto.id,
+                    'descripcion': 'Michelin Primacy 4',
+                    'cantidad': 1,
+                    'precio_unitario': Decimal('2000.00')
+                }
+            ]
+        }
+        s_trans = VentaSerializer(data=data_trans)
+        self.assertTrue(s_trans.is_valid(), s_trans.errors)
+        v_trans = s_trans.save()
+        self.assertEqual(v_trans.monto_efectivo, Decimal('0.00'))
+        self.assertEqual(v_trans.monto_electronico, Decimal('2000.00'))
+
+    def test_pago_mixto_validacion_y_calculo_cambio_ticket(self):
+        """Verificar validaciones de pago mixto y cálculo exacto de cambio en ticket_pdf"""
+        # Venta mixta: total 2000, electronico 800, efectivo 1500 (cambio esperado = 300)
+        data_mixto = {
+            'empleado': self.empleado.id,
+            'cliente': self.cliente.id,
+            'metodo_pago': 'mixto',
+            'tipo_tarjeta': 'debito',
+            'num_operacion': 'OP-MIXTA-01',
+            'monto_efectivo': Decimal('1500.00'),
+            'monto_electronico': Decimal('800.00'),
+            'subtotal': Decimal('2000.00'),
+            'descuento': Decimal('0.00'),
+            'total': Decimal('2000.00'),
+            'detalles': [
+                {
+                    'producto': self.producto.id,
+                    'descripcion': 'Michelin Primacy 4',
+                    'cantidad': 1,
+                    'precio_unitario': Decimal('2000.00')
+                }
+            ]
+        }
+        s_mixto = VentaSerializer(data=data_mixto)
+        self.assertTrue(s_mixto.is_valid(), s_mixto.errors)
+        v_mixto = s_mixto.save()
+
+        # Probar endpoint ticket_pdf
+        self.client.force_authenticate(user=self.admin_user)
+        res_ticket = self.client.get(f'/api/ventas/ventas/{v_mixto.id}/ticket_pdf/')
+        self.assertEqual(res_ticket.status_code, 200)
+        self.assertEqual(res_ticket['Content-Type'], 'application/pdf')
+
+        # Venta mixta insuficiente: efectivo 500 + electronico 800 < 2000 -> debe fallar
+        data_insuficiente = {
+            'empleado': self.empleado.id,
+            'cliente': self.cliente.id,
+            'metodo_pago': 'mixto',
+            'monto_efectivo': Decimal('500.00'),
+            'monto_electronico': Decimal('800.00'),
+            'subtotal': Decimal('2000.00'),
+            'descuento': Decimal('0.00'),
+            'total': Decimal('2000.00'),
+            'detalles': [
+                {
+                    'producto': self.producto.id,
+                    'descripcion': 'Michelin Primacy 4',
+                    'cantidad': 1,
+                    'precio_unitario': Decimal('2000.00')
+                }
+            ]
+        }
+        s_insuficiente = VentaSerializer(data=data_insuficiente)
+        self.assertFalse(s_insuficiente.is_valid())
+        self.assertIn('monto_efectivo', s_insuficiente.errors)
+
 
 
 
