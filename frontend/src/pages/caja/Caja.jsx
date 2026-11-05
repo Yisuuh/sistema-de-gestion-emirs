@@ -706,49 +706,49 @@ function ModalModificarCierre({ caja, empleados, onGuardado, onClose }) {
             </div>
             <div>
               <h2 className="text-lg font-bold text-gray-900">Modificar Cierre {caja?.folio}</h2>
-              <p className="text-xs text-gray-500">Ajuste administrativo de arqueo y cierre</p>
+              <p className="text-xs text-slate-300 font-medium">Ajuste administrativo de arqueo y cierre</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 cursor-pointer">
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 cursor-pointer">
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
 
         {/* Resumen previo */}
-        <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 mb-4 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+        <div className="bg-slate-800/60 rounded-xl p-3 border border-slate-700/80 mb-4 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
           <div>
-            <span className="text-gray-400 block">Saldo Esperado</span>
-            <span className="font-bold text-gray-800 text-sm">{fmt(caja?.saldo_esperado)}</span>
+            <span className="text-slate-300 font-medium block">Saldo Esperado</span>
+            <span className="font-bold text-white text-sm">{fmt(caja?.saldo_esperado)}</span>
           </div>
           <div>
-            <span className="text-gray-400 block">Monto Final Anterior</span>
-            <span className="font-bold text-gray-800 text-sm">{fmt(caja?.monto_final)}</span>
+            <span className="text-slate-300 font-medium block">Monto Final Anterior</span>
+            <span className="font-bold text-white text-sm">{fmt(caja?.monto_final)}</span>
           </div>
           <div>
-            <span className="text-gray-400 block">Diferencia Anterior</span>
-            <span className={`font-bold text-sm ${parseFloat(caja?.diferencia || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            <span className="text-slate-300 font-medium block">Diferencia Anterior</span>
+            <span className={`font-bold text-sm ${parseFloat(caja?.diferencia || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
               {parseFloat(caja?.diferencia || 0) >= 0 ? '+' : ''}{fmt(caja?.diferencia)}
             </span>
           </div>
         </div>
 
         {/* Alerta de Auditoría */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-xs text-blue-900 flex items-start gap-2">
-          <i className="ri-shield-check-line text-blue-600 text-base mt-0.5 flex-shrink-0"></i>
+        <div className="bg-sky-950/70 border border-sky-400/50 rounded-xl p-3 mb-4 text-xs text-sky-200 flex items-start gap-2.5">
+          <i className="ri-shield-check-line text-sky-300 text-base mt-0.5 flex-shrink-0"></i>
           <span>
-            <strong>Registro de Auditoría:</strong> Esta modificación quedará registrada con tu usuario, fecha y el motivo estipulado en la bitácora administrativa del sistema.
+            <strong className="text-sky-100 font-semibold">Registro de Auditoría:</strong> Esta modificación quedará registrada con tu usuario, fecha y el motivo estipulado en la bitácora administrativa del sistema.
           </span>
         </div>
 
         {err && (
-          <div className="mb-4 text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 font-medium">
+          <div className="mb-4 text-xs text-rose-300 bg-rose-950/60 border border-rose-500/50 rounded-xl p-3 font-medium">
             {err}
           </div>
         )}
 
         <form onSubmit={submit} className="space-y-4 text-sm">
           <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Monto Final Contado ($) *</label>
+            <label className="block text-xs font-semibold text-slate-200 uppercase mb-1 tracking-wider">Monto Final Contado ($) *</label>
             <input
               type="number"
               step="0.01"
@@ -756,10 +756,10 @@ function ModalModificarCierre({ caja, empleados, onGuardado, onClose }) {
               required
               value={montoFinal}
               onChange={(e) => setMontoFinal(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-xl font-mono text-base font-bold text-gray-900 focus:ring-2 focus:ring-[#df000a]"
+              className="w-full px-3 py-2 border border-slate-700 bg-slate-900/80 rounded-xl font-mono text-base font-bold text-white focus:ring-2 focus:ring-[#df000a]"
             />
             <div className={`mt-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between ${
-              nuevaDiferencia >= 0 ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+              nuevaDiferencia >= 0 ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/50' : 'bg-rose-950/70 text-rose-300 border border-rose-500/50'
             }`}>
               <span>Nueva diferencia ({nuevaDiferencia >= 0 ? 'Sobrante' : 'Faltante'}):</span>
               <span className="font-bold font-mono text-sm">
@@ -769,11 +769,11 @@ function ModalModificarCierre({ caja, empleados, onGuardado, onClose }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Empleado de Cierre</label>
+            <label className="block text-xs font-semibold text-slate-200 uppercase mb-1 tracking-wider">Empleado de Cierre</label>
             <select
               value={empleadoCierre}
               onChange={(e) => setEmpleadoCierre(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-gray-900 focus:ring-2 focus:ring-[#df000a]"
+              className="w-full px-3 py-2 border border-slate-700 bg-slate-900/80 rounded-xl text-white focus:ring-2 focus:ring-[#df000a]"
             >
               <option value="">Mantener empleado actual</option>
               {empleados.map((e) => (
@@ -785,18 +785,18 @@ function ModalModificarCierre({ caja, empleados, onGuardado, onClose }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Notas de Cierre</label>
+            <label className="block text-xs font-semibold text-slate-200 uppercase mb-1 tracking-wider">Notas de Cierre</label>
             <textarea
               rows={2}
               value={notasCierre}
               onChange={(e) => setNotasCierre(e.target.value)}
               placeholder="Notas generales del cierre"
-              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-gray-900 focus:ring-2 focus:ring-[#df000a] resize-none text-xs"
+              className="w-full px-3 py-2 border border-slate-700 bg-slate-900/80 rounded-xl text-white placeholder:text-slate-400 focus:ring-2 focus:ring-[#df000a] resize-none text-xs"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-[#df000a] uppercase mb-1">
+            <label className="block text-xs font-bold text-red-400 uppercase mb-1 tracking-wider">
               Motivo de la Modificación * (Obligatorio)
             </label>
             <input
@@ -805,7 +805,7 @@ function ModalModificarCierre({ caja, empleados, onGuardado, onClose }) {
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}
               placeholder="Ej. Corrección por billete de $500 no contado en arqueo nocturno"
-              className="w-full px-3 py-2 border border-red-300 bg-red-50/20 rounded-xl text-gray-900 text-xs focus:ring-2 focus:ring-[#df000a]"
+              className="w-full px-3 py-2 border border-red-500/50 bg-red-950/30 rounded-xl text-white placeholder:text-slate-400 text-xs focus:ring-2 focus:ring-red-500"
             />
           </div>
 
@@ -813,7 +813,7 @@ function ModalModificarCierre({ caja, empleados, onGuardado, onClose }) {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+              className="flex-1 px-4 py-2.5 border border-slate-700 rounded-xl text-sm font-semibold text-slate-200 hover:bg-slate-800/60 cursor-pointer"
             >
               Cancelar
             </button>
@@ -874,26 +874,26 @@ function ModalReabrirCaja({ caja, onReabierta, onClose }) {
         <h3 className="text-lg font-bold text-gray-900 text-center mb-1">
           ¿Reabrir Caja {caja?.folio}?
         </h3>
-        <p className="text-center text-xs text-gray-500 mb-4">
+        <p className="text-center text-xs text-slate-300 font-medium mb-4">
           Apertura original: {caja?.fecha_apertura}
         </p>
 
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-900 leading-relaxed flex items-start gap-2">
-          <ExclamationTriangleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+        <div className="bg-amber-950/70 border border-amber-400/50 rounded-xl p-3 mb-4 text-xs text-amber-200 leading-relaxed flex items-start gap-2.5">
+          <ExclamationTriangleIcon className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" />
           <div>
-            <strong>Advertencia importante:</strong> Esta acción volverá a poner la caja en estado <strong>ABIERTA</strong>. No debe existir otra caja abierta simultáneamente en el sistema.
+            <strong className="text-amber-100 font-semibold">Advertencia importante:</strong> Esta acción volverá a poner la caja en estado <strong className="text-amber-100 font-bold">ABIERTA</strong>. No debe existir otra caja abierta simultáneamente en el sistema.
           </div>
         </div>
 
         {err && (
-          <div className="mb-4 text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 font-medium">
+          <div className="mb-4 text-xs text-rose-300 bg-rose-950/60 border border-rose-500/50 rounded-xl p-3 font-medium">
             {err}
           </div>
         )}
 
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+            <label className="block text-xs font-semibold text-slate-200 uppercase mb-1 tracking-wider">
               Motivo de reapertura *
             </label>
             <textarea
@@ -902,7 +902,7 @@ function ModalReabrirCaja({ caja, onReabierta, onClose }) {
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}
               placeholder="Ej. Se cerró por error antes de ingresar última venta del turno"
-              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs text-gray-900 focus:ring-2 focus:ring-emerald-500 resize-none"
+              className="w-full px-3 py-2 border border-slate-700 bg-slate-900/80 rounded-xl text-xs text-white placeholder:text-slate-400 focus:ring-2 focus:ring-emerald-500 resize-none"
             />
           </div>
 
@@ -910,7 +910,7 @@ function ModalReabrirCaja({ caja, onReabierta, onClose }) {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+              className="flex-1 px-4 py-2.5 border border-slate-700 rounded-xl text-sm font-semibold text-slate-200 hover:bg-slate-800/60 cursor-pointer"
             >
               Cancelar
             </button>

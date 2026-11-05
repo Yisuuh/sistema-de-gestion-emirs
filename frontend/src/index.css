@@ -32,8 +32,8 @@
 
   /* Text */
   --c-text-1:    #eceef2;
-  --c-text-2:    #8f95a3;
-  --c-text-3:    #4d5263;
+  --c-text-2:    #9aa1b2;
+  --c-text-3:    #7b8396;
 
   font-family: 'DM Sans', system-ui, sans-serif;
   color-scheme: dark;
@@ -91,8 +91,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 .text-gray-700, .text-slate-700 { color: #b8bcc8         !important; }
 .text-gray-600, .text-slate-600 { color: var(--c-text-2) !important; }
 .text-gray-500, .text-slate-500 { color: var(--c-text-2) !important; }
-.text-gray-400                  { color: var(--c-text-3) !important; }
-.text-gray-300                  { color: var(--c-text-2) !important; }
+.text-gray-400                  { color: #9aa1b2         !important; }
+.text-gray-300                  { color: #c4c9d6         !important; }
 
 /* ══════════════════════════════════════════════════════════════
    DARK REMAP — NEUTRAL BORDERS
@@ -171,7 +171,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 .text-purple-800, .text-purple-900,
 .text-purple-950                     { color: #c084fc !important; }
 .text-blue-600, .text-blue-700,
-.text-blue-800                       { color: #60a5fa !important; }
+.text-blue-800, .text-blue-900,
+.text-blue-950                       { color: #93c5fd !important; }
 
 /* ══════════════════════════════════════════════════════════════
    FORM ELEMENTS
