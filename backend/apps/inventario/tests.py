@@ -1087,6 +1087,221 @@ class InventarioModuleTestCase(TestCase):
         self.assertFalse(Producto.objects.filter(codigo='VALID-01').exists())
         self.assertFalse(EntradaInventario.objects.filter(numero_factura='FAC-ATOMIC-FAIL').exists())
 
+    def test_eliminar_marca_protegida_por_productos(self):
+        """
+        Verifica que al intentar eliminar una marca con productos asociados,
+        se capture ProtectedError y devuelva HTTP 400 con mensaje explicativo.
+        """
+        marca = Marca.objects.create(nombre='Continental Protected')
+        Producto.objects.create(
+            codigo='CONT-001',
+            medida='225/45R17',
+            marca=marca,
+            modelo='ContiSportContact',
+            indice_carga=91,
+            indice_velocidad='W',
+            precio_venta=Decimal('2800.00'),
+            stock_minimo=2
+        )
+
+        response = self.client.delete(f'/api/inventario/marcas/{marca.id}/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        expected_msg = 'No se puede eliminar la marca porque tiene productos asociados en catálogo. Puedes desactivarla.'
+        self.assertIn(expected_msg, response.data.get('detail', ''))
+        self.assertTrue(Marca.objects.filter(id=marca.id).exists())
+
+    def test_eliminar_marca_sin_productos(self):
+        """
+        Verifica que una marca sin productos asociados se pueda eliminar exitosamente.
+        """
+        marca = Marca.objects.create(nombre='Marca Vacia Para Borrar')
+        response = self.client.delete(f'/api/inventario/marcas/{marca.id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Marca.objects.filter(id=marca.id).exists())
+
+    def test_eliminar_proveedor_protegido_por_entradas(self):
+        """
+        Verifica que al intentar eliminar un proveedor con entradas asociadas,
+        se capture ProtectedError y devuelva HTTP 400 con mensaje explicativo.
+        """
+        marca = Marca.objects.create(nombre='Toyo Tires')
+        producto = Producto.objects.create(
+            codigo='TOYO-001',
+            medida='205/55R16',
+            marca=marca,
+            modelo='Proxes',
+            indice_carga=91,
+            indice_velocidad='V',
+            precio_venta=Decimal('1950.00'),
+            stock_minimo=2
+        )
+        proveedor_con_entradas = Proveedor.objects.create(
+            nombre='Distribuidora Protegida S.A.',
+            contacto='Juan Perez',
+            telefono='5551234567',
+            email='ventas@distribuidora.com'
+        )
+        EntradaInventario.objects.create(
+            producto=producto,
+            proveedor=proveedor_con_entradas,
+            cantidad=4,
+            precio_compra=Decimal('1200.00'),
+            fecha_compra=timezone.localdate(),
+            numero_factura='FAC-TOYO-001'
+        )
+
+        response = self.client.delete(f'/api/inventario/proveedores/{proveedor_con_entradas.id}/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        expected_msg = 'No se puede eliminar el proveedor porque tiene entradas o facturas asociadas en inventario. Puedes desactivarlo.'
+        self.assertIn(expected_msg, response.data.get('detail', ''))
+        self.assertTrue(Proveedor.objects.filter(id=proveedor_con_entradas.id).exists())
+
+    def test_eliminar_proveedor_sin_entradas(self):
+        """
+        Verifica que un proveedor sin entradas asociadas se pueda eliminar exitosamente.
+        """
+        proveedor = Proveedor.objects.create(
+            nombre='Proveedor Sin Entradas',
+            contacto='Sin Relacion'
+        )
+        response = self.client.delete(f'/api/inventario/proveedores/{proveedor.id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Proveedor.objects.filter(id=proveedor.id).exists())
+
+    def test_busqueda_y_ordenamiento_proveedor_y_marca(self):
+        """
+        Verifica filtros de búsqueda y ordenamiento en MarcaViewSet y ProveedorViewSet.
+        """
+        # Búsqueda por contacto, teléfono y email en proveedores
+        prov1 = Proveedor.objects.create(
+            nombre='Alpha Proveedor',
+            contacto='Contacto Específico',
+            telefono='999888777',
+            email='alpha@correo.com',
+            dias_credito=30
+        )
+        prov2 = Proveedor.objects.create(
+            nombre='Beta Proveedor',
+            contacto='Otro Contacto',
+            telefono='444555666',
+            email='beta@correo.com',
+            dias_credito=15
+        )
+
+        # Buscar por teléfono
+        res_tel = self.client.get('/api/inventario/proveedores/?search=999888777')
+        self.assertEqual(res_tel.status_code, status.HTTP_200_OK)
+        results_tel = res_tel.data.get('results', res_tel.data)
+        nombres = [p['nombre'] for p in results_tel]
+        self.assertIn('Alpha Proveedor', nombres)
+        self.assertNotIn('Beta Proveedor', nombres)
+
+        # Buscar por email
+        res_email = self.client.get('/api/inventario/proveedores/?search=beta@correo.com')
+        self.assertEqual(res_email.status_code, status.HTTP_200_OK)
+        results_email = res_email.data.get('results', res_email.data)
+        nombres = [p['nombre'] for p in results_email]
+        self.assertIn('Beta Proveedor', nombres)
+        self.assertNotIn('Alpha Proveedor', nombres)
+
+        # Ordenar por dias_credito descendente
+        res_order = self.client.get('/api/inventario/proveedores/?ordering=-dias_credito')
+        self.assertEqual(res_order.status_code, status.HTTP_200_OK)
+        results_order = res_order.data.get('results', res_order.data)
+        dias = [p['dias_credito'] for p in results_order if p['id'] in (prov1.id, prov2.id)]
+        self.assertEqual(dias, [30, 15])
+
+        # Probar búsqueda y ordenamiento en MarcaViewSet
+        Marca.objects.create(nombre='Yokohama Z')
+        Marca.objects.create(nombre='Avon A')
+        res_marcas = self.client.get('/api/inventario/marcas/?search=Yokohama')
+        self.assertEqual(res_marcas.status_code, status.HTTP_200_OK)
+        marcas_res = res_marcas.data.get('results', res_marcas.data)
+        nombres_marcas = [m['nombre'] for m in marcas_res]
+        self.assertIn('Yokohama Z', nombres_marcas)
+        self.assertNotIn('Avon A', nombres_marcas)
+
+    def test_marca_gestion_restringida_a_admin(self):
+        """
+        Verifica que solo los usuarios administradores puedan crear, editar o eliminar marcas.
+        """
+        operador_user = Usuario.objects.create_user(
+            username='operador_marca',
+            password='password123',
+            rol='operador'
+        )
+        marca_test = Marca.objects.create(nombre='Continental Test')
+
+        # Operador intenta crear
+        self.client.force_authenticate(user=operador_user)
+        res_create = self.client.post('/api/inventario/marcas/', {'nombre': 'Falken'}, format='json')
+        self.assertEqual(res_create.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Operador intenta actualizar (PUT)
+        res_put = self.client.put(f'/api/inventario/marcas/{marca_test.id}/', {'nombre': 'Continental Updated'}, format='json')
+        self.assertEqual(res_put.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Operador intenta actualizar parcialmente (PATCH)
+        res_patch = self.client.patch(f'/api/inventario/marcas/{marca_test.id}/', {'nombre': 'Continental Patched'}, format='json')
+        self.assertEqual(res_patch.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Operador intenta eliminar (DELETE)
+        res_delete = self.client.delete(f'/api/inventario/marcas/{marca_test.id}/')
+        self.assertEqual(res_delete.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Admin sí puede gestionar
+        self.client.force_authenticate(user=self.admin_user)
+        res_admin_create = self.client.post('/api/inventario/marcas/', {'nombre': 'Falken'}, format='json')
+        self.assertEqual(res_admin_create.status_code, status.HTTP_201_CREATED)
+
+        res_admin_patch = self.client.patch(f'/api/inventario/marcas/{marca_test.id}/', {'nombre': 'Continental Admin'}, format='json')
+        self.assertEqual(res_admin_patch.status_code, status.HTTP_200_OK)
+
+        res_admin_delete = self.client.delete(f'/api/inventario/marcas/{marca_test.id}/')
+        self.assertEqual(res_admin_delete.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_proveedor_gestion_restringida_a_admin(self):
+        """
+        Verifica que solo los usuarios administradores puedan crear, editar o eliminar proveedores.
+        """
+        operador_user = Usuario.objects.create_user(
+            username='operador_prov',
+            password='password123',
+            rol='operador'
+        )
+        prov_test = Proveedor.objects.create(nombre='Proveedor Prueba S.A.')
+
+        # Operador intenta crear
+        self.client.force_authenticate(user=operador_user)
+        res_create = self.client.post('/api/inventario/proveedores/', {'nombre': 'Nuevo Proveedor'}, format='json')
+        self.assertEqual(res_create.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Operador intenta actualizar (PUT)
+        res_put = self.client.put(f'/api/inventario/proveedores/{prov_test.id}/', {'nombre': 'Proveedor Modificado'}, format='json')
+        self.assertEqual(res_put.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Operador intenta actualizar parcialmente (PATCH)
+        res_patch = self.client.patch(f'/api/inventario/proveedores/{prov_test.id}/', {'telefono': '1234567890'}, format='json')
+        self.assertEqual(res_patch.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Operador intenta eliminar (DELETE)
+        res_delete = self.client.delete(f'/api/inventario/proveedores/{prov_test.id}/')
+        self.assertEqual(res_delete.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Admin sí puede gestionar
+        self.client.force_authenticate(user=self.admin_user)
+        res_admin_create = self.client.post('/api/inventario/proveedores/', {'nombre': 'Nuevo Proveedor Admin'}, format='json')
+        self.assertEqual(res_admin_create.status_code, status.HTTP_201_CREATED)
+
+        res_admin_patch = self.client.patch(f'/api/inventario/proveedores/{prov_test.id}/', {'telefono': '9998887776'}, format='json')
+        self.assertEqual(res_admin_patch.status_code, status.HTTP_200_OK)
+
+        res_admin_delete = self.client.delete(f'/api/inventario/proveedores/{prov_test.id}/')
+        self.assertEqual(res_admin_delete.status_code, status.HTTP_204_NO_CONTENT)
+
+
+
+
 
 
 

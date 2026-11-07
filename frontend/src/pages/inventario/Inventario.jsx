@@ -16,6 +16,8 @@ import {
 } from '@heroicons/react/24/outline';
 import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib/medidaUtils';
 import ModalProducto from './ModalProducto';
+import ModalProveedor from './ModalProveedor';
+import TabCatalogos from './TabCatalogos';
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 const fmt = (n, d = 2) => Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -555,7 +557,8 @@ function ModalVincularFactura({ entrada, onGuardado, onClose }) {
 function TabEntradas({ proveedores, productos }) {
   const queryClient = useQueryClient();
   const [modal, setModal]                           = useState(false);
-  const [modalNuevoProducto, setModalNuevoProducto] = useState(false);
+  const [modalNuevoProducto, setModalNuevoProducto]   = useState(false);
+  const [modalNuevoProveedor, setModalNuevoProveedor] = useState(false);
   const [modalVincular, setModalVincular]           = useState(null);
   const [msg, setMsg]                               = useState(null);
   const [filtroRapido, setFiltroRapido]             = useState('todas'); // 'todas' | 'disponible' | 'consumidas' | 'remisiones'
@@ -837,7 +840,17 @@ function TabEntradas({ proveedores, productos }) {
                   </select>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Proveedor *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm font-medium text-gray-700">Proveedor *</label>
+                    <button
+                      type="button"
+                      onClick={() => setModalNuevoProveedor(true)}
+                      className="inline-flex items-center gap-1 text-xs text-[#df000a] hover:text-[#b80008] font-semibold cursor-pointer"
+                      title="Registrar un nuevo proveedor y seleccionarlo"
+                    >
+                      <i className="ri-add-line text-sm"></i> + Nuevo Proveedor
+                    </button>
+                  </div>
                   <select value={form.proveedor} onChange={e => setForm(f => ({...f, proveedor: e.target.value}))} className={inputCls} required>
                     <option value="">Seleccionar…</option>
                     {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -954,6 +967,20 @@ function TabEntradas({ proveedores, productos }) {
             queryClient.invalidateQueries({ queryKey: ['inventario-productos'] });
             setForm(f => ({ ...f, producto: nuevoProd.id }));
             setMsg({ tipo: 'ok', txt: `Producto ${nuevoProd.codigo} registrado y seleccionado para la entrada.` });
+            setTimeout(() => setMsg(null), 4000);
+          }}
+        />
+      )}
+
+      {/* Modal Crear Proveedor en caliente */}
+      {modalNuevoProveedor && (
+        <ModalProveedor
+          isOpen={modalNuevoProveedor}
+          onClose={() => setModalNuevoProveedor(false)}
+          onGuardado={(nuevoProv) => {
+            queryClient.invalidateQueries({ queryKey: ['inventario-proveedores'] });
+            setForm(f => ({ ...f, proveedor: nuevoProv.id }));
+            setMsg({ tipo: 'ok', txt: `Proveedor "${nuevoProv.nombre}" registrado y seleccionado para la entrada.` });
             setTimeout(() => setMsg(null), 4000);
           }}
         />
@@ -1314,11 +1341,12 @@ export default function Inventario() {
   const irKardex = (p) => { setKardexProducto(p); setTab('kardex'); };
 
   const TABS = [
-    { id: 'consolidado', label: 'Consolidado',     icon: TableCellsIcon },
-    { id: 'entradas',    label: 'Historial Entradas', icon: ArrowDownTrayIcon },
-    { id: 'salidas',     label: 'Historial Salidas',  icon: ArrowUpTrayIcon },
-    { id: 'kardex',      label: 'Kárdex',           icon: ChartBarIcon },
-    { id: 'xml',         label: 'Importar XML',     icon: DocumentArrowUpIcon },
+    { id: 'consolidado', label: 'Consolidado',           icon: TableCellsIcon },
+    { id: 'entradas',    label: 'Historial Entradas',     icon: ArrowDownTrayIcon },
+    { id: 'salidas',     label: 'Historial Salidas',      icon: ArrowUpTrayIcon },
+    { id: 'kardex',      label: 'Kárdex',                 icon: ChartBarIcon },
+    { id: 'xml',         label: 'Importar XML',           icon: DocumentArrowUpIcon },
+    { id: 'catalogos',   label: 'Proveedores y Marcas',   icon: BuildingStorefrontIcon },
   ];
 
   return (
@@ -1363,6 +1391,7 @@ export default function Inventario() {
       {tab === 'salidas'     && <TabSalidas />}
       {tab === 'kardex'      && <TabKardex productoInicial={kardexProducto} />}
       {tab === 'xml'         && <TabXml onImportado={() => {}} />}
+      {tab === 'catalogos'   && <TabCatalogos />}
     </div>
   );
 }

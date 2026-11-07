@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Sum, Max, OuterRef, Subquery, Q, F
+from django.db.models import Sum, Max, OuterRef, Subquery, Q, F, ProtectedError
 from django.http import HttpResponse
 
 from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
@@ -636,14 +636,66 @@ class MarcaViewSet(viewsets.ModelViewSet):
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['nombre']
     ordering_fields = ['nombre']
+    ordering = ['nombre']
+
+    def _verificar_rol_admin(self, user):
+        if not (getattr(user, 'rol', None) == 'admin' or user.is_staff or user.is_superuser):
+            raise PermissionDenied('Solo los administradores pueden gestionar las marcas de catálogo.')
+
+    def create(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            mensaje = 'No se puede eliminar la marca porque tiene productos asociados en catálogo. Puedes desactivarla.'
+            return Response({'detail': mensaje, 'error': mensaje}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ProveedorViewSet(viewsets.ModelViewSet):
     queryset = Proveedor.objects.all()
     serializer_class = ProveedorSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['activo']
-    search_fields = ['nombre', 'contacto']
+    search_fields = ['nombre', 'contacto', 'telefono', 'email']
+    ordering_fields = ['nombre', 'dias_credito', 'created_at']
+    ordering = ['nombre']
+
+    def _verificar_rol_admin(self, user):
+        if not (getattr(user, 'rol', None) == 'admin' or user.is_staff or user.is_superuser):
+            raise PermissionDenied('Solo los administradores pueden gestionar los proveedores.')
+
+    def create(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._verificar_rol_admin(request.user)
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            mensaje = 'No se puede eliminar el proveedor porque tiene entradas o facturas asociadas en inventario. Puedes desactivarlo.'
+            return Response({'detail': mensaje, 'error': mensaje}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 def normalizar_termino_medida(termino: str) -> list:
