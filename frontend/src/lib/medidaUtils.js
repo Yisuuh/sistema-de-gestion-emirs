@@ -322,9 +322,12 @@ export function calcularPreciosEscalonados({
   } else if (q === 4) {
     precioCantidad = precioJuego4;
     margenUnitarioEfectivo = m4;
+  } else if (q === 3) {
+    precioCantidad = redondearMultiplo5(Math.floor((costoFinanciado + m2Final) * 3));
+    margenUnitarioEfectivo = m2;
   } else {
     precioCantidad = redondearMultiplo5(Math.floor((costoFinanciado + m4Final) * q));
-    margenUnitarioEfectivo = q === 3 ? m2 : m4;
+    margenUnitarioEfectivo = m4;
   }
 
   return {
@@ -343,6 +346,179 @@ export function calcularPreciosEscalonados({
     precioCantidad,
     margenUnitarioEfectivo,
     gananciaTotalCantidad: Math.round(margenUnitarioEfectivo * q * 100) / 100,
+  };
+}
+
+/**
+ * Calcula el precio escalonado por volumen para una llanta en POS / POS Rescate.
+ * Respeta servicios, productos con precio_descuento > 0 y ediciones manuales del cajero.
+ *
+ * @returns {{ totalPaquete: number, precioUnitario: number, etiquetaTarifa: string|null, ahorroTotal: number }}
+ */
+export function calcularPrecioPosLlanta({
+  producto = null,
+  cantidad = 1,
+  preciosCotizados = null,
+  tabulador = null,
+  precioEditadoManual = false,
+  esServicio = false,
+  precioManual = null,
+}) {
+  const q = Math.max(1, parseInt(cantidad, 10) || 1);
+
+  if (precioEditadoManual === true || producto?.precioEditadoManual === true) {
+    const p = Number((parseFloat(precioManual ?? producto?.precio_unitario ?? producto?.precio_venta ?? 0) || 0).toFixed(2));
+    return {
+      totalPaquete: Number((p * q).toFixed(2)),
+      precioUnitario: p,
+      etiquetaTarifa: null,
+      ahorroTotal: 0,
+    };
+  }
+
+  if (esServicio || !producto) {
+    const p = Number((parseFloat(precioManual ?? producto?.precio_base ?? producto?.precio ?? producto?.precio_venta ?? 0) || 0).toFixed(2));
+    return {
+      totalPaquete: Number((p * q).toFixed(2)),
+      precioUnitario: p,
+      etiquetaTarifa: null,
+      ahorroTotal: 0,
+    };
+  }
+
+  const precioDescuento = parseFloat(producto.precio_descuento || 0) || 0;
+  if (precioDescuento > 0) {
+    const p = Number(precioDescuento.toFixed(2));
+    return {
+      totalPaquete: Number((p * q).toFixed(2)),
+      precioUnitario: p,
+      etiquetaTarifa: null,
+      ahorroTotal: 0,
+    };
+  }
+
+  const precioLista = parseFloat(producto.precio_venta ?? producto.precio ?? 0) || 0;
+
+  // Caso 1: Viene de Cotizador -> POS con escalones cotizados
+  if (preciosCotizados && typeof preciosCotizados === 'object') {
+    const p1 = parseFloat(preciosCotizados.p1 ?? preciosCotizados.precio_1 ?? precioLista) || 0;
+    const p2Raw = parseFloat(preciosCotizados.p2 ?? preciosCotizados.precio_2 ?? 0) || 0;
+    const p4Raw = parseFloat(preciosCotizados.p4 ?? preciosCotizados.precio_4 ?? 0) || 0;
+    const parTotal = parseFloat(preciosCotizados.precio_par || 0) || 0;
+    const j4Total = parseFloat(preciosCotizados.precio_juego_4 || 0) || 0;
+    const costoCot = parseFloat(preciosCotizados.costo || 0) || 0;
+    const costoIncluyeIvaCot = Boolean(preciosCotizados.costo_incluye_iva);
+    const catRinCot = preciosCotizados.categoria_rin || obtenerCategoriaRin(producto.medida);
+    const factorCot = parseFloat(preciosCotizados.factor_interes) || 1.079;
+    const usaTab = preciosCotizados.utiliza_tabulador !== false;
+
+    const p2 = p2Raw > 0 ? p2Raw : (parTotal > 0 ? Number((parTotal / 2).toFixed(2)) : p1);
+    const p4 = p4Raw > 0 ? p4Raw : (j4Total > 0 ? Number((j4Total / 4).toFixed(2)) : p2);
+
+    const etiquetaTarifa = q === 1 ? null : (q <= 3 ? 'Tarifa 2-3 pzas' : 'Tarifa 4+ pzas');
+    let totalPaquete = 0;
+
+    if (usaTab && costoCot > 0) {
+      const esc = calcularPreciosEscalonados({
+        costo: costoCot,
+        costoIncluyeIva: costoIncluyeIvaCot,
+        categoriaRin: catRinCot,
+        cantidad: q,
+        factorInteres: factorCot,
+        tabulador,
+      });
+      // Si el precio cotizado unitario coincide con el tabulador (no editado manualmente en cotización)
+      if (esc.precioUnitario > 0 && Math.abs(p1 - esc.precioUnitario) <= 5) {
+        totalPaquete = esc.precioCantidad;
+      }
+    }
+
+    if (totalPaquete <= 0) {
+      if (q === 1) {
+        totalPaquete = Number(p1.toFixed(2));
+      } else if (q <= 3) {
+        totalPaquete = (q === 2 && parTotal > 0 && usaTab) ? parTotal : Number((p2 * q).toFixed(2));
+      } else {
+        totalPaquete = (q === 4 && j4Total > 0 && usaTab) ? j4Total : Number((p4 * q).toFixed(2));
+      }
+    }
+
+    const precioUnitario = Number((totalPaquete / q).toFixed(2));
+    const totalBaseLista = Number((p1 * q).toFixed(2));
+    const ahorroTotal = Math.max(0, Number((totalBaseLista - totalPaquete).toFixed(2)));
+    return { totalPaquete, precioUnitario, etiquetaTarifa, ahorroTotal };
+  }
+
+  // No es llanta con medida ni viene cotizada: mantener precio de venta normal
+  if (!producto.medida) {
+    const p = Number(precioLista.toFixed(2));
+    return {
+      totalPaquete: Number((p * q).toFixed(2)),
+      precioUnitario: p,
+      etiquetaTarifa: null,
+      ahorroTotal: 0,
+    };
+  }
+
+  if (precioLista <= 0) {
+    return { totalPaquete: 0, precioUnitario: 0, etiquetaTarifa: null, ahorroTotal: 0 };
+  }
+
+  // Caso 2: Producto directo de inventario con medida
+  if (q === 1) {
+    const p = Number(precioLista.toFixed(2));
+    return { totalPaquete: p, precioUnitario: p, etiquetaTarifa: null, ahorroTotal: 0 };
+  }
+
+  const tabActual = tabulador || obtenerTabuladorConfigurado();
+  const catRin = obtenerCategoriaRin(producto.medida);
+  const tab =
+    tabActual[catRin] ||
+    (catRin === 'rin_13_15' ? tabActual.rin_15 : null) ||
+    tabActual.rin_16 ||
+    TABULADOR_UTILIDAD_RINES.rin_16;
+
+  const m1 = Number(tab.m1) || 0;
+  const m2 = Number(tab.m2) || 0;
+  const m4 = Number(tab.m4) || 0;
+  const factor = 1.079;
+  const etiquetaTarifa = q <= 3 ? 'Tarifa 2-3 pzas' : 'Tarifa 4+ pzas';
+
+  const ultimoCosto = parseFloat(producto.ultimo_precio_compra || 0) || 0;
+  const ultimoIncluyeIva = Boolean(producto.ultimo_precio_incluye_iva);
+
+  let totalPaquete = 0;
+
+  if (ultimoCosto > 0) {
+    const esc = calcularPreciosEscalonados({
+      costo: ultimoCosto,
+      costoIncluyeIva: ultimoIncluyeIva,
+      categoriaRin: catRin,
+      cantidad: q,
+      factorInteres: factor,
+      tabulador: tabActual,
+    });
+    if (esc.precioUnitario > 0 && Math.abs(precioLista - esc.precioUnitario) <= 10) {
+      totalPaquete = esc.precioCantidad;
+    }
+  }
+
+  if (totalPaquete <= 0) {
+    const margenEscalon = q <= 3 ? m2 : m4;
+    const descuentoPorLlanta = (m1 - margenEscalon) * factor;
+    const precioUnitarioDescontado = Math.max(0, precioLista - descuentoPorLlanta);
+    totalPaquete = redondearMultiplo5(Math.floor(precioUnitarioDescontado * q));
+  }
+
+  const precioUnitario = Number((totalPaquete / q).toFixed(2));
+  const totalLista = Number((precioLista * q).toFixed(2));
+  const ahorroTotal = Math.max(0, Number((totalLista - totalPaquete).toFixed(2)));
+
+  return {
+    totalPaquete,
+    precioUnitario,
+    etiquetaTarifa,
+    ahorroTotal,
   };
 }
 

@@ -1486,12 +1486,143 @@ class VentasAndFeaturesTestCase(TestCase):
         self.assertFalse(s_insuficiente.is_valid())
         self.assertIn('monto_efectivo', s_insuficiente.errors)
 
+    def test_detalle_venta_tolerancia_redondeo_paquete(self):
+        """
+        Verifica que DetalleVentaSerializer conserve subtotal enviado si difiere <= $0.05
+        de cantidad * precio_unitario (redondeo de paquete a múltiplo de 5), y recalcule
+        cuando la diferencia excede $0.05 o cuando no se envía subtotal.
+        """
+        from apps.ventas.serializers import DetalleVentaSerializer
 
+        # 1. Paquete de 3 llantas: 3 * 1798.33 = 5394.99; subtotal redondeado = 5395.00 (diff 0.01 <= 0.05)
+        s_tolerancia = DetalleVentaSerializer(data={
+            'producto': self.producto.id,
+            'descripcion': 'Michelin Primacy 4 (paquete 3)',
+            'cantidad': 3,
+            'precio_unitario': '1798.33',
+            'subtotal': '5395.00',
+        })
+        self.assertTrue(s_tolerancia.is_valid(), s_tolerancia.errors)
+        self.assertEqual(s_tolerancia.validated_data['subtotal'], Decimal('5395.00'))
 
+        # 2. Manipulación de precio: diferencia > 0.05 debe recalcular cantidad * precio_unitario
+        s_manipulado = DetalleVentaSerializer(data={
+            'producto': self.producto.id,
+            'descripcion': 'Intento manipulacion',
+            'cantidad': 3,
+            'precio_unitario': '1798.33',
+            'subtotal': '100.00',
+        })
+        self.assertTrue(s_manipulado.is_valid(), s_manipulado.errors)
+        self.assertEqual(s_manipulado.validated_data['subtotal'], Decimal('5394.99'))
 
+        # 3. Sin subtotal enviado -> calcula cantidad * precio_unitario
+        s_sin_subtotal = DetalleVentaSerializer(data={
+            'producto': self.producto.id,
+            'descripcion': 'Sin subtotal explicito',
+            'cantidad': 2,
+            'precio_unitario': '2000.00',
+        })
+        self.assertTrue(s_sin_subtotal.is_valid(), s_sin_subtotal.errors)
+        self.assertEqual(s_sin_subtotal.validated_data['subtotal'], Decimal('4000.00'))
 
+    def test_seguridad_detalle_venta_rechaza_cantidad_o_precio_invalido(self):
+        """SEC-V1: DetalleVentaSerializer debe rechazar cantidad <= 0 y precio_unitario < 0."""
+        from apps.ventas.serializers import DetalleVentaSerializer
 
+        for cant in (0, -3):
+            s = DetalleVentaSerializer(data={
+                'producto': self.producto.id,
+                'descripcion': 'Cantidad inválida',
+                'cantidad': cant,
+                'precio_unitario': '2000.00',
+            })
+            self.assertFalse(s.is_valid())
+            self.assertIn('cantidad', s.errors)
 
+        s_precio_neg = DetalleVentaSerializer(data={
+            'producto': self.producto.id,
+            'descripcion': 'Precio negativo',
+            'cantidad': 1,
+            'precio_unitario': '-100.00',
+        })
+        self.assertFalse(s_precio_neg.is_valid())
+        self.assertIn('precio_unitario', s_precio_neg.errors)
 
+    def test_seguridad_venta_recalcula_total_manipulado_y_valida_descuento(self):
+        """SEC-V2: VentaSerializer calcula subtotal/total en servidor y rechaza descuentos inválidos."""
+        # 1. Cliente envía total manipulado ($1.00) y paga solo $1.00 -> rechazado contra total real ($2000)
+        payload_fraude = {
+            'empleado': self.empleado.id,
+            'cliente': self.cliente.id,
+            'metodo_pago': 'efectivo',
+            'monto_efectivo': '1.00',
+            'subtotal': '1.00',
+            'descuento': '0.00',
+            'total': '1.00',
+            'detalles': [
+                {
+                    'producto': self.producto.id,
+                    'descripcion': 'Michelin Primacy 4',
+                    'cantidad': 1,
+                    'precio_unitario': '2000.00',
+                }
+            ],
+        }
+        s_fraude = VentaSerializer(data=payload_fraude)
+        self.assertFalse(s_fraude.is_valid())
+        self.assertIn('monto_efectivo', s_fraude.errors)
 
+        # 2. Cliente envía total manipulado pero cubre el monto real -> servidor sobrescribe subtotal y total reales
+        payload_recalculo = {
+            'empleado': self.empleado.id,
+            'cliente': self.cliente.id,
+            'metodo_pago': 'tarjeta',
+            'tipo_tarjeta': 'debito',
+            'num_operacion': 'OP-RECALC-01',
+            'subtotal': '10.00',
+            'descuento': '200.00',
+            'total': '1.00',
+            'detalles': [
+                {
+                    'producto': self.producto.id,
+                    'descripcion': 'Michelin Primacy 4',
+                    'cantidad': 1,
+                    'precio_unitario': '2000.00',
+                }
+            ],
+        }
+        s_recalc = VentaSerializer(data=payload_recalculo)
+        self.assertTrue(s_recalc.is_valid(), s_recalc.errors)
+        venta = s_recalc.save()
+        self.assertEqual(venta.subtotal, Decimal('2000.00'))
+        self.assertEqual(venta.descuento, Decimal('200.00'))
+        self.assertEqual(venta.total, Decimal('1800.00'))
+        self.assertEqual(venta.monto_electronico, Decimal('1800.00'))
 
+        # 3. Descuento negativo -> rechazado
+        payload_desc_neg = {
+            **payload_recalculo,
+            'descuento': '-50.00',
+        }
+        s_desc_neg = VentaSerializer(data=payload_desc_neg)
+        self.assertFalse(s_desc_neg.is_valid())
+        self.assertIn('descuento', s_desc_neg.errors)
+
+        # 4. Descuento mayor al subtotal -> rechazado
+        payload_desc_mayor = {
+            **payload_recalculo,
+            'descuento': '2500.00',
+        }
+        s_desc_mayor = VentaSerializer(data=payload_desc_mayor)
+        self.assertFalse(s_desc_mayor.is_valid())
+        self.assertIn('descuento', s_desc_mayor.errors)
+
+        # 5. Descuento igual al subtotal (total == 0.00) -> rechazado
+        payload_total_cero = {
+            **payload_recalculo,
+            'descuento': '2000.00',
+        }
+        s_cero = VentaSerializer(data=payload_total_cero)
+        self.assertFalse(s_cero.is_valid())
+        self.assertIn('total', s_cero.errors)

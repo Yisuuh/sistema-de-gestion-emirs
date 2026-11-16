@@ -29,6 +29,7 @@ class DetalleVentaSerializer(serializers.ModelSerializer):
     """
     producto_nombre = serializers.CharField(source='producto.descripcion_completa', read_only=True)
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
+    subtotal = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
     
     class Meta:
         model = DetalleVenta
@@ -37,11 +38,11 @@ class DetalleVentaSerializer(serializers.ModelSerializer):
             'cantidad', 'precio_unitario', 'subtotal',
             'producto_nombre', 'servicio_nombre'
         ]
-        read_only_fields = ['id', 'subtotal']
+        read_only_fields = ['id']
     
     def validate(self, data):
         """
-        Validar que se especifique producto o servicio
+        Validar que se especifique producto o servicio, cantidad positiva y precio no negativo
         """
         if not data.get('producto') and not data.get('servicio'):
             raise serializers.ValidationError(
@@ -52,9 +53,29 @@ class DetalleVentaSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Solo puede especificar un producto o un servicio, no ambos"
             )
+
+        cantidad = data.get('cantidad')
+        precio_unitario = data.get('precio_unitario')
+        if cantidad is None or cantidad <= 0:
+            raise serializers.ValidationError({
+                'cantidad': 'La cantidad debe ser mayor a 0.'
+            })
+        if precio_unitario is None or precio_unitario < Decimal('0'):
+            raise serializers.ValidationError({
+                'precio_unitario': 'El precio unitario no puede ser negativo.'
+            })
         
-        # Calcular subtotal
-        data['subtotal'] = data['cantidad'] * data['precio_unitario']
+        # Calcular subtotal con tolerancia de redondeo (hasta $0.05 para paquetes)
+        calculado = cantidad * precio_unitario
+        subtotal_enviado = data.get('subtotal')
+        if (
+            subtotal_enviado is not None
+            and subtotal_enviado >= Decimal('0')
+            and abs(subtotal_enviado - calculado) <= Decimal('0.05')
+        ):
+            data['subtotal'] = subtotal_enviado
+        else:
+            data['subtotal'] = calculado
         
         return data
 
@@ -90,6 +111,10 @@ class VentaSerializer(serializers.ModelSerializer):
             'fue_editada', 'fecha_edicion', 'editada_por', 'autorizada_por',
             'total_original', 'diferencia_monetaria'
         ]
+        extra_kwargs = {
+            'subtotal': {'required': False},
+            'total': {'required': False},
+        }
 
     def get_editada_por_nombre(self, obj):
         if not obj.editada_por:
@@ -118,7 +143,7 @@ class VentaSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         """
-        Validar método de pago, montos, tipo de tarjeta y caja abierta
+        Validar caja abierta, recalcular totales en servidor y validar método de pago
         """
         from apps.caja.models import Caja
 
@@ -139,11 +164,52 @@ class VentaSerializer(serializers.ModelSerializer):
                     })
                 data['caja'] = caja_abierta
 
+        # Calcular subtotal, descuento y total en el servidor antes de validar montos de pago
+        detalles = data.get('detalles')
+        if detalles is not None:
+            subtotal_calculado = sum(
+                (Decimal(str(d['subtotal'])) for d in detalles),
+                Decimal('0.00')
+            ).quantize(Decimal('0.01'))
+        elif self.instance is not None:
+            subtotal_calculado = Decimal(str(self.instance.subtotal or '0')).quantize(Decimal('0.01'))
+        else:
+            raise serializers.ValidationError({
+                'detalles': 'Debe agregar al menos un producto o servicio'
+            })
+
+        descuento_raw = data.get('descuento', getattr(self.instance, 'descuento', Decimal('0.00')))
+        descuento_val = (
+            Decimal(str(descuento_raw)) if descuento_raw is not None else Decimal('0.00')
+        ).quantize(Decimal('0.01'))
+
+        if descuento_val < Decimal('0.00'):
+            raise serializers.ValidationError({
+                'descuento': 'El descuento no puede ser negativo.'
+            })
+        if descuento_val > subtotal_calculado:
+            raise serializers.ValidationError({
+                'descuento': 'El descuento no puede ser mayor al subtotal.'
+            })
+
+        data['subtotal'] = subtotal_calculado
+        data['descuento'] = descuento_val
+        data['total'] = (subtotal_calculado - descuento_val).quantize(Decimal('0.01'))
+
+        es_cancelada = (
+            getattr(self.instance, 'estado', None) == 'cancelada'
+            or data.get('estado') == 'cancelada'
+        )
+        if not es_cancelada and data['total'] <= Decimal('0.00'):
+            raise serializers.ValidationError({
+                'total': 'El total de la venta debe ser mayor a 0.00.'
+            })
+
         metodo_pago = data.get('metodo_pago', getattr(self.instance, 'metodo_pago', None))
         monto_efectivo = data.get('monto_efectivo', getattr(self.instance, 'monto_efectivo', 0))
         monto_electronico = data.get('monto_electronico', getattr(self.instance, 'monto_electronico', 0))
         tipo_tarjeta = data.get('tipo_tarjeta', getattr(self.instance, 'tipo_tarjeta', None))
-        total = data.get('total', getattr(self.instance, 'total', None))
+        total = data['total']
 
         total_val = Decimal(str(total)) if total is not None else Decimal('0')
         monto_efectivo_val = Decimal(str(monto_efectivo)) if monto_efectivo is not None else Decimal('0')
@@ -269,53 +335,56 @@ class VentaSerializer(serializers.ModelSerializer):
                 ])
             
             # Crear detalles y registrar salidas de inventario
+            fecha_salida = timezone.localdate()
             for detalle_data in detalles_data:
                 DetalleVenta.objects.create(venta=venta, **detalle_data)
-                
-                # Si es un producto, registrar salida de inventario
                 if detalle_data.get('producto'):
-                    producto = detalle_data['producto']
-                    
-                    # Verificar stock disponible
-                    stock_disponible = producto.stock_actual
-                    if stock_disponible < detalle_data['cantidad']:
-                        raise serializers.ValidationError(
-                            f"Stock insuficiente para {producto.descripcion_completa}. "
-                            f"Disponible: {stock_disponible}, Solicitado: {detalle_data['cantidad']}"
-                        )
-                    
-                    # Calcular precio de costo PEPS
-                    entradas = EntradaInventario.objects.filter(
-                        producto=producto,
-                        en_inventario=True
-                    ).order_by('fecha_compra')
-                    
-                    if entradas.exists():
-                        precio_costo = entradas.first().precio_compra
-                    else:
-                        precio_costo = detalle_data['precio_unitario'] * Decimal('0.70')  # Estimado
-                    
-                    # Registrar salida
-                    SalidaInventario.objects.create(
-                        producto=producto,
-                        venta=venta,
-                        cantidad=detalle_data['cantidad'],
-                        precio_venta=detalle_data['precio_unitario'],
-                        precio_costo=precio_costo,
-                        fecha_venta=timezone.localdate()
-                    )
+                    self._registrar_salida_producto(venta, detalle_data, fecha_salida)
         
         # Recargar la venta con los detalles para obtener productos actualizados
         venta.refresh_from_db()
         
         return venta
 
+    def _registrar_salida_producto(self, venta, detalle_data, fecha_venta):
+        """
+        Bloquea el producto con select_for_update, verifica stock disponible y registra la salida PEPS.
+        """
+        from apps.inventario.models import SalidaInventario, EntradaInventario
+
+        producto = Producto.objects.select_for_update().get(pk=detalle_data['producto'].pk)
+        stock_disponible = producto.stock_actual
+        if stock_disponible < detalle_data['cantidad']:
+            raise serializers.ValidationError(
+                f"Stock insuficiente para {producto.descripcion_completa}. "
+                f"Disponible: {stock_disponible}, Solicitado: {detalle_data['cantidad']}"
+            )
+
+        entradas = EntradaInventario.objects.filter(
+            producto=producto,
+            en_inventario=True
+        ).order_by('fecha_compra')
+
+        if entradas.exists():
+            precio_costo = entradas.first().precio_compra
+        else:
+            precio_costo = detalle_data['precio_unitario'] * Decimal('0.70')  # Estimado
+
+        SalidaInventario.objects.create(
+            producto=producto,
+            venta=venta,
+            cantidad=detalle_data['cantidad'],
+            precio_venta=detalle_data['precio_unitario'],
+            precio_costo=precio_costo,
+            fecha_venta=fecha_venta
+        )
+
     def update(self, instance, validated_data):
         """
         Actualizar venta y sus detalles de forma transaccional
         """
         from django.db import transaction
-        from apps.inventario.models import SalidaInventario, EntradaInventario
+        from apps.inventario.models import SalidaInventario
         from django.utils import timezone
 
         detalles_data = validated_data.pop('detalles', None)
@@ -326,36 +395,11 @@ class VentaSerializer(serializers.ModelSerializer):
                 SalidaInventario.objects.filter(venta=instance).delete()
                 instance.detalles.all().delete()
 
+                fecha_salida = instance.fecha.date() if instance.fecha else timezone.localdate()
                 for detalle_data in detalles_data:
                     DetalleVenta.objects.create(venta=instance, **detalle_data)
-
                     if detalle_data.get('producto'):
-                        producto = detalle_data['producto']
-                        stock_disponible = producto.stock_actual
-                        if stock_disponible < detalle_data['cantidad']:
-                            raise serializers.ValidationError(
-                                f"Stock insuficiente para {producto.descripcion_completa}. "
-                                f"Disponible: {stock_disponible}, Solicitado: {detalle_data['cantidad']}"
-                            )
-
-                        entradas = EntradaInventario.objects.filter(
-                            producto=producto,
-                            en_inventario=True
-                        ).order_by('fecha_compra')
-
-                        if entradas.exists():
-                            precio_costo = entradas.first().precio_compra
-                        else:
-                            precio_costo = detalle_data['precio_unitario'] * Decimal('0.70')
-
-                        SalidaInventario.objects.create(
-                            producto=producto,
-                            venta=instance,
-                            cantidad=detalle_data['cantidad'],
-                            precio_venta=detalle_data['precio_unitario'],
-                            precio_costo=precio_costo,
-                            fecha_venta=instance.fecha.date() if instance.fecha else timezone.localdate()
-                        )
+                        self._registrar_salida_producto(instance, detalle_data, fecha_salida)
 
             # Actualizar campos de la venta
             for attr, value in validated_data.items():

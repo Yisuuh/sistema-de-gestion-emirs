@@ -1,3 +1,6 @@
+import hmac
+
+from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -98,9 +101,11 @@ class EjecutarRecordatoriosCronView(APIView):
     permission_classes = []
 
     def post(self, request):
-        from django.conf import settings
-        clave = request.headers.get('X-Cron-Key', '')
-        if clave != getattr(settings, 'CRON_SECRET_KEY', ''):
+        clave = request.headers.get('X-Cron-Key', '') or ''
+        secret = getattr(settings, 'CRON_SECRET_KEY', '') or ''
+        if secret in {'', 'cambia-esto-en-produccion'} or not clave:
+            return Response({'error': 'No autorizado.'}, status=403)
+        if not hmac.compare_digest(clave.encode('utf-8'), secret.encode('utf-8')):
             return Response({'error': 'No autorizado.'}, status=403)
         resultado = ejecutar_recordatorios_pendientes()
         return Response(resultado)

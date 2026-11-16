@@ -537,3 +537,92 @@ class RescatesModuleTestCase(TestCase):
         taller_ingresos = res_bg.data['resumen_ejecutivo']['ingresos_taller']
         self.assertGreaterEqual(taller_ingresos, 1400.00)
 
+    def test_pdf_rescate_incluye_notas_cuando_existen(self):
+        """
+        Verifica que RescateViewSet.pdf() genere un PDF válido cuando rescate.notas
+        contiene texto (incluyendo caracteres especiales XML) y difiera del PDF sin notas.
+        """
+        rescate_sin_notas = Rescate.objects.create(
+            folio='RES-PDF-01',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Sin Notas',
+            telefono_cliente='9991112233',
+            ubicacion_texto='Periferico km 10',
+            vehiculo_marca_modelo='Nissan March',
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00'),
+            estado='completado',
+            notas='',
+        )
+        rescate_con_notas = Rescate.objects.create(
+            folio='RES-PDF-02',
+            operador=self.operador,
+            unidad=self.unidad,
+            nombre_cliente='Cliente Con Notas',
+            telefono_cliente='9991112244',
+            ubicacion_texto='Periferico km 12',
+            vehiculo_marca_modelo='Nissan Versa',
+            subtotal=Decimal('500.00'),
+            total=Decimal('500.00'),
+            estado='completado',
+            notas='Birlo de seguridad & llave especial.\nGarantía válida 30 días.',
+        )
+
+        res_sin = self.client.get(f'/api/rescates/ordenes/{rescate_sin_notas.id}/pdf/')
+        self.assertEqual(res_sin.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_sin['Content-Type'], 'application/pdf')
+        self.assertTrue(res_sin.content.startswith(b'%PDF'))
+
+        res_con = self.client.get(f'/api/rescates/ordenes/{rescate_con_notas.id}/pdf/')
+        self.assertEqual(res_con.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_con['Content-Type'], 'application/pdf')
+        self.assertTrue(res_con.content.startswith(b'%PDF'))
+        self.assertGreater(len(res_con.content), len(res_sin.content))
+
+    def test_pdf_rescate_escapa_caracteres_especiales_xml(self):
+        """
+        SEC-R1: Verifica que RescateViewSet.pdf() escape &, <, > en todos los campos
+        dinámicos (cliente, ubicación, vehículo, unidad, operador, detalle, notas) sin fallar.
+        """
+        operador_xml = Empleado.objects.create(
+            nombre='José & <Luis>',
+            apellido='Pérez > Gómez',
+            puesto='Técnico',
+            salario_base=Decimal('4000.00'),
+        )
+        unidad_xml = UnidadMovil.objects.create(
+            numero_economico='MOV-&1',
+            nombre='Grúa <Express> & Co',
+            placas='XML-001',
+            modelo='2024',
+            chofer_habitual=operador_xml,
+        )
+        rescate = Rescate.objects.create(
+            folio='RES-XML-01',
+            operador=operador_xml,
+            unidad=unidad_xml,
+            nombre_cliente='Transportes A & B <S.A.> > Norte',
+            telefono_cliente='999&123<456>',
+            vehiculo_marca_modelo='Kenworth <T680> & Remolque',
+            medida_llanta='295/75R22.5 & <HD>',
+            ubicacion_texto='Carr. Mérida-Progreso km 14 <Salida Norte> & Entronque > Puente',
+            subtotal=Decimal('1200.00'),
+            total=Decimal('1200.00'),
+            estado='completado',
+            notas='Llave <especial> & birlo > 21mm',
+        )
+        DetalleRescate.objects.create(
+            rescate=rescate,
+            servicio_rescate=self.servicio,
+            descripcion='Auxilio & Montaje <Pesado> > 10T',
+            cantidad=1,
+            precio_unitario=Decimal('1200.00'),
+            subtotal=Decimal('1200.00'),
+        )
+
+        res = self.client.get(f'/api/rescates/ordenes/{rescate.id}/pdf/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res['Content-Type'], 'application/pdf')
+        self.assertTrue(res.content.startswith(b'%PDF'))
+

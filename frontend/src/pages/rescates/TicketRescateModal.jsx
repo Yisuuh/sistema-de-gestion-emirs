@@ -40,6 +40,7 @@ export default function TicketRescateModal({ isOpen, onClose, rescate }) {
   const num_voucher_transferencia = r.num_voucher_transferencia
   const medida_llanta = r.medida_llanta || ''
   const ubicacion_texto = r.ubicacion_texto || ''
+  const notas = r.notas || ''
 
   const fechaObj = new Date(rawDate)
   const fechaFmt = isNaN(fechaObj.getTime())
@@ -146,6 +147,8 @@ export default function TicketRescateModal({ isOpen, onClose, rescate }) {
     let cleanPhone = clientPhone.replace(/\D/g, '')
     if (cleanPhone.length === 10) cleanPhone = '52' + cleanPhone
 
+    const notasWA = notas && notas.trim() ? `\n*Notas:* ${notas.trim()}` : ''
+
     const mensaje = `*CENTRO LLANTERO EMIRS - COMPROBANTE DE RESCATE VIAL*
 ━━━━━━━━━━━━━━━━━━━━
 *Folio:* ${folio}
@@ -161,7 +164,7 @@ export default function TicketRescateModal({ isOpen, onClose, rescate }) {
 ${llantasVal > 0 ? `• Llantas (Taller): $${fmtMXN(llantasVal)} MXN\n` : ''}━━━━━━━━━━━━━━━━━━━━
 *Subtotal:* $${fmtMXN(subtotal || total)} MXN
 ${Number(descuento) > 0 ? `*Descuento:* -$${fmtMXN(descuento)} MXN\n` : ''}*TOTAL A PAGAR:* $${fmtMXN(total)} MXN
-*Forma de Pago:* ${String(metodo_pago).toUpperCase()} ${tipo_tarjeta ? `(${String(tipo_tarjeta).toUpperCase()})` : ''}
+*Forma de Pago:* ${String(metodo_pago).toUpperCase()} ${tipo_tarjeta ? `(${String(tipo_tarjeta).toUpperCase()})` : ''}${notasWA}
 ━━━━━━━━━━━━━━━━━━━━
 ¡Gracias por confiar en *Centro Llantero EmirS*!
 Tel / WhatsApp Taller: 999 371 8502
@@ -180,26 +183,36 @@ _Seguridad y confianza en su camino._`
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-xs">
-      <div className="bg-white text-gray-900 rounded-3xl w-full max-w-sm max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-gray-200">
+      <div
+        className="rounded-3xl w-full max-w-sm max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
+        style={{ backgroundColor: '#ffffff', color: '#111827', border: '1px solid #e5e7eb' }}
+      >
         {/* Modal Header */}
-        <div className="px-5 py-3.5 bg-gray-950 text-white flex items-center justify-between flex-shrink-0">
+        <div
+          className="px-5 py-3.5 flex items-center justify-between flex-shrink-0"
+          style={{ backgroundColor: '#030712', color: '#ffffff' }}
+        >
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-400" />
             <div>
-              <span className="font-bold text-sm block">Ticket de Rescate</span>
-              <span className="text-[11px] text-gray-400 font-mono">{folio}</span>
+              <span className="font-bold text-sm block" style={{ color: '#ffffff' }}>Ticket de Rescate</span>
+              <span className="text-[11px] font-mono" style={{ color: '#9ca3af' }}>{folio}</span>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1 rounded-lg hover:bg-gray-800 transition-colors cursor-pointer"
+            style={{ color: '#9ca3af' }}
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Ticket Scrollable Preview (58mm Thermal View con estilos directos para impresión) */}
-        <div className="flex-1 overflow-y-auto p-4 bg-gray-100 flex justify-center">
+        <div
+          className="flex-1 overflow-y-auto p-4 flex justify-center"
+          style={{ backgroundColor: '#f3f4f6' }}
+        >
           <div
             id="ticket-rescate-print"
             className="mx-auto"
@@ -401,16 +414,51 @@ _Seguridad y confianza en su camino._`
               )}
             </div>
 
+            {/* Notas / Observaciones */}
+            {notas && notas.trim() && (
+              <div
+                style={{
+                  margin: '6px 0',
+                  padding: '6px 8px',
+                  background: '#f8fafc',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  color: '#111827',
+                  fontSize: '13px',
+                  lineHeight: '1.45',
+                }}
+              >
+                <p
+                  style={{
+                    fontWeight: 'bold',
+                    margin: '0 0 2px',
+                    color: '#111827',
+                    fontSize: '12px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  Notas / Observaciones:
+                </p>
+                <p style={{ margin: 0, color: '#111827', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {notas}
+                </p>
+              </div>
+            )}
+
             {/* Footer */}
             <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '13px', color: '#444', paddingBottom: '6px' }}>
-              <p style={{ fontWeight: 'bold', margin: '2px 0' }}>{NEGOCIO.cierre || '¡Gracias por su preferencia!'}</p>
-              <p style={{ margin: 0 }}>Centro Llantero EmirS</p>
+              <p style={{ fontWeight: 'bold', margin: '2px 0', color: '#111827' }}>{NEGOCIO.cierre || '¡Gracias por su preferencia!'}</p>
+              <p style={{ margin: 0, color: '#444' }}>Centro Llantero EmirS</p>
             </div>
           </div>
         </div>
 
         {/* Modal Actions (Mobile ergonomic buttons) */}
-        <div className="p-3 bg-white border-t border-gray-200 flex flex-col gap-2 flex-shrink-0">
+        <div
+          className="p-3 flex flex-col gap-2 flex-shrink-0"
+          style={{ backgroundColor: '#ffffff', borderTop: '1px solid #e5e7eb' }}
+        >
           {/* Botón 1: WhatsApp con texto formateado + descarga automática */}
           <button
             onClick={handleShareWhatsApp}
@@ -425,7 +473,8 @@ _Seguridad y confianza en su camino._`
             <button
               onClick={handleShareOrDownloadPDF}
               disabled={descargandoPDF}
-              className="min-h-[42px] flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-900 border border-slate-300 rounded-xl font-bold text-xs transition-all cursor-pointer disabled:opacity-60"
+              className="min-h-[42px] flex items-center justify-center gap-1.5 hover:opacity-90 active:scale-98 rounded-xl font-bold text-xs transition-all cursor-pointer disabled:opacity-60"
+              style={{ backgroundColor: '#f1f5f9', color: '#0f172a', border: '1px solid #cbd5e1' }}
             >
               {descargandoPDF ? (
                 <Loader2 className="w-4 h-4 animate-spin text-red-600" />
@@ -446,7 +495,8 @@ _Seguridad y confianza en su camino._`
 
           <button
             onClick={onClose}
-            className="w-full min-h-[38px] flex items-center justify-center bg-gray-900 hover:bg-black active:scale-98 text-white rounded-xl font-bold text-xs transition-all cursor-pointer"
+            className="w-full min-h-[38px] flex items-center justify-center hover:opacity-90 active:scale-98 rounded-xl font-bold text-xs transition-all cursor-pointer"
+            style={{ backgroundColor: '#111827', color: '#ffffff' }}
           >
             Cerrar
           </button>

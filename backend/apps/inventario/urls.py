@@ -6,6 +6,7 @@ from .views import (
     ImportarXMLView,
     AdeudosResumenView, AdeudoProveedorDetalleView,
     PagoProveedorViewSet,
+    FacturaXMLBandejaViewSet,
 )
 
 router = DefaultRouter()
@@ -15,6 +16,7 @@ router.register(r'productos', ProductoViewSet, basename='producto')
 router.register(r'entradas', EntradaInventarioViewSet, basename='entrada')
 router.register(r'salidas', SalidaInventarioViewSet, basename='salida')
 router.register(r'pagos-proveedores', PagoProveedorViewSet, basename='pago-proveedor')
+router.register(r'xml-bandeja', FacturaXMLBandejaViewSet, basename='xml-bandeja')
 
 urlpatterns = [
     path('', include(router.urls)),

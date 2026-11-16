@@ -218,5 +218,15 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
 
-# Clave secreta para el endpoint /api/notificaciones/cron/
-CRON_SECRET_KEY = os.getenv('CRON_SECRET_KEY', 'cambia-esto-en-produccion')
+# Clave secreta para endpoints /cron/
+CRON_SECRET_KEY = os.getenv('CRON_SECRET_KEY', '')
+
+# Frontend y Gmail OAuth2 (Bandeja de Facturas XML)
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', '')
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+    'GOOGLE_OAUTH_REDIRECT_URI',
+    'http://localhost:5173/api/inventario/xml-bandeja/gmail/callback/',
+)
+GMAIL_TOKEN_ENCRYPTION_KEY = os.getenv('GMAIL_TOKEN_ENCRYPTION_KEY', '')

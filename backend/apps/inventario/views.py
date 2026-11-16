@@ -1,8 +1,14 @@
+import hmac
+import logging
+import os
 import re
 import csv
-import math
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
+from defusedxml import DefusedXmlException
 from decimal import Decimal
+from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
@@ -12,194 +18,37 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from datetime import datetime, timedelta
+from django.conf import settings
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
 from django.db.models import Sum, Max, OuterRef, Subquery, Q, F, ProtectedError
-from django.http import HttpResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect
 
-from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
+from .models import (
+    Marca, Proveedor, Producto, EntradaInventario,
+    SalidaInventario, PagoProveedor,
+    ConfiguracionCorreoXML, FacturaXMLBandeja,
+)
 from .serializers import (
     MarcaSerializer, ProveedorSerializer, ProductoSerializer,
     EntradaInventarioSerializer, SalidaInventarioSerializer,
-    PagoProveedorSerializer,
+    PagoProveedorSerializer, FacturaXMLBandejaSerializer,
+)
+from .services.xml_import import (
+    INDICES_VELOCIDAD_VALIDOS,
+    calcular_precio_venta_sugerido as _calcular_precio_venta_sugerido,
+    parsear_descripcion_llanta as _parsear_descripcion_llanta,
+    extraer_tasa_iva_concepto as _extraer_tasa_iva_concepto,
+    parsear_cfdi as _parsear_cfdi,
+    guardar_factura_cfdi,
+)
+from .services.gmail_sync import (
+    generar_url_oauth_gmail,
+    procesar_callback_oauth_gmail,
+    sincronizar_bandeja_xml,
 )
 from apps.ventas.views import StandardPagination
-
-INDICES_VELOCIDAD_VALIDOS = ['T', 'H', 'V', 'W', 'Y', 'Z']
-
-
-def _calcular_precio_venta_sugerido(precio_compra, medida: str = '') -> Decimal:
-    """
-    Calcula el precio de venta sugerido basado en el Tabulador de Utilidad por Rin oficial de EmirS.
-    """
-    precio_compra = Decimal(str(precio_compra))
-    if precio_compra <= Decimal('0'):
-        raise ValueError("El precio de compra debe ser mayor a 0.")
-    rin = 16
-    if medida:
-        match_r = re.search(r'R\s*(\d{2}(?:\.\d+)?)', medida, re.IGNORECASE)
-        if match_r:
-            try:
-                rin = int(float(match_r.group(1)))
-            except ValueError:
-                pass
-        else:
-            # Si no detecta letra R, buscar 2 dígitos de rin (13 a 24)
-            matches = re.findall(r'\b(1[3-9]|2[0-4])\b', medida)
-            if matches:
-                rin = int(matches[-1])
-            else:
-                match_digits = re.search(r'(1[3-9]|2[0-4])', medida)
-                if match_digits:
-                    rin = int(match_digits.group(1))
-
-    if rin <= 15:
-        m1 = 400
-    elif rin == 16:
-        m1 = 450
-    elif rin in (17, 18):
-        m1 = 700
-    elif rin >= 19:
-        m1 = 850
-    else:
-        m1 = 450
-
-    factor_financiamiento = Decimal('1.0790')
-    costo_con_iva = precio_compra * Decimal('1.16')
-    costo_financiado = costo_con_iva * factor_financiamiento
-    m1_financiado = Decimal(str(m1)) * factor_financiamiento
-    base_total = float(costo_financiado + m1_financiado)
-    precio_redondeado = math.ceil(math.floor(base_total) / 5.0) * 5
-    return Decimal(str(precio_redondeado)).quantize(Decimal('0.01'))
-
-
-def _parsear_descripcion_llanta(descripcion: str, codigo: str) -> dict:
-    """
-    Extrae medida, índice de carga, índice de velocidad, marca y modelo
-    a partir de la descripción de un concepto CFDI.
-
-    Ejemplo de entrada:
-        descripcion = "NEXN-13826NX 215/70R15 98T Nexen N Priz SH9i"
-        codigo      = "NEXN-13826NX"
-    """
-    # Quitar el código al inicio si la descripción lo repite
-    desc = descripcion.strip()
-    if codigo and desc.upper().startswith(codigo.upper()):
-        desc = desc[len(codigo):].strip()
-
-    # Buscar medida: 215/70R15 o 235/65R17.5
-    medida_match = re.search(r'(\d{3}/\d{2}R\d{2}(?:\.\d+)?)', desc)
-    medida = medida_match.group(1) if medida_match else ''
-
-    indice_carga = 82       # valor por defecto razonable
-    indice_velocidad = 'H'  # valor por defecto
-    marca_nombre = ''
-    modelo = ''
-
-    if medida and medida_match:
-        resto = desc[medida_match.end():].strip()
-
-        # "98T" → carga=98, velocidad=T
-        load_speed = re.match(r'^(\d+)\s*([A-Z])\b', resto)
-        if load_speed:
-            indice_carga = int(load_speed.group(1))
-            indice_velocidad = load_speed.group(2)
-            resto = resto[load_speed.end():].strip()
-
-        if indice_velocidad not in INDICES_VELOCIDAD_VALIDOS:
-            indice_velocidad = 'H'
-
-        # Primera palabra = marca, el resto = modelo
-        partes = resto.split()
-        if partes:
-            marca_nombre = partes[0]
-            modelo = ' '.join(partes[1:])
-
-    return {
-        'medida': medida,
-        'indice_carga': indice_carga,
-        'indice_velocidad': indice_velocidad,
-        'marca_nombre': marca_nombre,
-        'modelo': modelo,
-    }
-
-
-def _parsear_cfdi(xml_bytes: bytes) -> dict:
-    """Parsea un archivo XML CFDI 4.0 y devuelve los datos relevantes."""
-    ns = {'cfdi': 'http://www.sat.gob.mx/cfd/4'}
-    root = ET.fromstring(xml_bytes)
-
-    serie = root.get('Serie', '')
-    folio = root.get('Folio', '')
-    fecha = root.get('Fecha', '')
-    subtotal = root.get('SubTotal', '0')
-    total = root.get('Total', '0')
-
-    numero_factura = f"{serie}{folio}".strip() or folio
-    fecha_compra = fecha[:10] if fecha else None  # YYYY-MM-DD
-
-    # Condiciones de pago y crédito en CFDI
-    condiciones_pago = root.get('CondicionesDePago', '').strip()
-    metodo_pago_cfdi = root.get('MetodoPago', '').strip()
-    dias_credito = None
-    if condiciones_pago:
-        match_dias = re.search(r'(\d+)\s*(?:d[ií]as|d\b)?', condiciones_pago, re.IGNORECASE)
-        if match_dias:
-            try:
-                dias_credito = int(match_dias.group(1))
-            except ValueError:
-                pass
-
-    fecha_vencimiento = None
-    if fecha_compra and dias_credito and dias_credito > 0:
-        try:
-            base_date = datetime.strptime(fecha_compra, '%Y-%m-%d').date()
-            fecha_vencimiento = (base_date + timedelta(days=dias_credito)).isoformat()
-        except Exception:
-            pass
-
-    emisor = root.find('cfdi:Emisor', ns)
-    proveedor_nombre = emisor.get('Nombre', '').strip() if emisor is not None else ''
-    proveedor_rfc = emisor.get('Rfc', '').strip() if emisor is not None else ''
-
-    items = []
-    for concepto in root.findall('cfdi:Conceptos/cfdi:Concepto', ns):
-        codigo = concepto.get('NoIdentificacion', '').strip()
-        descripcion = concepto.get('Descripcion', '').strip()
-        cantidad_raw = concepto.get('Cantidad', '0')
-        valor_unitario_raw = concepto.get('ValorUnitario', '0')
-
-        cantidad = int(float(cantidad_raw))
-        precio_compra = round(float(valor_unitario_raw), 4)
-
-        info = _parsear_descripcion_llanta(descripcion, codigo)
-        precio_sug = _calcular_precio_venta_sugerido(Decimal(str(precio_compra)), info.get('medida', ''))
-
-        items.append({
-            'codigo': codigo,
-            'descripcion': descripcion,
-            'cantidad': cantidad,
-            'precio_compra': precio_compra,
-            'precio_venta_sugerido': float(precio_sug),
-            **info,
-        })
-
-    return {
-        'numero_factura': numero_factura,
-        'fecha_compra': fecha_compra,
-        'fecha_vencimiento': fecha_vencimiento,
-        'dias_credito': dias_credito,
-        'condiciones_de_pago': condiciones_pago,
-        'metodo_pago_cfdi': metodo_pago_cfdi,
-        'subtotal': subtotal,
-        'total': total,
-        'proveedor': {
-            'nombre': proveedor_nombre,
-            'rfc': proveedor_rfc,
-        },
-        'items': items,
-    }
 
 
 class ImportarXMLView(APIView):
@@ -207,22 +56,30 @@ class ImportarXMLView(APIView):
     Endpoint para importar facturas CFDI en formato XML.
 
     POST /api/inventario/importar-xml/
-        - accion = 'preview'  → parsea el XML y devuelve los datos (sin guardar)
-        - accion = 'guardar'  → parsea y persiste proveedor, productos y entradas
+        - accion = 'preview'  -> parsea el XML y devuelve los datos (sin guardar)
+        - accion = 'guardar'  -> parsea y persiste proveedor, productos y entradas
     """
     parser_classes = [MultiPartParser]
     permission_classes = [IsAuthenticated]
+    MAX_XML_SIZE = 5 * 1024 * 1024  # 5 MB
 
     def post(self, request, *args, **kwargs):
         xml_file = request.FILES.get('xml')
         if not xml_file:
             return Response({'error': 'No se proporcionó el archivo XML.'}, status=400)
 
+        if getattr(xml_file, 'size', None) is not None and xml_file.size > self.MAX_XML_SIZE:
+            return Response({'error': 'El archivo XML excede el tamaño máximo permitido de 5 MB.'}, status=400)
+
         accion = request.data.get('accion', 'preview')
 
         try:
-            xml_bytes = xml_file.read()
+            xml_bytes = xml_file.read(self.MAX_XML_SIZE + 1)
+            if len(xml_bytes) > self.MAX_XML_SIZE:
+                return Response({'error': 'El archivo XML excede el tamaño máximo permitido de 5 MB.'}, status=400)
             datos = _parsear_cfdi(xml_bytes)
+        except DefusedXmlException as exc:
+            return Response({'error': f'XML rechazado por política de seguridad: {exc}'}, status=400)
         except ET.ParseError as exc:
             return Response({'error': f'El archivo no es un XML válido: {exc}'}, status=400)
         except Exception as exc:
@@ -238,104 +95,25 @@ class ImportarXMLView(APIView):
             if not (getattr(request.user, 'rol', None) == 'admin' or request.user.is_staff or request.user.is_superuser):
                 raise PermissionDenied('Solo los administradores pueden importar facturas y registrar productos en inventario.')
             try:
-                resultado = self._guardar(datos, request.user)
+                resultado = self._guardar(
+                    datos,
+                    request.user,
+                    xml_content=xml_bytes,
+                    nombre_archivo=getattr(xml_file, 'name', None),
+                )
                 return Response({'accion': 'guardado', 'resultado': resultado})
             except Exception as exc:
                 return Response({'error': f'Error al guardar: {exc}'}, status=400)
 
         return Response({'error': 'Acción no reconocida. Use "preview" o "guardar".'}, status=400)
 
-    @transaction.atomic
-    def _guardar(self, datos: dict, usuario) -> dict:
-        # ── Proveedor ────────────────────────────────────────────────────────────
-        prov_data = datos['proveedor']
-        proveedor, _ = Proveedor.objects.get_or_create(
-            nombre=prov_data['nombre'],
-            defaults={
-                'contacto': prov_data.get('rfc', ''),
-                'activo': True,
-            },
+    def _guardar(self, datos: dict, usuario, xml_content=None, nombre_archivo=None) -> dict:
+        return guardar_factura_cfdi(
+            datos,
+            usuario,
+            xml_content=xml_content,
+            nombre_archivo=nombre_archivo,
         )
-        if proveedor.dias_credito == 0 and datos.get('dias_credito'):
-            proveedor.dias_credito = datos['dias_credito']
-            proveedor.save(update_fields=['dias_credito'])
-
-        resultados = []
-        for item in datos['items']:
-            # ── Marca ─────────────────────────────────────────────────────────────
-            marca_nombre = (item.get('marca_nombre') or 'SIN MARCA').strip()
-            marca, _ = Marca.objects.get_or_create(nombre=marca_nombre)
-
-            # ── Producto ──────────────────────────────────────────────────────────
-            iv = item.get('indice_velocidad', 'H')
-            if iv not in INDICES_VELOCIDAD_VALIDOS:
-                iv = 'H'
-
-            cantidad = int(item.get('cantidad', 0))
-            if cantidad <= 0:
-                raise ValueError(f"La cantidad para el producto '{item.get('codigo', '')}' debe ser mayor a 0.")
-
-            precio_compra = Decimal(str(item['precio_compra']))
-            if precio_compra <= Decimal('0'):
-                raise ValueError(f"El precio de compra para el producto '{item.get('codigo', '')}' debe ser mayor a 0.")
-
-            precio_venta_sugerido = _calcular_precio_venta_sugerido(precio_compra, item.get('medida', ''))
-            precio_venta_final = (
-                Decimal(str(item['precio_venta'])).quantize(Decimal('0.01'))
-                if item.get('precio_venta')
-                else precio_venta_sugerido
-            )
-            if precio_venta_final <= Decimal('0'):
-                raise ValueError(f"El precio de venta para el producto '{item.get('codigo', '')}' debe ser mayor a 0.")
-
-            producto, producto_creado = Producto.objects.get_or_create(
-                codigo=item['codigo'],
-                defaults={
-                    'medida': item.get('medida', ''),
-                    'marca': marca,
-                    'modelo': item.get('modelo', ''),
-                    'indice_carga': item.get('indice_carga', 82),
-                    'indice_velocidad': iv,
-                    'precio_venta': precio_venta_final,
-                    'stock_minimo': 2,
-                    'activo': True,
-                },
-            )
-            if not producto_creado:
-                producto.precio_venta = precio_venta_final
-                producto.save(update_fields=['precio_venta'])
-
-            # ── Entrada de inventario ─────────────────────────────────────────────
-            entrada = EntradaInventario.objects.create(
-                producto=producto,
-                proveedor=proveedor,
-                cantidad=item['cantidad'],
-                precio_compra=precio_compra,
-                fecha_compra=datos['fecha_compra'],
-                fecha_vencimiento=datos.get('fecha_vencimiento'),
-                numero_factura=datos['numero_factura'],
-                en_inventario=True,
-                created_by=usuario,
-            )
-
-            resultados.append({
-                'codigo': item['codigo'],
-                'descripcion': item['descripcion'],
-                'cantidad': item['cantidad'],
-                'precio_compra': float(precio_compra),
-                'precio_venta': float(precio_venta_final),
-                'producto_creado': producto_creado,
-                'producto_id': producto.id,
-                'entrada_id': entrada.id,
-            })
-
-        return {
-            'proveedor': proveedor.nombre,
-            'numero_factura': datos['numero_factura'],
-            'fecha_compra': datos['fecha_compra'],
-            'total_items': len(resultados),
-            'items': resultados,
-        }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -739,6 +517,16 @@ class ProductoViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        ultima_entrada_qs = (
+            EntradaInventario.objects
+            .filter(producto=OuterRef('pk'))
+            .order_by('-fecha_compra', '-created_at', '-id')
+        )
+        qs = qs.annotate(
+            ultimo_precio_compra=Subquery(ultima_entrada_qs.values('precio_compra')[:1]),
+            ultimo_precio_incluye_iva=Subquery(ultima_entrada_qs.values('precio_incluye_iva')[:1]),
+        )
+
         medida = self.request.query_params.get('medida')
         if medida:
             variantes = normalizar_termino_medida(medida)
@@ -1016,9 +804,18 @@ class ProductoViewSet(viewsets.ModelViewSet):
 class EntradaInventarioViewSet(viewsets.ModelViewSet):
     queryset = EntradaInventario.objects.select_related('producto', 'producto__marca', 'proveedor', 'created_by').all()
     serializer_class = EntradaInventarioSerializer
+    pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['proveedor', 'en_inventario', 'factura_consumida', 'estado', 'factura_pendiente']
-    search_fields = ['producto__codigo', 'numero_factura', 'folio_remision', 'producto__medida', 'producto__modelo']
+    search_fields = [
+        'producto__codigo',
+        'numero_factura',
+        'folio_remision',
+        'producto__medida',
+        'producto__modelo',
+        'proveedor__nombre',
+        'producto__marca__nombre',
+    ]
     ordering_fields = ['fecha_compra', 'created_at']
     ordering = ['-fecha_compra', '-created_at']
 
@@ -1026,10 +823,13 @@ class EntradaInventarioViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         fecha_inicio = self.request.query_params.get('fecha_inicio')
         fecha_fin = self.request.query_params.get('fecha_fin')
+        numero_factura = self.request.query_params.get('numero_factura')
         if fecha_inicio:
             qs = qs.filter(fecha_compra__gte=fecha_inicio)
         if fecha_fin:
             qs = qs.filter(fecha_compra__lte=fecha_fin)
+        if numero_factura:
+            qs = qs.filter(numero_factura__icontains=numero_factura.strip())
         return qs
 
     def _verificar_rol_admin(self, user):
@@ -1266,3 +1066,345 @@ class SalidaInventarioViewSet(viewsets.ReadOnlyModelViewSet):
         if fecha_fin:
             qs = qs.filter(fecha_venta__lte=fecha_fin)
         return qs
+
+
+class FacturaXMLBandejaViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Bandeja de facturas CFDI en XML descargadas desde Gmail (OAuth2).
+    """
+    queryset = FacturaXMLBandeja.objects.select_related(
+        'cuenta', 'importado_por', 'proveedor_vinculado',
+    ).all()
+    serializer_class = FacturaXMLBandejaSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
+    filter_backends = []
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def _verificar_rol_admin(self, user):
+        if not (getattr(user, 'rol', None) == 'admin' or user.is_staff or user.is_superuser):
+            raise PermissionDenied('Solo los administradores pueden realizar esta acción.')
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        estado = (self.request.query_params.get('estado') or '').strip()
+        if estado and estado != 'todos':
+            qs = qs.filter(estado=estado)
+
+        search = (self.request.query_params.get('search') or '').strip()
+        if search:
+            qs = qs.filter(
+                Q(emisor_nombre__icontains=search)
+                | Q(emisor_rfc__icontains=search)
+                | Q(numero_factura__icontains=search)
+                | Q(cfdi_uuid__icontains=search)
+                | Q(asunto__icontains=search)
+                | Q(remitente_email__icontains=search)
+                | Q(nombre_archivo__icontains=search)
+            )
+        return qs.order_by('-fecha_correo', '-created_at')
+
+    @action(detail=False, methods=['post'], url_path='sincronizar')
+    def sincronizar(self, request):
+        """POST /api/inventario/xml-bandeja/sincronizar/ — Admin only."""
+        self._verificar_rol_admin(request.user)
+        cuentas_activas = ConfiguracionCorreoXML.objects.filter(
+            activa=True,
+        ).exclude(oauth_token_json_enc='')
+        if not cuentas_activas.exists():
+            return Response(
+                {'error': 'No hay ninguna cuenta de Gmail conectada.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        resultado = sincronizar_bandeja_xml()
+        return Response(resultado)
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='cron',
+        authentication_classes=[],
+        permission_classes=[],
+    )
+    def cron(self, request):
+        """POST /api/inventario/xml-bandeja/cron/ — Protegido por X-Cron-Key."""
+        clave = request.headers.get('X-Cron-Key', '') or ''
+        secret = getattr(settings, 'CRON_SECRET_KEY', '') or ''
+        if secret in {'', 'cambia-esto-en-produccion'} or not clave:
+            return Response({'error': 'No autorizado.'}, status=status.HTTP_403_FORBIDDEN)
+        if not hmac.compare_digest(clave.encode('utf-8'), secret.encode('utf-8')):
+            return Response({'error': 'No autorizado.'}, status=status.HTTP_403_FORBIDDEN)
+        resultado = sincronizar_bandeja_xml()
+        return Response(resultado)
+
+    @action(detail=True, methods=['get'], url_path='preview')
+    def preview(self, request, pk=None):
+        """GET /api/inventario/xml-bandeja/{id}/preview/"""
+        factura = self.get_object()
+        if not factura.archivo_xml:
+            return Response(
+                {'error': 'El archivo XML no se encuentra disponible.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            with factura.archivo_xml.open('rb') as f:
+                xml_bytes = f.read()
+        except FileNotFoundError:
+            return Response(
+                {'error': 'El archivo XML no se encuentra disponible.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception:
+            logger.exception('Error al leer el archivo XML de FacturaXMLBandeja id=%s', factura.pk)
+            return Response(
+                {'error': 'Error al procesar el archivo XML.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        try:
+            datos = _parsear_cfdi(xml_bytes)
+        except DefusedXmlException:
+            return Response(
+                {'error': 'El archivo XML fue rechazado por política de seguridad.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ET.ParseError:
+            return Response(
+                {'error': 'El archivo no es un XML válido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ValueError as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception('Error inesperado al analizar el XML de FacturaXMLBandeja id=%s', factura.pk)
+            return Response(
+                {'error': 'Error al procesar el archivo XML.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if not datos.get('items'):
+            return Response(
+                {'error': 'No se encontraron conceptos en el XML.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({'accion': 'preview', 'datos': datos})
+
+    @action(detail=True, methods=['post'], url_path='importar')
+    def importar(self, request, pk=None):
+        """POST /api/inventario/xml-bandeja/{id}/importar/ — Admin only, atómico."""
+        self._verificar_rol_admin(request.user)
+
+        with transaction.atomic():
+            factura = FacturaXMLBandeja.objects.select_for_update().filter(pk=pk).first()
+            if factura is None:
+                raise Http404('Factura XML no encontrada.')
+
+            if factura.estado == 'importada':
+                return Response(
+                    {'error': 'Esta factura ya fue importada previamente.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if factura.estado == 'descartada':
+                return Response(
+                    {'error': 'Este XML está descartado. Restáuralo a pendiente antes de importarlo.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                with factura.archivo_xml.open('rb') as f:
+                    xml_bytes = f.read()
+                datos = _parsear_cfdi(xml_bytes)
+            except (DefusedXmlException, ET.ParseError, ValueError) as exc:
+                return Response(
+                    {'error': f'Error al procesar el XML: {exc}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except FileNotFoundError:
+                return Response(
+                    {'error': 'El archivo XML asociado no existe en almacenamiento.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if not datos.get('items'):
+                return Response(
+                    {'error': 'No se encontraron conceptos en el XML.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            cfdi_uuid = (datos.get('cfdi_uuid') or factura.cfdi_uuid or '').strip()
+            if cfdi_uuid and (
+                FacturaXMLBandeja.objects
+                .filter(cfdi_uuid__iexact=cfdi_uuid, estado='importada')
+                .exclude(pk=factura.pk)
+                .exists()
+            ):
+                return Response(
+                    {'error': f'El CFDI con UUID {cfdi_uuid} ya fue importado previamente.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                resultado = guardar_factura_cfdi(
+                    datos,
+                    request.user,
+                    xml_content=xml_bytes,
+                    nombre_archivo=factura.nombre_archivo,
+                )
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+            factura.estado = 'importada'
+            factura.importado_por = request.user
+            factura.importado_at = timezone.now()
+            factura.error_detalle = ''
+            if resultado.get('proveedor_id'):
+                factura.proveedor_vinculado_id = resultado['proveedor_id']
+            if cfdi_uuid and not factura.cfdi_uuid:
+                factura.cfdi_uuid = cfdi_uuid
+            factura.save(
+                update_fields=[
+                    'estado',
+                    'importado_por',
+                    'importado_at',
+                    'error_detalle',
+                    'proveedor_vinculado',
+                    'cfdi_uuid',
+                ]
+            )
+
+            return Response({'accion': 'guardado', 'resultado': resultado})
+
+    @action(detail=True, methods=['get'], url_path='descargar')
+    def descargar(self, request, pk=None):
+        """GET /api/inventario/xml-bandeja/{id}/descargar/"""
+        factura = self.get_object()
+        try:
+            file_handle = factura.archivo_xml.open('rb')
+        except (FileNotFoundError, ValueError):
+            raise Http404('El archivo XML no está disponible.')
+
+        raw_name = os.path.basename((factura.nombre_archivo or f'factura_{factura.id}.xml').replace('\\', '/'))
+        safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', raw_name).strip('._') or f'factura_{factura.id}.xml'
+        if not safe_name.lower().endswith('.xml'):
+            safe_name = f'{safe_name}.xml'
+
+        return FileResponse(
+            file_handle,
+            as_attachment=True,
+            filename=safe_name,
+            content_type='application/xml',
+        )
+
+    @action(detail=True, methods=['patch'], url_path='descartar')
+    def descartar(self, request, pk=None):
+        """PATCH /api/inventario/xml-bandeja/{id}/descartar/ — Admin only."""
+        self._verificar_rol_admin(request.user)
+        factura = self.get_object()
+        if factura.estado == 'importada':
+            return Response(
+                {'error': 'No se puede descartar una factura ya importada.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        factura.estado = 'descartada'
+        factura.save(update_fields=['estado'])
+        return Response(FacturaXMLBandejaSerializer(factura).data)
+
+    @action(detail=True, methods=['patch'], url_path='restaurar')
+    def restaurar(self, request, pk=None):
+        """PATCH /api/inventario/xml-bandeja/{id}/restaurar/ — Admin only."""
+        self._verificar_rol_admin(request.user)
+        factura = self.get_object()
+        if factura.estado == 'importada':
+            return Response(
+                {'error': 'No se puede restaurar una factura ya importada.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        factura.estado = 'pendiente'
+        factura.save(update_fields=['estado'])
+        return Response(FacturaXMLBandejaSerializer(factura).data)
+
+    @action(detail=False, methods=['get'], url_path='gmail/status')
+    def gmail_status(self, request):
+        """GET /api/inventario/xml-bandeja/gmail/status/"""
+        cuenta = (
+            ConfiguracionCorreoXML.objects
+            .filter(proveedor_tipo='gmail_oauth', activa=True)
+            .exclude(oauth_token_json_enc='')
+            .order_by('-updated_at')
+            .first()
+        )
+        oauth_configurado = bool(
+            (getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', '') or '').strip()
+            and (getattr(settings, 'GOOGLE_OAUTH_CLIENT_SECRET', '') or '').strip()
+        )
+        conectado = bool(cuenta)
+        pendientes_count = FacturaXMLBandeja.objects.filter(estado='pendiente').count()
+        return Response({
+            'conectado': conectado,
+            'connected': conectado,
+            'email_cuenta': cuenta.email_cuenta if cuenta else '',
+            'nombre': cuenta.nombre if cuenta else '',
+            'ultima_sincronizacion': cuenta.ultima_sincronizacion if cuenta else None,
+            'ultimo_error': cuenta.ultimo_error if cuenta else '',
+            'dias_busqueda_inicial': cuenta.dias_busqueda_inicial if cuenta else 30,
+            'filtro_remitentes': cuenta.filtro_remitentes if cuenta else '',
+            'oauth_configurado': oauth_configurado,
+            'configured_env': oauth_configurado,
+            'pendientes_count': pendientes_count,
+        })
+
+    @action(detail=False, methods=['get'], url_path='gmail/auth-url')
+    def gmail_auth_url(self, request):
+        """GET /api/inventario/xml-bandeja/gmail/auth-url/ — Admin only."""
+        self._verificar_rol_admin(request.user)
+        try:
+            auth_url = generar_url_oauth_gmail(request.user)
+            return Response({'auth_url': auth_url})
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='gmail/callback',
+        authentication_classes=[],
+        permission_classes=[],
+    )
+    def gmail_callback(self, request):
+        """
+        GET /api/inventario/xml-bandeja/gmail/callback/
+        Público validado por state firmado criptográficamente; redirige al frontend.
+        """
+        frontend_base = (getattr(settings, 'FRONTEND_URL', 'http://localhost:5173') or 'http://localhost:5173').rstrip('/')
+        redirect_base = f'{frontend_base}/inventario?tab=xml&subtab=bandeja'
+
+        error = request.query_params.get('error')
+        if error:
+            return HttpResponseRedirect(f'{redirect_base}&gmail=error&reason={quote(error)}')
+
+        code = request.query_params.get('code', '')
+        state = request.query_params.get('state', '')
+        try:
+            procesar_callback_oauth_gmail(code=code, state=state)
+            return HttpResponseRedirect(f'{redirect_base}&gmail=connected')
+        except Exception:
+            return HttpResponseRedirect(f'{redirect_base}&gmail=error')
+
+    @action(detail=False, methods=['post'], url_path='gmail/disconnect')
+    def gmail_disconnect(self, request):
+        """POST /api/inventario/xml-bandeja/gmail/disconnect/ — Admin only."""
+        self._verificar_rol_admin(request.user)
+        ConfiguracionCorreoXML.objects.filter(
+            proveedor_tipo='gmail_oauth',
+            activa=True,
+        ).update(
+            activa=False,
+            oauth_token_json_enc='',
+            ultimo_error='',
+        )
+        return Response({'ok': True, 'conectado': False})
+

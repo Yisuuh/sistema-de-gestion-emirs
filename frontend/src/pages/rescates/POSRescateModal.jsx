@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import AlarmaModal from '../../components/AlarmaModal'
-import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib/medidaUtils'
+import { coincideProductoInteligente, detectarMedidaFormateada, calcularPrecioPosLlanta } from '../../lib/medidaUtils'
 
 const fmtMXN = (n) =>
   Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -17,19 +17,30 @@ export default function POSRescateModal({
   // Flujo en 2 pasos: 'conceptos' | 'cobro'
   const [pasoActual, setPasoActual] = useState('conceptos')
 
+  const productosCatalogoRef = useRef(productosCatalogo)
+  productosCatalogoRef.current = productosCatalogo
+
   // Items en la orden
   const [items, setItems] = useState(() => {
     if (rescate?.detalles && rescate.detalles.length > 0) {
       return rescate.detalles
         .filter(d => !d.es_traslado && !((d.descripcion || '').toLowerCase().includes('traslado') || (d.descripcion || '').toLowerCase().includes('desplazamiento')))
-        .map(d => ({
-          id: d.id || Math.random().toString(),
-          servicio_id: d.servicio || d.servicio_id || null,
-          producto_id: d.producto || d.producto_id || null,
-          descripcion: d.descripcion,
-          precio: parseFloat(d.precio_unitario || d.precio_base || d.precio || 0),
-          cantidad: parseInt(d.cantidad || 1),
-        }))
+        .map(d => {
+          const precio = parseFloat(d.precio_unitario || d.precio_base || d.precio || 0)
+          const cantidad = parseInt(d.cantidad || 1)
+          return {
+            id: d.id || Math.random().toString(),
+            servicio_id: d.servicio || d.servicio_id || null,
+            producto_id: d.producto || d.producto_id || null,
+            producto_obj: null,
+            descripcion: d.descripcion,
+            precio,
+            cantidad,
+            subtotal: parseFloat(d.subtotal || (precio * cantidad) || 0),
+            etiquetaTarifa: null,
+            ahorroTotal: 0,
+          }
+        })
     }
     return []
   })
@@ -40,20 +51,31 @@ export default function POSRescateModal({
       setItems(
         rescate.detalles
           .filter(d => !d.es_traslado && !((d.descripcion || '').toLowerCase().includes('traslado') || (d.descripcion || '').toLowerCase().includes('desplazamiento')))
-          .map(d => ({
-            id: d.id || Math.random().toString(),
-            servicio_id: d.servicio || d.servicio_id || null,
-            producto_id: d.producto || d.producto_id || null,
-            descripcion: d.descripcion,
-            precio: parseFloat(d.precio_unitario || d.precio_base || d.precio || 0),
-            cantidad: parseInt(d.cantidad || 1),
-          }))
+          .map(d => {
+            const precio = parseFloat(d.precio_unitario || d.precio_base || d.precio || 0)
+            const cantidad = parseInt(d.cantidad || 1)
+            const prodId = d.producto || d.producto_id || null
+            const prodObj = prodId ? (productosCatalogoRef.current.find(p => p.id === prodId) || null) : null
+            return {
+              id: d.id || Math.random().toString(),
+              servicio_id: d.servicio || d.servicio_id || null,
+              producto_id: prodId,
+              producto_obj: prodObj,
+              descripcion: d.descripcion,
+              precio,
+              cantidad,
+              subtotal: parseFloat(d.subtotal || (precio * cantidad) || 0),
+              etiquetaTarifa: null,
+              ahorroTotal: 0,
+            }
+          })
       )
     } else if (isOpen && (!rescate?.detalles || rescate.detalles.length === 0)) {
       setItems([])
     }
     if (isOpen) {
       setPasoActual('conceptos')
+      setNotas(rescate?.notas || '')
       if (rescate?.costo_traslado) {
         setCostoTraslado(String(rescate.costo_traslado))
       }
@@ -73,6 +95,7 @@ export default function POSRescateModal({
     return rescate?.costo_traslado ? String(rescate.costo_traslado) : '0.00'
   })
   const [numReferencia, setNumReferencia] = useState('')
+  const [notas, setNotas] = useState(() => rescate?.notas || '')
   const [alarma, setAlarma] = useState({ isOpen: false, titulo: '', mensaje: '', tipo: 'warning' })
   const [redondearCentavos, setRedondearCentavos] = useState(false)
   const [clabeCopiada, setClabeCopiada] = useState(false)
@@ -81,7 +104,7 @@ export default function POSRescateModal({
   const costoTrasladoNum = parseFloat(costoTraslado || 0)
 
   const subtotalServiciosYProductos = useMemo(() => {
-    return items.reduce((sum, item) => sum + (item.precio * item.cantidad), 0)
+    return items.reduce((sum, item) => sum + (item.subtotal ?? (item.precio * item.cantidad)), 0)
   }, [items])
 
   const subtotal = useMemo(() => {
@@ -140,17 +163,24 @@ export default function POSRescateModal({
     setItems(prev => {
       const idx = prev.findIndex(i => i.servicio_id === serv.id)
       if (idx >= 0) {
-        const next = [...prev]
-        next[idx].cantidad += 1
-        return next
+        return prev.map((it, i) => {
+          if (i !== idx) return it
+          const nueva = it.cantidad + 1
+          return { ...it, cantidad: nueva, subtotal: Number((it.precio * nueva).toFixed(2)) }
+        })
       }
+      const precio = parseFloat(serv.precio_base ?? serv.precio ?? 0)
       return [...prev, {
         id: 'serv-' + serv.id,
         servicio_id: serv.id,
         producto_id: null,
+        producto_obj: null,
         descripcion: serv.nombre,
-        precio: parseFloat(serv.precio_base ?? serv.precio ?? 0),
+        precio,
         cantidad: 1,
+        subtotal: precio,
+        etiquetaTarifa: null,
+        ahorroTotal: 0,
       }]
     })
   }
@@ -159,18 +189,42 @@ export default function POSRescateModal({
     setItems(prev => {
       const idx = prev.findIndex(i => i.producto_id === prod.id)
       if (idx >= 0) {
-        const next = [...prev]
-        next[idx].cantidad += 1
-        return next
+        return prev.map((it, i) => {
+          if (i !== idx) return it
+          const nueva = it.cantidad + 1
+          const prodObj = it.producto_obj || prod
+          const calc = calcularPrecioPosLlanta({
+            producto: prodObj,
+            cantidad: nueva,
+            precioEditadoManual: Boolean(it.precioEditadoManual),
+            precioManual: it.precio,
+          })
+          return {
+            ...it,
+            producto_obj: prodObj,
+            cantidad: nueva,
+            precio: calc.precioUnitario,
+            subtotal: calc.totalPaquete,
+            etiquetaTarifa: calc.etiquetaTarifa,
+            ahorroTotal: calc.ahorroTotal,
+          }
+        })
       }
+      const calc = calcularPrecioPosLlanta({ producto: prod, cantidad: 1 })
+      const precio = calc.precioUnitario || parseFloat(prod.precio_descuento > 0 ? prod.precio_descuento : (prod.precio_venta || prod.precio || 0))
       const desc = `${prod.marca_nombre || prod.marca?.nombre || ''} ${prod.modelo || ''} ${prod.medida || ''}`.trim() || prod.descripcion
       return [...prev, {
         id: 'prod-' + prod.id,
         servicio_id: null,
         producto_id: prod.id,
+        producto_obj: prod,
         descripcion: desc,
-        precio: parseFloat(prod.precio_venta || prod.precio || 0),
+        precio,
         cantidad: 1,
+        subtotal: calc.totalPaquete || precio,
+        etiquetaTarifa: calc.etiquetaTarifa,
+        ahorroTotal: calc.ahorroTotal,
+        precioEditadoManual: false,
       }]
     })
   }
@@ -180,7 +234,32 @@ export default function POSRescateModal({
       return prev.map(item => {
         if (item.id === id) {
           const nueva = item.cantidad + delta
-          return nueva > 0 ? { ...item, cantidad: nueva } : null
+          if (nueva <= 0) return null
+          if (item.producto_id) {
+            const prodObj = item.producto_obj || productosCatalogo.find(p => p.id === item.producto_id) || null
+            if (prodObj) {
+              const calc = calcularPrecioPosLlanta({
+                producto: prodObj,
+                cantidad: nueva,
+                precioEditadoManual: Boolean(item.precioEditadoManual),
+                precioManual: item.precio,
+              })
+              return {
+                ...item,
+                producto_obj: prodObj,
+                cantidad: nueva,
+                precio: calc.precioUnitario,
+                subtotal: calc.totalPaquete,
+                etiquetaTarifa: calc.etiquetaTarifa,
+                ahorroTotal: calc.ahorroTotal,
+              }
+            }
+          }
+          return {
+            ...item,
+            cantidad: nueva,
+            subtotal: Number((item.precio * nueva).toFixed(2)),
+          }
         }
         return item
       }).filter(Boolean)
@@ -300,7 +379,7 @@ export default function POSRescateModal({
         descripcion: i.descripcion,
         cantidad: i.cantidad,
         precio_unitario: i.precio,
-        subtotal: i.precio * i.cantidad,
+        subtotal: i.subtotal ?? Number((i.precio * i.cantidad).toFixed(2)),
       })),
       subtotal,
       descuento: parseFloat(descuento || 0),
@@ -310,6 +389,7 @@ export default function POSRescateModal({
       monto_efectivo: metodoFinal === 'efectivo' ? (parseFloat(montoEfectivo) || total) : (metodoFinal === 'mixto' ? parseFloat(montoEfectivo || 0) : 0),
       monto_electronico: (metodoFinal === 'tarjeta' || metodoFinal === 'transferencia') ? total : (metodoFinal === 'mixto' ? parseFloat(montoElectronico || 0) : 0),
       num_referencia: numReferencia,
+      notas: notas.trim(),
     }
 
     onProcesarCobro(payload)
@@ -477,7 +557,7 @@ export default function POSRescateModal({
                           </div>
                           <div className="flex items-center gap-2.5 flex-shrink-0">
                             <span className="text-xs font-bold font-mono text-emerald-400">
-                              ${fmtMXN(prod.precio_venta || prod.precio)}
+                              ${fmtMXN(prod.precio_descuento > 0 ? prod.precio_descuento : (prod.precio_venta || prod.precio))}
                             </span>
                             <button
                               type="button"
@@ -528,7 +608,14 @@ export default function POSRescateModal({
                           <p className="text-xs font-semibold text-white truncate leading-tight" title={item.descripcion}>
                             {item.descripcion}
                           </p>
-                          <p className="text-[10px] font-mono text-slate-400">${fmtMXN(item.precio)} c/u</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-[10px] font-mono text-slate-400">${fmtMXN(item.precio)} c/u</p>
+                            {item.etiquetaTarifa && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 text-[9px] font-bold">
+                                {item.etiquetaTarifa}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Stepper compacto de cantidad [-] Q [+] */}
@@ -553,7 +640,7 @@ export default function POSRescateModal({
                         </div>
 
                         <span className="font-mono font-bold text-xs text-emerald-400 min-w-[50px] text-right flex-shrink-0">
-                          ${fmtMXN(item.precio * item.cantidad)}
+                          ${fmtMXN(item.subtotal ?? (item.precio * item.cantidad))}
                         </span>
 
                         <button
@@ -1124,6 +1211,21 @@ export default function POSRescateModal({
                   </div>
                 </div>
               )}
+
+              {/* Notas / Observaciones opcionales para el ticket */}
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <i className="ri-sticky-note-line text-slate-400"></i>
+                  <span>Notas / Observaciones para el Ticket (Opcional)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Garantía, birlo de seguridad, observación de llanta o entrega..."
+                  value={notas}
+                  onChange={e => setNotas(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-red-500"
+                />
+              </div>
             </div>
 
             {/* Barra Inferior Fija de Cobro: Botón Gigante */}

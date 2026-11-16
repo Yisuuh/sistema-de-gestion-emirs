@@ -119,6 +119,7 @@ class EntradaInventario(models.Model):
     proveedor = models.ForeignKey(Proveedor, on_delete=models.PROTECT, related_name='entradas')
     cantidad = models.IntegerField()
     precio_compra = models.DecimalField(max_digits=10, decimal_places=2, help_text='Precio unitario de compra')
+    precio_incluye_iva = models.BooleanField(default=False, help_text='Indica si el precio_compra ya incluye IVA')
     fecha_compra = models.DateField()
     numero_factura = models.CharField(max_length=50, blank=True, default='')
     factura_pendiente = models.BooleanField(default=False)
@@ -260,3 +261,117 @@ class SalidaInventario(models.Model):
     def total_venta(self):
         """Total de la venta"""
         return self.cantidad * self.precio_venta
+
+
+class ConfiguracionCorreoXML(models.Model):
+    """
+    Configuración de cuenta de correo (Gmail OAuth2) para descarga automática
+    de facturas XML CFDI de proveedores.
+    """
+    PROVEEDOR_TIPO_CHOICES = [
+        ('gmail_oauth', 'Gmail OAuth2'),
+    ]
+
+    nombre = models.CharField(max_length=120, default='Bandeja Principal Gmail')
+    proveedor_tipo = models.CharField(
+        max_length=30,
+        choices=PROVEEDOR_TIPO_CHOICES,
+        default='gmail_oauth',
+    )
+    email_cuenta = models.EmailField(blank=True, default='')
+    activa = models.BooleanField(default=True)
+    oauth_token_json_enc = models.TextField(blank=True, default='')
+    ultimo_history_id = models.CharField(max_length=100, blank=True, default='')
+    ultima_sincronizacion = models.DateTimeField(null=True, blank=True)
+    ultimo_error = models.TextField(blank=True, default='')
+    dias_busqueda_inicial = models.PositiveSmallIntegerField(default=30)
+    filtro_remitentes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Configuración de Correo XML'
+        verbose_name_plural = 'Configuraciones de Correo XML'
+        ordering = ['-updated_at', '-created_at']
+
+    def __str__(self):
+        return f"{self.nombre} ({self.email_cuenta or 'Sin vincular'})"
+
+
+class FacturaXMLBandeja(models.Model):
+    """
+    Factura CFDI en formato XML recibida por correo electrónico y en espera
+    de revisión/importación al inventario.
+    """
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('importada', 'Importada'),
+        ('descartada', 'Descartada'),
+        ('error', 'Error'),
+    ]
+
+    cuenta = models.ForeignKey(
+        ConfiguracionCorreoXML,
+        on_delete=models.CASCADE,
+        related_name='facturas_xml',
+    )
+    external_message_id = models.CharField(max_length=255)
+    attachment_key = models.CharField(max_length=255)
+    archivo_sha256 = models.CharField(max_length=64, db_index=True)
+
+    remitente_email = models.CharField(max_length=255, blank=True, default='')
+    remitente_nombre = models.CharField(max_length=255, blank=True, default='')
+    asunto = models.CharField(max_length=500, blank=True, default='')
+    fecha_correo = models.DateTimeField(null=True, blank=True)
+
+    nombre_archivo = models.CharField(max_length=255)
+    archivo_xml = models.FileField(upload_to='xml_bandeja/%Y/%m/')
+
+    cfdi_uuid = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    emisor_rfc = models.CharField(max_length=20, blank=True, default='')
+    emisor_nombre = models.CharField(max_length=255, blank=True, default='')
+    numero_factura = models.CharField(max_length=100, blank=True, default='')
+    fecha_emision = models.DateField(null=True, blank=True)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0, null=True, blank=True)
+    total = models.DecimalField(max_digits=12, decimal_places=2, default=0, null=True, blank=True)
+    total_items = models.PositiveIntegerField(default=0)
+
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADO_CHOICES,
+        default='pendiente',
+        db_index=True,
+    )
+    error_detalle = models.TextField(blank=True, default='')
+
+    importado_por = models.ForeignKey(
+        'usuarios.Usuario',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='facturas_xml_importadas',
+    )
+    importado_at = models.DateTimeField(null=True, blank=True)
+    proveedor_vinculado = models.ForeignKey(
+        Proveedor,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='facturas_xml_bandeja',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Factura XML en Bandeja'
+        verbose_name_plural = 'Facturas XML en Bandeja'
+        ordering = ['-fecha_correo', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['cuenta', 'external_message_id', 'attachment_key'],
+                name='unique_cuenta_msg_attachment_xml',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.numero_factura or self.nombre_archivo} ({self.estado})"
+

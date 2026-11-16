@@ -562,6 +562,7 @@ class RescateViewSet(viewsets.ModelViewSet):
             SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
         )
         import io, os
+        from xml.sax.saxutils import escape
 
         rescate = self.get_object()
         buf = io.BytesIO()
@@ -655,25 +656,26 @@ class RescateViewSet(viewsets.ModelViewSet):
         story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#df000a'), spaceAfter=2*mm))
 
         story.append(Paragraph("<b>COMPROBANTE DE AUXILIO VIAL</b>", subtitle_style))
-        story.append(Paragraph(f"<b>{rescate.folio}</b>", folio_style))
+        story.append(Paragraph(f"<b>{escape(str(rescate.folio or ''))}</b>", folio_style))
         fecha_str = rescate.fecha_solicitud.strftime('%d/%m/%Y %I:%M %p')
-        story.append(Paragraph(fecha_str, text_center))
+        story.append(Paragraph(escape(fecha_str), text_center))
         story.append(Spacer(1, 2*mm))
 
-        # Datos del cliente y despacho
+        # Datos del cliente y despacho (escapando todo texto dinámico para ReportLab XML)
         info_data = [
-            [Paragraph("<b>Cliente:</b>", item_desc), Paragraph(rescate.nombre_cliente or "Cliente General", item_desc)],
-            [Paragraph("<b>Teléfono:</b>", item_desc), Paragraph(rescate.telefono_cliente or "—", item_desc)],
-            [Paragraph("<b>Vehículo:</b>", item_desc), Paragraph(f"{rescate.vehiculo_marca_modelo or 'N/A'}", item_desc)],
+            [Paragraph("<b>Cliente:</b>", item_desc), Paragraph(escape(rescate.nombre_cliente or "Cliente General"), item_desc)],
+            [Paragraph("<b>Teléfono:</b>", item_desc), Paragraph(escape(rescate.telefono_cliente or "—"), item_desc)],
+            [Paragraph("<b>Vehículo:</b>", item_desc), Paragraph(escape(rescate.vehiculo_marca_modelo or 'N/A'), item_desc)],
         ]
         if rescate.medida_llanta:
-            info_data.append([Paragraph("<b>Medida:</b>", item_desc), Paragraph(f"<font color='#df000a'><b>{rescate.medida_llanta}</b></font>", item_desc)])
+            info_data.append([Paragraph("<b>Medida:</b>", item_desc), Paragraph(f"<font color='#df000a'><b>{escape(rescate.medida_llanta)}</b></font>", item_desc)])
         if rescate.unidad:
-            info_data.append([Paragraph("<b>Unidad:</b>", item_desc), Paragraph(f"{rescate.unidad.numero_economico} - {rescate.unidad.nombre}", item_desc)])
+            unidad_txt = f"{rescate.unidad.numero_economico} - {rescate.unidad.nombre}"
+            info_data.append([Paragraph("<b>Unidad:</b>", item_desc), Paragraph(escape(unidad_txt), item_desc)])
         if rescate.operador:
-            info_data.append([Paragraph("<b>Técnico:</b>", item_desc), Paragraph(rescate.operador.nombre_completo, item_desc)])
+            info_data.append([Paragraph("<b>Técnico:</b>", item_desc), Paragraph(escape(rescate.operador.nombre_completo or ''), item_desc)])
         if rescate.ubicacion_texto:
-            info_data.append([Paragraph("<b>Ubicación:</b>", item_desc), Paragraph(rescate.ubicacion_texto, item_desc)])
+            info_data.append([Paragraph("<b>Ubicación:</b>", item_desc), Paragraph(escape(rescate.ubicacion_texto), item_desc)])
 
         t_info = Table(info_data, colWidths=[20*mm, 52*mm])
         t_info.setStyle(TableStyle([
@@ -693,7 +695,7 @@ class RescateViewSet(viewsets.ModelViewSet):
         ]
         for d in rescate.detalles.all():
             items_data.append([
-                Paragraph(f"{d.cantidad}x {d.descripcion}", item_desc),
+                Paragraph(f"{d.cantidad}x {escape(d.descripcion or '')}", item_desc),
                 Paragraph(f"${float(d.subtotal):,.2f}", item_num)
             ])
 
@@ -723,9 +725,10 @@ class RescateViewSet(viewsets.ModelViewSet):
             Paragraph("<b>TOTAL PAGADO:</b>", ParagraphStyle('TotB', parent=item_desc, fontSize=8, fontName='Helvetica-Bold')),
             Paragraph(f"<b>${float(rescate.total):,.2f} MXN</b>", ParagraphStyle('TotN', parent=item_num, fontSize=8, fontName='Helvetica-Bold', textColor=colors.HexColor('#df000a')))
         ])
+        forma_pago_txt = f"{rescate.get_metodo_pago_display().upper()}{f' ({rescate.tipo_tarjeta.upper()})' if rescate.tipo_tarjeta else ''}"
         tot_data.append([
             Paragraph("Forma de pago:", item_desc),
-            Paragraph(f"{rescate.get_metodo_pago_display().upper()}{f' ({rescate.tipo_tarjeta.upper()})' if rescate.tipo_tarjeta else ''}", item_num)
+            Paragraph(escape(forma_pago_txt), item_num)
         ])
 
         t_tot = Table(tot_data, colWidths=[36*mm, 36*mm])
@@ -737,6 +740,31 @@ class RescateViewSet(viewsets.ModelViewSet):
             ('RIGHTPADDING', (0,0), (-1,-1), 0),
         ]))
         story.append(t_tot)
+
+        if rescate.notas and rescate.notas.strip():
+            notas_html = escape(rescate.notas.strip()).replace('\n', '<br/>')
+            notas_style = ParagraphStyle(
+                'TicketNotas',
+                parent=item_desc,
+                fontSize=7,
+                leading=8.5,
+                textColor=colors.HexColor('#111827'),
+            )
+            notas_box = Table(
+                [[Paragraph(f"<b>Notas / Observaciones:</b><br/>{notas_html}", notas_style)]],
+                colWidths=[72 * mm],
+            )
+            notas_box.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+                ('TOPPADDING', (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ]))
+            story.append(Spacer(1, 2*mm))
+            story.append(notas_box)
+
         story.append(Spacer(1, 3*mm))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#df000a'), spaceAfter=2*mm))
 

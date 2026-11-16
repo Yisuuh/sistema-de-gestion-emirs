@@ -917,6 +917,7 @@ function FormularioNuevoRescate({ unidades = [], serviciosCatalogo = [], emplead
   const [longitud, setLongitud] = useState(null)
   const [gpsLoading, setGpsLoading] = useState(false)
   const [serviciosSeleccionados, setServiciosSeleccionados] = useState([])
+  const [notas, setNotas] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Al cambiar unidad, sugerir su chofer habitual si lo tiene
@@ -981,6 +982,7 @@ function FormularioNuevoRescate({ unidades = [], serviciosCatalogo = [], emplead
         medida_llanta: medidaLlanta.trim(),
         ubicacion_texto: ubicacionTexto.trim(),
         coordenadas_gps: latitud && longitud ? `${latitud},${longitud}` : '',
+        notas: notas.trim(),
         estado: 'solicitado',
         subtotal: totalServicios,
         total: totalServicios,
@@ -1182,6 +1184,20 @@ function FormularioNuevoRescate({ unidades = [], serviciosCatalogo = [], emplead
               )
             })}
           </div>
+        </div>
+
+        {/* Notas / Observaciones opcionales */}
+        <div>
+          <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+            <i className="ri-sticky-note-line text-gray-500"></i> Notas / Observaciones (Opcional)
+          </label>
+          <textarea
+            rows={2}
+            placeholder="Instrucciones especiales, birlo de seguridad, detalle visible en el ticket..."
+            value={notas}
+            onChange={e => setNotas(e.target.value)}
+            className="w-full px-3.5 py-2 rounded-xl border border-gray-300 text-sm focus:border-[#df000a]"
+          />
         </div>
 
         {/* Botones de acción del formulario */}

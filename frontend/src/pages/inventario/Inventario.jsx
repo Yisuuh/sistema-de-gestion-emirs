@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MagnifyingGlassIcon,
@@ -8,7 +9,7 @@ import {
   ArrowDownTrayIcon,
   ArrowUpTrayIcon,
   BuildingStorefrontIcon,
-  DocumentTextIcon,
+  EnvelopeIcon,
   ArrowPathIcon,
   TableCellsIcon,
   ChartBarIcon,
@@ -18,6 +19,8 @@ import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib
 import ModalProducto from './ModalProducto';
 import ModalProveedor from './ModalProveedor';
 import TabCatalogos from './TabCatalogos';
+import VistaPreviaCFDI from './VistaPreviaCFDI';
+import TabBandejaXml from './TabBandejaXml';
 
 const tok = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 const fmt = (n, d = 2) => Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -563,31 +566,69 @@ function TabEntradas({ proveedores, productos }) {
   const [msg, setMsg]                               = useState(null);
   const [filtroRapido, setFiltroRapido]             = useState('todas'); // 'todas' | 'disponible' | 'consumidas' | 'remisiones'
   const [filtros, setFiltros]                       = useState({ fecha_inicio: '', fecha_fin: '', proveedor: '', estado: '' });
+  const [busqueda, setBusqueda]                     = useState('');
+  const [debouncedBusqueda, setDebouncedBusqueda]   = useState('');
+  const [page, setPage]                             = useState(1);
   const [form, setForm] = useState({
     producto: '', proveedor: '', cantidad: 1, precio_compra: '',
+    precio_incluye_iva: false,
     fecha_compra: new Date().toISOString().split('T')[0],
     numero_factura: '', factura_pendiente: false, folio_remision: '',
     estado: 'disponible', notas: '',
   });
 
-  const { data: entradas = [], isLoading: loading } = useQuery({
-    queryKey: ['inventario-entradas', filtros],
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedBusqueda(busqueda.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [busqueda]);
+
+  const actualizarFiltro = (campo, valor) => {
+    setFiltros(f => ({ ...f, [campo]: valor }));
+    setPage(1);
+  };
+
+  const {
+    data: entradasData,
+    isLoading: loading,
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: ['inventario-entradas', filtros, debouncedBusqueda, page],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filtros.fecha_inicio) params.set('fecha_inicio', filtros.fecha_inicio);
       if (filtros.fecha_fin)    params.set('fecha_fin',    filtros.fecha_fin);
       if (filtros.proveedor)    params.set('proveedor',    filtros.proveedor);
       if (filtros.estado)       params.set('estado',       filtros.estado);
+      if (debouncedBusqueda)    params.set('search',       debouncedBusqueda);
+      params.set('page', String(page));
       const r = await fetch(`/api/inventario/entradas/?${params}`, { headers: tok() });
       const d = await r.json();
-      return Array.isArray(d) ? d : (d.results ?? []);
+      if (Array.isArray(d)) {
+        return { results: d, count: d.length, next: null, previous: null };
+      }
+      return {
+        results: d.results ?? [],
+        count: d.count ?? (d.results?.length ?? 0),
+        next: d.next ?? null,
+        previous: d.previous ?? null,
+      };
     },
   });
+
+  const entradas = useMemo(() => entradasData?.results ?? [], [entradasData]);
+  const totalCount = entradasData?.count ?? entradas.length;
+  const hasNext = Boolean(entradasData?.next);
+  const hasPrev = Boolean(entradasData?.previous);
 
   const guardarMut = useMutation({
     mutationFn: async () => {
       const payload = {
         ...form,
+        precio_incluye_iva: Boolean(form.precio_incluye_iva),
         factura_pendiente: Boolean(form.factura_pendiente),
         folio_remision: form.folio_remision.trim(),
         numero_factura: form.factura_pendiente ? (form.numero_factura?.trim() || '') : form.numero_factura.trim(),
@@ -604,11 +645,14 @@ function TabEntradas({ proveedores, productos }) {
       setMsg({ tipo: 'ok', txt: 'Entrada registrada correctamente.' });
       setModal(false);
       setForm({ producto: '', proveedor: '', cantidad: 1, precio_compra: '',
+        precio_incluye_iva: false,
         fecha_compra: new Date().toISOString().split('T')[0],
         numero_factura: '', factura_pendiente: false, folio_remision: '',
         estado: 'disponible', notas: '' });
       queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] });
       queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] });
+      queryClient.invalidateQueries({ queryKey: ['inventario-productos'] });
+      queryClient.invalidateQueries({ queryKey: ['pos-productos'] });
       setTimeout(() => setMsg(null), 4000);
     },
     onError: (e) => { setMsg({ tipo: 'err', txt: e.message }); setTimeout(() => setMsg(null), 4000); },
@@ -715,33 +759,64 @@ function TabEntradas({ proveedores, productos }) {
         })}
       </div>
 
-      {/* Filtros */}
-      <div className="flex flex-wrap gap-2 mb-3">
-        <input type="date" value={filtros.fecha_inicio} onChange={e => setFiltros(f => ({...f, fecha_inicio: e.target.value}))}
+      {/* Filtros y buscador por factura */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="relative flex-1 min-w-[240px]">
+          <MagnifyingGlassIcon className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={busqueda}
+            onChange={e => setBusqueda(e.target.value)}
+            placeholder="Buscar por no. factura, remisión, código, medida o proveedor…"
+            className="w-full border border-gray-300 rounded-lg pl-9 pr-8 py-2 text-sm focus:ring-2 focus:ring-[#df000a]"
+          />
+          {busqueda && (
+            <button
+              type="button"
+              onClick={() => setBusqueda('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 cursor-pointer"
+              title="Limpiar búsqueda"
+            >
+              <XCircleIcon className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <input type="date" value={filtros.fecha_inicio} onChange={e => actualizarFiltro('fecha_inicio', e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Desde" />
-        <input type="date" value={filtros.fecha_fin} onChange={e => setFiltros(f => ({...f, fecha_fin: e.target.value}))}
+        <input type="date" value={filtros.fecha_fin} onChange={e => actualizarFiltro('fecha_fin', e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Hasta" />
-        <select value={filtros.proveedor} onChange={e => setFiltros(f => ({...f, proveedor: e.target.value}))}
+        <select value={filtros.proveedor} onChange={e => actualizarFiltro('proveedor', e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="">Todos los proveedores</option>
           {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
         </select>
-        <select value={filtros.estado} onChange={e => setFiltros(f => ({...f, estado: e.target.value}))}
+        <select value={filtros.estado} onChange={e => actualizarFiltro('estado', e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="">Todos los estados</option>
           {Object.entries(ESTADO_LABELS).map(([v, l]) => <option key={v} value={v}>{l.label}</option>)}
         </select>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
+          title="Actualizar historial de entradas"
+        >
+          <ArrowPathIcon className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">Actualizar</span>
+        </button>
         <button onClick={() => setModal(true)}
-          className="w-full sm:w-auto ml-auto flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 cursor-pointer">
+          className="w-full sm:w-auto ml-auto flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 cursor-pointer">
           <i className="ri-add-line text-base"></i> Nueva entrada
         </button>
       </div>
 
       {/* Totales */}
-      <div className="flex gap-4 mb-3 text-sm">
-        <span className="text-gray-500">Registros: <strong>{entradasFiltradas.length}</strong></span>
+      <div className="flex flex-wrap gap-4 mb-3 text-sm">
+        <span className="text-gray-500">Total registros: <strong>{totalCount}</strong></span>
+        <span className="text-gray-500">En página: <strong>{entradasFiltradas.length}</strong></span>
         <span className="text-gray-500">Piezas: <strong className="text-green-700">{totalPiezas}</strong></span>
-        <span className="text-gray-500">Costo total: <strong className="text-indigo-700">${fmt(totalCosto)}</strong></span>
+        <span className="text-gray-500">Costo página: <strong className="text-indigo-700">${fmt(totalCosto)}</strong></span>
       </div>
 
       {loading ? <Spinner /> : (
@@ -809,8 +884,28 @@ function TabEntradas({ proveedores, productos }) {
               ))}
             </tbody>
           </table>
-          <div className="px-4 py-2 text-xs text-gray-500 border-t">
-            Mostrando {entradasFiltradas.length} de {entradas.length} entradas
+          <div className="px-4 py-2.5 text-xs text-gray-500 border-t flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Mostrando {entradasFiltradas.length} de {totalCount} entrada(s) • Página {page}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={!hasPrev && page <= 1}
+                className="px-3 py-1 rounded border border-gray-300 text-xs font-semibold hover:bg-gray-50 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              >
+                Anterior
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage(p => p + 1)}
+                disabled={!hasNext}
+                className="px-3 py-1 rounded border border-gray-300 text-xs font-semibold hover:bg-gray-50 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              >
+                Siguiente
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -863,6 +958,17 @@ function TabEntradas({ proveedores, productos }) {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Precio compra *</label>
                   <input type="number" step="0.01" min="0" value={form.precio_compra} onChange={e => setForm(f => ({...f, precio_compra: e.target.value}))} className={inputCls} required />
+                </div>
+                <div className="col-span-2">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.precio_incluye_iva)}
+                      onChange={e => setForm(f => ({ ...f, precio_incluye_iva: e.target.checked }))}
+                      className="w-4 h-4 text-[#df000a] rounded border-gray-300 focus:ring-[#df000a]"
+                    />
+                    <span>El precio ingresado ya incluye IVA</span>
+                  </label>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Fecha compra *</label>
@@ -1194,14 +1300,39 @@ function TabKardex({ productoInicial }) {
 }
 
 // ─── Vista XML ────────────────────────────────────────────────────────────────
-function TabXml({ onImportado }) {
-  const [xmlFile, setXmlFile]     = useState(null);
+function TabXml({
+  initialSubTab = 'bandeja',
+  oauthNotice = null,
+  onClearOauthNotice,
+  onImportado,
+}) {
+  const queryClient = useQueryClient();
+  const [subTab, setSubTab]         = useState(initialSubTab);
+  const [xmlFile, setXmlFile]       = useState(null);
   const [xmlPreview, setXmlPreview] = useState(null);
   const [xmlLoading, setXmlLoading] = useState(false);
-  const [xmlError, setXmlError]   = useState(null);
-  const [xmlExito, setXmlExito]   = useState(null);
+  const [xmlError, setXmlError]     = useState(null);
+  const [xmlExito, setXmlExito]     = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    setSubTab(initialSubTab);
+  }, [initialSubTab]);
+
+  const { data: pendientesCount = 0 } = useQuery({
+    queryKey: ['xml-bandeja', 'pendientes-count'],
+    queryFn: async () => {
+      const r = await fetch('/api/inventario/xml-bandeja/?estado=pendiente&page=1', {
+        headers: tok(),
+      });
+      if (!r.ok) return 0;
+      const d = await r.json();
+      if (typeof d?.count === 'number') return d.count;
+      return Array.isArray(d) ? d.length : (d?.results?.length ?? 0);
+    },
+    staleTime: 30 * 1000,
+  });
 
   const handleXmlFile = async (file) => {
     if (!file?.name.endsWith('.xml')) { setXmlError('Solo se aceptan archivos .xml'); return; }
@@ -1226,7 +1357,22 @@ function TabXml({ onImportado }) {
       const res = d.resultado;
       setXmlExito(`Factura ${res.numero_factura} importada — ${res.total_items} línea(s) de ${res.proveedor}`);
       setXmlPreview(null); setXmlFile(null);
-      onImportado?.();
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['inventario-consolidado'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-entradas'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-productos'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-kardex'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-proveedores'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-proveedores-catalogo'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-marcas'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-marcas-catalogo'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-productos'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventario-llantas-rescate'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard-resumen'] }),
+      ]);
+
+      onImportado?.(res);
       setTimeout(() => setXmlExito(null), 6000);
     } catch { setXmlError('Error de conexión'); } finally { setXmlLoading(false); }
   };
@@ -1234,74 +1380,77 @@ function TabXml({ onImportado }) {
   const cancelar = () => { setXmlFile(null); setXmlPreview(null); setXmlError(null); setXmlExito(null); };
 
   return (
-    <div className="max-w-4xl">
-      {xmlError && <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2"><XCircleIcon className="h-5 w-5" />{xmlError}</div>}
-      {xmlExito && <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center gap-2"><CheckCircleIcon className="h-5 w-5" />{xmlExito}</div>}
-
-      {!xmlPreview && (
-        <div
-          className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${isDragOver ? 'border-purple-500 bg-purple-50' : 'border-gray-300 bg-white hover:border-purple-400 hover:bg-purple-50'}`}
-          onClick={() => fileInputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
-          onDragLeave={() => setIsDragOver(false)}
-          onDrop={e => { e.preventDefault(); setIsDragOver(false); handleXmlFile(e.dataTransfer.files[0]); }}
+    <div className="max-w-6xl space-y-5">
+      {/* Sub-pestañas XML */}
+      <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 gap-1">
+        <button
+          type="button"
+          onClick={() => setSubTab('bandeja')}
+          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+            subTab === 'bandeja'
+              ? 'bg-white text-gray-900 shadow-xs'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
         >
-          <ArrowUpTrayIcon className="h-12 w-12 text-purple-400 mx-auto mb-3" />
-          <p className="text-lg font-medium text-gray-700">{xmlLoading ? 'Procesando…' : 'Arrastra el XML aquí o haz clic para seleccionar'}</p>
-          <p className="text-sm text-gray-500 mt-1">Facturas CFDI 4.0 del SAT (.xml)</p>
-          <input ref={fileInputRef} type="file" accept=".xml" className="hidden"
-            onChange={e => { handleXmlFile(e.target.files[0]); e.target.value = ''; }} />
-        </div>
+          <EnvelopeIcon className="h-4 w-4" />
+          <span>Bandeja Gmail</span>
+          {pendientesCount > 0 && (
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#df000a] text-white">
+              {pendientesCount}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('manual')}
+          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+            subTab === 'manual'
+              ? 'bg-white text-gray-900 shadow-xs'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          <ArrowUpTrayIcon className="h-4 w-4" />
+          <span>Subir XML manual</span>
+        </button>
+      </div>
+
+      {subTab === 'bandeja' && (
+        <TabBandejaXml
+          oauthNotice={oauthNotice}
+          onClearOauthNotice={onClearOauthNotice}
+          onImportado={onImportado}
+        />
       )}
 
-      {xmlPreview && (
-        <div className="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 bg-purple-50 border-b border-purple-100">
-            <h3 className="text-lg font-semibold text-purple-900 flex items-center gap-2"><DocumentTextIcon className="h-6 w-6" />Vista previa de la factura</h3>
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 text-sm">
-              <div className="flex gap-2"><span className="text-gray-500">Proveedor:</span><strong className="flex items-center gap-1"><BuildingStorefrontIcon className="h-4 w-4 text-purple-500" />{xmlPreview.proveedor?.nombre}</strong></div>
-              <div className="flex gap-2"><span className="text-gray-500">RFC:</span><span className="font-mono">{xmlPreview.proveedor?.rfc}</span></div>
-              <div className="flex gap-2"><span className="text-gray-500">Factura:</span><span className="font-mono">{xmlPreview.numero_factura}</span></div>
-              <div className="flex gap-2"><span className="text-gray-500">Fecha:</span><span>{xmlPreview.fecha_compra}</span></div>
-              <div className="flex gap-2"><span className="text-gray-500">Subtotal:</span><span>${fmt(xmlPreview.subtotal)}</span></div>
-              <div className="flex gap-2"><span className="text-gray-500">Total:</span><strong>${fmt(xmlPreview.total)}</strong></div>
+      {subTab === 'manual' && (
+        <div>
+          {xmlError && <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2"><XCircleIcon className="h-5 w-5" />{xmlError}</div>}
+          {xmlExito && <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center gap-2"><CheckCircleIcon className="h-5 w-5" />{xmlExito}</div>}
+
+          {!xmlPreview && (
+            <div
+              className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${isDragOver ? 'border-purple-500 bg-purple-50' : 'border-gray-300 bg-white hover:border-purple-400 hover:bg-purple-50'}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={e => { e.preventDefault(); setIsDragOver(false); handleXmlFile(e.dataTransfer.files[0]); }}
+            >
+              <ArrowUpTrayIcon className="h-12 w-12 text-purple-400 mx-auto mb-3" />
+              <p className="text-lg font-medium text-gray-700">{xmlLoading ? 'Procesando…' : 'Arrastra el XML aquí o haz clic para seleccionar'}</p>
+              <p className="text-sm text-gray-500 mt-1">Facturas CFDI 4.0 del SAT (.xml)</p>
+              <input ref={fileInputRef} type="file" accept=".xml" className="hidden"
+                onChange={e => { handleXmlFile(e.target.files[0]); e.target.value = ''; }} />
             </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50"><tr>
-                {['Código','Descripción','Medida','Marca','Modelo','IC/IV','Cant.','P. Compra','P. Venta Sugerido'].map(h =>
-                  <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{h}</th>)}
-              </tr></thead>
-              <tbody className="divide-y divide-gray-100">
-                {xmlPreview.items?.map((item, i) => (
-                  <tr key={i} className="hover:bg-purple-50">
-                    <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">{item.codigo}</td>
-                    <td className="px-4 py-3 text-gray-700 max-w-xs text-xs">{item.descripcion}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {item.medida ? <span className="px-2 py-0.5 bg-red-100 text-[#a80008] rounded font-mono text-xs">{item.medida}</span> : <span className="text-red-500 text-xs">No detectada</span>}
-                    </td>
-                    <td className="px-4 py-3 font-medium whitespace-nowrap">{item.marca_nombre || '—'}</td>
-                    <td className="px-4 py-3 text-gray-600">{item.modelo || '—'}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-center">{item.indice_carga}{item.indice_velocidad}</td>
-                    <td className="px-4 py-3 text-center font-bold">{item.cantidad}</td>
-                    <td className="px-4 py-3 text-right font-mono">${item.precio_compra?.toLocaleString('es-MX', { minimumFractionDigits: 4 })}</td>
-                    <td className="px-4 py-3 text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">${fmt(item.precio_venta_sugerido)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="px-6 py-3 bg-yellow-50 border-t border-yellow-100 text-xs text-yellow-800">
-            Los productos nuevos y actualizados calcularán su precio de venta sugerido con el Tabulador de Utilidad según su Rin (IVA 16% + financiamiento bancario 1.079 + margen Rin redondeado a múltiplo de 5).
-          </div>
-          <div className="px-6 py-4 border-t border-gray-200 flex gap-3 justify-end">
-            <button onClick={cancelar} disabled={xmlLoading} className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancelar</button>
-            <button onClick={confirmar} disabled={xmlLoading}
-              className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2">
-              {xmlLoading ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Importando…</> : <><ArrowDownTrayIcon className="h-4 w-4" />Confirmar e Importar</>}
-            </button>
-          </div>
+          )}
+
+          {xmlPreview && (
+            <VistaPreviaCFDI
+              preview={xmlPreview}
+              onCancelar={cancelar}
+              onConfirmar={confirmar}
+              loading={xmlLoading}
+            />
+          )}
         </div>
       )}
     </div>
@@ -1309,9 +1458,67 @@ function TabXml({ onImportado }) {
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
+const VALID_TABS = new Set(['consolidado', 'entradas', 'salidas', 'kardex', 'xml', 'catalogos']);
+
 export default function Inventario() {
-  const [tab, setTab]               = useState('consolidado');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get('tab');
+    if (searchParams.get('gmail')) return 'xml';
+    return t && VALID_TABS.has(t) ? t : 'consolidado';
+  });
+  const [xmlSubTab, setXmlSubTab] = useState(() =>
+    searchParams.get('subtab') === 'manual' && !searchParams.get('gmail') ? 'manual' : 'bandeja'
+  );
+  const [oauthNotice, setOauthNotice] = useState(null);
   const [kardexProducto, setKardexProducto] = useState(null);
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const subtabParam = searchParams.get('subtab');
+    const gmailParam = searchParams.get('gmail');
+
+    if (!tabParam && !subtabParam && !gmailParam) return;
+
+    if (tabParam && VALID_TABS.has(tabParam)) {
+      setTab(tabParam);
+    } else if (gmailParam) {
+      setTab('xml');
+    }
+
+    if (gmailParam || subtabParam === 'bandeja') {
+      setXmlSubTab('bandeja');
+    } else if (subtabParam === 'manual') {
+      setXmlSubTab('manual');
+    }
+
+    if (gmailParam === 'connected') {
+      setOauthNotice({
+        tipo: 'ok',
+        txt: 'Cuenta de Gmail conectada correctamente. Ya puedes sincronizar tus facturas XML.',
+      });
+    } else if (gmailParam === 'error') {
+      const reason =
+        searchParams.get('reason') ||
+        searchParams.get('error') ||
+        searchParams.get('message');
+      setOauthNotice({
+        tipo: 'err',
+        txt: reason
+          ? `Error al conectar Gmail: ${reason}`
+          : 'No se pudo completar la autorización OAuth2 con Gmail.',
+      });
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('gmail');
+    next.delete('reason');
+    next.delete('error');
+    next.delete('message');
+    next.delete('subtab');
+    next.delete('tab');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const { data: proveedores = [] } = useQuery({
     queryKey: ['inventario-proveedores'],
@@ -1390,7 +1597,14 @@ export default function Inventario() {
       {tab === 'entradas'    && <TabEntradas proveedores={proveedores} productos={productosData} />}
       {tab === 'salidas'     && <TabSalidas />}
       {tab === 'kardex'      && <TabKardex productoInicial={kardexProducto} />}
-      {tab === 'xml'         && <TabXml onImportado={() => {}} />}
+      {tab === 'xml'         && (
+        <TabXml
+          initialSubTab={xmlSubTab}
+          oauthNotice={oauthNotice}
+          onClearOauthNotice={() => setOauthNotice(null)}
+          onImportado={() => {}}
+        />
+      )}
       {tab === 'catalogos'   && <TabCatalogos />}
     </div>
   );

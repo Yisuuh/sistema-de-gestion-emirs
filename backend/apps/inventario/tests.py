@@ -1299,12 +1299,1026 @@ class InventarioModuleTestCase(TestCase):
         res_admin_delete = self.client.delete(f'/api/inventario/proveedores/{prov_test.id}/')
         self.assertEqual(res_admin_delete.status_code, status.HTTP_204_NO_CONTENT)
 
+    def test_calcular_precio_venta_sugerido_sin_doble_iva(self):
+        """
+        Verifica que _calcular_precio_venta_sugerido con incluye_iva=True no duplique el 16%.
+        """
+        from apps.inventario.views import _calcular_precio_venta_sugerido
+
+        precio_sin_iva = Decimal('1099.00')
+        precio_con_iva = Decimal('1274.84')
+        self.assertEqual(
+            _calcular_precio_venta_sugerido(precio_sin_iva, '205/55R16', incluye_iva=False),
+            Decimal('1865.00'),
+        )
+        self.assertEqual(
+            _calcular_precio_venta_sugerido(precio_con_iva, '205/55R16', incluye_iva=True),
+            Decimal('1865.00'),
+        )
+
+    def test_parsear_cfdi_iva_con_y_sin_nodo_traslado(self):
+        """
+        Verifica extracción de IVA en _parsear_cfdi:
+        - Con nodo Traslado (TasaOCuota=0.160000 y Exento/0.00)
+        - Sin nodo Impuestos con Total > SubTotal (fallback 0.16)
+        - Sin nodo Impuestos con Total <= SubTotal (fallback 0.00)
+        """
+        from apps.inventario.views import _parsear_cfdi
+
+        xml_con_traslado = b"""<?xml version="1.0" encoding="utf-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
+            Serie="F" Folio="200" Fecha="2026-11-16T10:00:00"
+            SubTotal="2099.00" Total="2274.84">
+            <cfdi:Emisor Rfc="EMISOR010101AAA" Nombre="PROVEEDOR TRASLADO" />
+            <cfdi:Conceptos>
+                <cfdi:Concepto NoIdentificacion="T-16" Cantidad="1"
+                    Descripcion="LLANTA 205/55R16 91V MICHELIN PRIMACY"
+                    ValorUnitario="1099.00">
+                    <cfdi:Impuestos>
+                        <cfdi:Traslados>
+                            <cfdi:Traslado Base="1099.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="175.84" />
+                        </cfdi:Traslados>
+                    </cfdi:Impuestos>
+                </cfdi:Concepto>
+                <cfdi:Concepto NoIdentificacion="T-EX" Cantidad="1"
+                    Descripcion="LLANTA 195/65R15 91H KUMHO ECOWING"
+                    ValorUnitario="1000.00">
+                    <cfdi:Impuestos>
+                        <cfdi:Traslados>
+                            <cfdi:Traslado Base="1000.00" Impuesto="002" TipoFactor="Exento" />
+                        </cfdi:Traslados>
+                    </cfdi:Impuestos>
+                </cfdi:Concepto>
+            </cfdi:Conceptos>
+        </cfdi:Comprobante>"""
+
+        datos = _parsear_cfdi(xml_con_traslado)
+        item_16 = datos['items'][0]
+        self.assertEqual(item_16['precio_compra_sin_iva'], 1099.0)
+        self.assertEqual(item_16['precio_compra_con_iva'], 1274.84)
+        self.assertEqual(item_16['tasa_iva'], 0.16)
+        self.assertEqual(item_16['precio_compra'], 1274.84)
+        self.assertEqual(item_16['precio_venta_sugerido'], 1865.0)
+
+        item_exento = datos['items'][1]
+        self.assertEqual(item_exento['precio_compra_sin_iva'], 1000.0)
+        self.assertEqual(item_exento['precio_compra_con_iva'], 1000.0)
+        self.assertEqual(item_exento['tasa_iva'], 0.0)
+        self.assertEqual(item_exento['precio_compra'], 1000.0)
+
+        xml_sin_iva = b"""<?xml version="1.0" encoding="utf-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
+            Serie="F" Folio="201" Fecha="2026-11-16T10:00:00"
+            SubTotal="1000.00" Total="1000.00">
+            <cfdi:Emisor Rfc="EMISOR010101AAA" Nombre="PROVEEDOR TASA CERO" />
+            <cfdi:Conceptos>
+                <cfdi:Concepto NoIdentificacion="T-00" Cantidad="1"
+                    Descripcion="LLANTA 195/65R15 91H NEXEN"
+                    ValorUnitario="1000.00" />
+            </cfdi:Conceptos>
+        </cfdi:Comprobante>"""
+
+        datos_0 = _parsear_cfdi(xml_sin_iva)
+        self.assertEqual(datos_0['items'][0]['tasa_iva'], 0.0)
+        self.assertEqual(datos_0['items'][0]['precio_compra_con_iva'], 1000.0)
+
+    def test_importar_xml_guarda_entrada_con_iva_y_mantiene_compatibilidad_legacy(self):
+        """
+        Verifica que al importar XML vía endpoint se guarde EntradaInventario.precio_compra con IVA
+        y precio_incluye_iva=True sin duplicar IVA en precio_venta; y que llamadas legacy
+        sin precio_compra_con_iva mantengan precio_incluye_iva=False.
+        """
+        from io import BytesIO
+        from apps.inventario.views import ImportarXMLView
+
+        xml_bytes = b"""<?xml version="1.0" encoding="utf-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
+            Serie="IVA" Folio="900" Fecha="2026-11-16T10:00:00"
+            SubTotal="2198.00" Total="2549.68">
+            <cfdi:Emisor Rfc="PIVA010101AAA" Nombre="PROVEEDOR IVA XML" />
+            <cfdi:Conceptos>
+                <cfdi:Concepto NoIdentificacion="XML-IVA-01" Cantidad="2"
+                    Descripcion="LLANTA 205/55R16 91V MICHELIN PRIMACY 4"
+                    ValorUnitario="1099.00">
+                    <cfdi:Impuestos>
+                        <cfdi:Traslados>
+                            <cfdi:Traslado Base="2198.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="351.68" />
+                        </cfdi:Traslados>
+                    </cfdi:Impuestos>
+                </cfdi:Concepto>
+            </cfdi:Conceptos>
+        </cfdi:Comprobante>"""
+
+        file_obj = BytesIO(xml_bytes)
+        file_obj.name = 'factura_iva.xml'
+        res = self.client.post('/api/inventario/importar-xml/', {'xml': file_obj, 'accion': 'guardar'}, format='multipart')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+
+        prod = Producto.objects.get(codigo='XML-IVA-01')
+        self.assertEqual(prod.precio_venta, Decimal('1865.00'))
+
+        entrada = EntradaInventario.objects.get(numero_factura='IVA900', producto=prod)
+        self.assertEqual(entrada.precio_compra, Decimal('1274.84'))
+        self.assertTrue(entrada.precio_incluye_iva)
+
+        # Compatibilidad legacy sin precio_compra_con_iva
+        view = ImportarXMLView()
+        view._guardar({
+            'numero_factura': 'LEG-001',
+            'fecha_compra': '2026-11-16',
+            'proveedor': {'nombre': 'PROVEEDOR LEGACY', 'rfc': 'PLE010101AAA'},
+            'items': [{
+                'codigo': 'LEG-01',
+                'descripcion': 'LLANTA 205/55R16 91V LEGACY',
+                'cantidad': 1,
+                'precio_compra': 1099.00,
+                'medida': '205/55R16',
+                'marca_nombre': 'LEGACY',
+                'modelo': 'L1',
+            }],
+        }, self.admin_user)
+        entrada_legacy = EntradaInventario.objects.get(numero_factura='LEG-001')
+        self.assertEqual(entrada_legacy.precio_compra, Decimal('1099.00'))
+        self.assertFalse(entrada_legacy.precio_incluye_iva)
+        self.assertEqual(entrada_legacy.producto.precio_venta, Decimal('1865.00'))
+
+    def test_entradas_busqueda_paginacion_y_filtro_numero_factura(self):
+        """
+        Verifica paginación, búsqueda por numero_factura/proveedor y filtro ?numero_factura= en EntradaInventarioViewSet.
+        """
+        marca = Marca.objects.create(nombre='BridgestoneSearch')
+        prod = Producto.objects.create(
+            codigo='BS-SEARCH-01',
+            medida='205/55R16',
+            marca=marca,
+            modelo='Turanza',
+            indice_carga=91,
+            indice_velocidad='V',
+            precio_venta=Decimal('2100.00'),
+        )
+        prov_a = Proveedor.objects.create(nombre='Distribuidora Norte SA')
+        prov_b = Proveedor.objects.create(nombre='Llantera Sur SA')
+
+        e1 = EntradaInventario.objects.create(
+            producto=prod, proveedor=prov_a, cantidad=4,
+            precio_compra=Decimal('1350.00'), precio_incluye_iva=True,
+            fecha_compra=timezone.localdate(), numero_factura='FAC-998811',
+        )
+        e2 = EntradaInventario.objects.create(
+            producto=prod, proveedor=prov_b, cantidad=2,
+            precio_compra=Decimal('1200.00'), precio_incluye_iva=False,
+            fecha_compra=timezone.localdate(), numero_factura='FAC-223344',
+        )
+
+        # Paginación por defecto
+        res_list = self.client.get('/api/inventario/entradas/')
+        self.assertEqual(res_list.status_code, status.HTTP_200_OK)
+        self.assertIn('results', res_list.data)
+        self.assertIn('count', res_list.data)
+
+        # Exposición de precio_incluye_iva
+        items_by_id = {item['id']: item for item in res_list.data['results']}
+        self.assertTrue(items_by_id[e1.id]['precio_incluye_iva'])
+        self.assertFalse(items_by_id[e2.id]['precio_incluye_iva'])
+
+        # Búsqueda por ?search=proveedor
+        res_prov = self.client.get('/api/inventario/entradas/?search=Norte')
+        self.assertEqual(res_prov.status_code, status.HTTP_200_OK)
+        ids_prov = [x['id'] for x in res_prov.data['results']]
+        self.assertIn(e1.id, ids_prov)
+        self.assertNotIn(e2.id, ids_prov)
+
+        # Búsqueda por ?search=numero_factura
+        res_fac_search = self.client.get('/api/inventario/entradas/?search=998811')
+        self.assertEqual(res_fac_search.status_code, status.HTTP_200_OK)
+        ids_fac = [x['id'] for x in res_fac_search.data['results']]
+        self.assertEqual(ids_fac, [e1.id])
+
+        # Filtro explícito ?numero_factura=
+        res_fac_param = self.client.get('/api/inventario/entradas/?numero_factura=223344')
+        self.assertEqual(res_fac_param.status_code, status.HTTP_200_OK)
+        ids_param = [x['id'] for x in res_fac_param.data['results']]
+        self.assertEqual(ids_param, [e2.id])
+
+    def test_producto_viewset_ultimo_precio_compra_y_creacion(self):
+        """
+        Verifica anotación de ultimo_precio_compra y ultimo_precio_incluye_iva en ProductoViewSet
+        y que la creación de producto vía POST no falle sin entradas previas.
+        """
+        from datetime import timedelta
+
+        marca = Marca.objects.create(nombre='DunlopSubquery')
+        prov = Proveedor.objects.create(nombre='Proveedor Subquery')
+        prod = Producto.objects.create(
+            codigo='DUN-SUB-01',
+            medida='215/60R16',
+            marca=marca,
+            modelo='Direzza',
+            indice_carga=95,
+            indice_velocidad='H',
+            precio_venta=Decimal('2300.00'),
+        )
+
+        # Sin entradas aún
+        res_sin = self.client.get(f'/api/inventario/productos/{prod.id}/')
+        self.assertEqual(res_sin.status_code, status.HTTP_200_OK)
+        self.assertIsNone(res_sin.data['ultimo_precio_compra'])
+        self.assertIsNone(res_sin.data['ultimo_precio_incluye_iva'])
+
+        # Entrada antigua
+        EntradaInventario.objects.create(
+            producto=prod, proveedor=prov, cantidad=2,
+            precio_compra=Decimal('1100.00'), precio_incluye_iva=False,
+            fecha_compra=timezone.localdate() - timedelta(days=10),
+            numero_factura='OLD-01',
+        )
+        # Entrada más reciente con IVA incluido
+        EntradaInventario.objects.create(
+            producto=prod, proveedor=prov, cantidad=4,
+            precio_compra=Decimal('1450.50'), precio_incluye_iva=True,
+            fecha_compra=timezone.localdate(),
+            numero_factura='NEW-01',
+        )
+
+        res_con = self.client.get(f'/api/inventario/productos/{prod.id}/')
+        self.assertEqual(res_con.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_con.data['ultimo_precio_compra'], 1450.5)
+        self.assertTrue(res_con.data['ultimo_precio_incluye_iva'])
+
+        # POST de producto nuevo no debe fallar por falta de anotación en instancia recién creada
+        res_post = self.client.post('/api/inventario/productos/', {
+            'codigo': 'DUN-NEW-02',
+            'medida': '205/55R16',
+            'marca': marca.id,
+            'modelo': 'SP Sport',
+            'indice_carga': 91,
+            'indice_velocidad': 'V',
+            'precio_venta': '1950.00',
+            'stock_minimo': 2,
+        }, format='json')
+        self.assertEqual(res_post.status_code, status.HTTP_201_CREATED, res_post.data)
+        self.assertIsNone(res_post.data['ultimo_precio_compra'])
+
+    def test_seguridad_serializers_inventario_rechazan_cantidades_y_precios_invalidos(self):
+        """SEC-I1: EntradaInventarioSerializer y ProductoSerializer rechazan valores <= 0."""
+        from apps.inventario.serializers import EntradaInventarioSerializer, ProductoSerializer
+
+        marca = Marca.objects.create(nombre='PirelliSec')
+        prod = Producto.objects.create(
+            codigo='PIR-SEC-01',
+            medida='205/55R16',
+            marca=marca,
+            modelo='Cinturato',
+            indice_carga=91,
+            indice_velocidad='V',
+            precio_venta=Decimal('2200.00'),
+        )
+
+        # ProductoSerializer: precio_venta <= 0
+        for precio_inv in ('0.00', '-150.00'):
+            s_prod = ProductoSerializer(data={
+                'codigo': 'PIR-INV-01',
+                'medida': '205/55R16',
+                'marca': marca.id,
+                'modelo': 'Cinturato',
+                'indice_carga': 91,
+                'indice_velocidad': 'V',
+                'precio_venta': precio_inv,
+            })
+            self.assertFalse(s_prod.is_valid())
+            self.assertIn('precio_venta', s_prod.errors)
+
+        # EntradaInventarioSerializer: cantidad <= 0
+        for cant_inv in (0, -2):
+            s_ent_cant = EntradaInventarioSerializer(data={
+                'producto': prod.id,
+                'proveedor': self.proveedor.id,
+                'cantidad': cant_inv,
+                'precio_compra': '1000.00',
+                'fecha_compra': str(timezone.localdate()),
+            })
+            self.assertFalse(s_ent_cant.is_valid())
+            self.assertIn('cantidad', s_ent_cant.errors)
+
+        # EntradaInventarioSerializer: precio_compra <= 0
+        for pc_inv in ('0.00', '-500.00'):
+            s_ent_pc = EntradaInventarioSerializer(data={
+                'producto': prod.id,
+                'proveedor': self.proveedor.id,
+                'cantidad': 4,
+                'precio_compra': pc_inv,
+                'fecha_compra': str(timezone.localdate()),
+            })
+            self.assertFalse(s_ent_pc.is_valid())
+            self.assertIn('precio_compra', s_ent_pc.errors)
+
+    def test_seguridad_importar_xml_xxe_tamano_y_tasas_negativas(self):
+        """SEC-I2: ImportarXMLView bloquea XXE, archivos > 5MB, TasaOCuota negativa y cantidad <= 0."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.inventario.views import ImportarXMLView
+
+        # 1. Payload XXE (DOCTYPE + ENTITY)
+        xxe_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Serie="A" Folio="1" Fecha="2026-10-30T10:00:00" SubTotal="1000" Total="1160">
+            <cfdi:Emisor Nombre="&xxe;" Rfc="AAA010101AAA"/>
+            <cfdi:Conceptos>
+                <cfdi:Concepto NoIdentificacion="XXE-01" Descripcion="205/55R16 91V TEST" Cantidad="1" ValorUnitario="1000.00"/>
+            </cfdi:Conceptos>
+        </cfdi:Comprobante>"""
+        res_xxe = self.client.post(
+            '/api/inventario/importar-xml/',
+            {'xml': SimpleUploadedFile('xxe.xml', xxe_xml, content_type='text/xml'), 'accion': 'preview'},
+            format='multipart',
+        )
+        self.assertEqual(res_xxe.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 2. Archivo XML > 5 MB
+        oversized_xml = SimpleUploadedFile(
+            'big.xml',
+            b'<cfdi:Comprobante/>' + (b' ' * (5 * 1024 * 1024 + 100)),
+            content_type='text/xml',
+        )
+        res_size = self.client.post(
+            '/api/inventario/importar-xml/',
+            {'xml': oversized_xml, 'accion': 'preview'},
+            format='multipart',
+        )
+        self.assertEqual(res_size.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('5 MB', res_size.data['error'])
+
+        # 3. TasaOCuota negativa
+        tasa_neg_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Serie="A" Folio="2" Fecha="2026-10-30T10:00:00" SubTotal="1000" Total="1000">
+            <cfdi:Emisor Nombre="PROVEEDOR TEST" Rfc="AAA010101AAA"/>
+            <cfdi:Conceptos>
+                <cfdi:Concepto NoIdentificacion="TNEG-01" Descripcion="205/55R16 91V TEST" Cantidad="1" ValorUnitario="1000.00">
+                    <cfdi:Impuestos>
+                        <cfdi:Traslados>
+                            <cfdi:Traslado Impuesto="002" TipoFactor="Tasa" TasaOCuota="-0.160000"/>
+                        </cfdi:Traslados>
+                    </cfdi:Impuestos>
+                </cfdi:Concepto>
+            </cfdi:Conceptos>
+        </cfdi:Comprobante>"""
+        res_tasa = self.client.post(
+            '/api/inventario/importar-xml/',
+            {'xml': SimpleUploadedFile('tasa_neg.xml', tasa_neg_xml, content_type='text/xml'), 'accion': 'preview'},
+            format='multipart',
+        )
+        self.assertEqual(res_tasa.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 4. Cantidad <= 0 en XML
+        cant_cero_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Serie="A" Folio="3" Fecha="2026-10-30T10:00:00" SubTotal="1000" Total="1160">
+            <cfdi:Emisor Nombre="PROVEEDOR TEST" Rfc="AAA010101AAA"/>
+            <cfdi:Conceptos>
+                <cfdi:Concepto NoIdentificacion="CANT-0" Descripcion="205/55R16 91V TEST" Cantidad="0" ValorUnitario="1000.00"/>
+            </cfdi:Conceptos>
+        </cfdi:Comprobante>"""
+        res_cant = self.client.post(
+            '/api/inventario/importar-xml/',
+            {'xml': SimpleUploadedFile('cant_cero.xml', cant_cero_xml, content_type='text/xml'), 'accion': 'preview'},
+            format='multipart',
+        )
+        self.assertEqual(res_cant.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 5. _guardar exige proveedor.nombre y item.codigo no vacíos
+        view = ImportarXMLView()
+        with self.assertRaises(ValueError):
+            view._guardar({
+                'numero_factura': 'FAC-EMPTY-PROV',
+                'fecha_compra': '2026-10-30',
+                'proveedor': {'nombre': '   ', 'rfc': 'AAA010101AAA'},
+                'items': [{'codigo': 'COD-1', 'descripcion': 'Test', 'cantidad': 1, 'precio_compra': 1000}],
+            }, self.admin_user)
+
+        with self.assertRaises(ValueError):
+            view._guardar({
+                'numero_factura': 'FAC-EMPTY-COD',
+                'fecha_compra': '2026-10-30',
+                'proveedor': {'nombre': 'PROV OK', 'rfc': 'AAA010101AAA'},
+                'items': [{'codigo': '  ', 'descripcion': 'Test', 'cantidad': 1, 'precio_compra': 1000}],
+            }, self.admin_user)
 
 
+class BandejaXMLGmailTestCase(TestCase):
+    """Pruebas unitarias y de seguridad para Bandeja de Facturas XML desde Gmail (OAuth2)."""
 
+    def setUp(self):
+        import tempfile
+        from django.test import override_settings
 
+        self._temp_media = tempfile.TemporaryDirectory()
+        self._media_override = override_settings(
+            MEDIA_ROOT=self._temp_media.name,
+            CRON_SECRET_KEY='cron-secret-emirs-test-2026',
+            FRONTEND_URL='http://localhost:5173',
+            GOOGLE_OAUTH_CLIENT_ID='test-client-id.apps.googleusercontent.com',
+            GOOGLE_OAUTH_CLIENT_SECRET='test-client-secret',
+            GOOGLE_OAUTH_REDIRECT_URI='http://localhost:5173/api/inventario/xml-bandeja/gmail/callback/',
+        )
+        self._media_override.enable()
+        self.addCleanup(self._cleanup_media)
 
+        self.client = APIClient()
+        self.admin_user = Usuario.objects.create_user(
+            username='admin_xml_bandeja',
+            password='password123',
+            rol='admin',
+            is_staff=True,
+        )
+        self.operador_user = Usuario.objects.create_user(
+            username='operador_xml_bandeja',
+            password='password123',
+            rol='operador',
+            is_staff=False,
+        )
+        self.client.force_authenticate(user=self.admin_user)
 
+    def _cleanup_media(self):
+        self._media_override.disable()
+        self._temp_media.cleanup()
 
+    def _build_cfdi_xml(
+        self,
+        uuid='11111111-2222-3333-4444-555555555555',
+        folio='1001',
+        emisor_nombre='LLANTAS DEL NORTE SA',
+        emisor_rfc='LDN010101AAA',
+        codigo='NEX-2055516',
+        descripcion='205/55R16 91V Nexen NFERA SU1',
+        cantidad='4',
+        valor_unitario='1000.00',
+    ):
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
+            xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital"
+            Serie="F" Folio="{folio}" Fecha="2026-11-10T12:00:00"
+            SubTotal="4000.00" Total="4640.00" CondicionesDePago="30 dias">
+            <cfdi:Emisor Nombre="{emisor_nombre}" Rfc="{emisor_rfc}"/>
+            <cfdi:Conceptos>
+                <cfdi:Concepto NoIdentificacion="{codigo}" Descripcion="{descripcion}"
+                    Cantidad="{cantidad}" ValorUnitario="{valor_unitario}">
+                    <cfdi:Impuestos>
+                        <cfdi:Traslados>
+                            <cfdi:Traslado Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000"/>
+                        </cfdi:Traslados>
+                    </cfdi:Impuestos>
+                </cfdi:Concepto>
+            </cfdi:Conceptos>
+            <cfdi:Complemento>
+                <tfd:TimbreFiscalDigital UUID="{uuid}" FechaTimbrado="2026-11-10T12:01:00"/>
+            </cfdi:Complemento>
+        </cfdi:Comprobante>""".encode('utf-8')
 
+    def _crear_cuenta_conectada(self, email='compras@emirs.mx'):
+        from datetime import timedelta, timezone as dt_timezone
+        from apps.inventario.models import ConfiguracionCorreoXML
+        from apps.inventario.services.gmail_sync import cifrar_token_json
+
+        expiry = (timezone.now() + timedelta(hours=1)).astimezone(dt_timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        token_data = {
+            'token': 'access-token-mock',
+            'refresh_token': 'refresh-token-mock',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'client_id': 'test-client-id',
+            'client_secret': 'test-client-secret',
+            'scopes': ['https://www.googleapis.com/auth/gmail.readonly'],
+            'expiry': expiry,
+        }
+        return ConfiguracionCorreoXML.objects.create(
+            nombre='Gmail Compras',
+            email_cuenta=email,
+            activa=True,
+            oauth_token_json_enc=cifrar_token_json(token_data),
+        )
+
+    def _crear_factura_bandeja(self, cuenta, xml_bytes, **kwargs):
+        import hashlib
+        from django.core.files.base import ContentFile
+        from apps.inventario.models import FacturaXMLBandeja
+        from apps.inventario.services.xml_import import parsear_cfdi
+
+        datos = parsear_cfdi(xml_bytes)
+        sha = hashlib.sha256(xml_bytes).hexdigest()
+        defaults = {
+            'cuenta': cuenta,
+            'external_message_id': kwargs.pop('external_message_id', f'msg-{sha[:8]}'),
+            'attachment_key': kwargs.pop('attachment_key', 'xml:0.1:factura.xml'),
+            'archivo_sha256': sha,
+            'remitente_email': 'facturacion@proveedor.com',
+            'remitente_nombre': 'Facturación Proveedor',
+            'asunto': 'Envio de CFDI F1001',
+            'fecha_correo': timezone.now(),
+            'nombre_archivo': kwargs.pop('nombre_archivo', 'factura_F1001.xml'),
+            'cfdi_uuid': datos['cfdi_uuid'],
+            'emisor_rfc': datos['proveedor']['rfc'],
+            'emisor_nombre': datos['proveedor']['nombre'],
+            'numero_factura': datos['numero_factura'],
+            'fecha_emision': datos['fecha_compra'],
+            'subtotal': Decimal(str(datos['subtotal'])),
+            'total': Decimal(str(datos['total'])),
+            'total_items': len(datos['items']),
+            'estado': kwargs.pop('estado', 'pendiente'),
+        }
+        defaults.update(kwargs)
+        nombre_file = defaults['nombre_archivo']
+        obj = FacturaXMLBandeja(**defaults)
+        obj.archivo_xml.save(nombre_file, ContentFile(xml_bytes), save=True)
+        return obj
+
+    def test_cifrado_descifrado_fernet_y_clave_explicita(self):
+        """Verifica cifrado/descifrado Fernet con fallback SECRET_KEY y clave explícita."""
+        from cryptography.fernet import Fernet
+        from django.test import override_settings
+        from apps.inventario.services.gmail_sync import cifrar_token_json, descifrar_token_json
+
+        payload = {'token': 'abc', 'refresh_token': 'xyz-secret'}
+        enc = cifrar_token_json(payload)
+        self.assertNotIn('xyz-secret', enc)
+        self.assertEqual(descifrar_token_json(enc), payload)
+
+        # Con token corrupto debe fallar explícitamente
+        with self.assertRaises(ValueError):
+            descifrar_token_json(enc + 'tampered')
+
+        # Con clave explícita GMAIL_TOKEN_ENCRYPTION_KEY
+        custom_key = Fernet.generate_key().decode('utf-8')
+        with override_settings(GMAIL_TOKEN_ENCRYPTION_KEY=custom_key):
+            enc2 = cifrar_token_json(payload)
+            self.assertEqual(descifrar_token_json(enc2), payload)
+
+        # Descifrar con clave distinta falla
+        with self.assertRaises(ValueError):
+            descifrar_token_json(enc2)
+
+    def test_extraccion_segura_zip_y_rechazo_zip_slip(self):
+        """Verifica extracción de XML dentro de ZIP y bloqueo de rutas zip-slip / no-XML."""
+        import io
+        import zipfile
+        from apps.inventario.services.gmail_sync import extraer_xmls_de_zip
+
+        xml_ok = self._build_cfdi_xml(uuid='AAAA-1111', folio='2001')
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('facturas/valid.xml', xml_ok)
+            zf.writestr('../../evil.xml', b'<evil/>')
+            zf.writestr('/etc/passwd.xml', b'<evil/>')
+            zf.writestr('C:\\windows\\system32\\bad.xml', b'<evil/>')
+            zf.writestr('factura.pdf', b'%PDF-1.4')
+
+        extraidos = extraer_xmls_de_zip(buf.getvalue())
+        self.assertEqual(len(extraidos), 1)
+        self.assertEqual(extraidos[0][0], 'facturas/valid.xml')
+        self.assertEqual(extraidos[0][1], xml_ok)
+
+    def test_sincronizar_gmail_mock_deduplicacion_zip_y_errores_aislados(self):
+        """
+        Verifica sincronizar_bandeja_xml mockeando Gmail API:
+        - Descarga adjunto XML directo y XML dentro de ZIP.
+        - Deduplica por SHA-256 y (cuenta, external_message_id, attachment_key).
+        - Marca como 'importada' si el cfdi_uuid ya fue importado previamente.
+        - Guarda 'error' si un XML es inválido/XXE sin detener los demás correos.
+        """
+        import base64
+        import io
+        import zipfile
+        from unittest.mock import MagicMock, patch
+        from apps.inventario.models import FacturaXMLBandeja
+        from apps.inventario.services.gmail_sync import sincronizar_bandeja_xml
+
+        cuenta = self._crear_cuenta_conectada()
+
+        # Pre-existir una factura importada con UUID específico
+        uuid_ya_importado = '99999999-9999-9999-9999-999999999999'
+        xml_previo = self._build_cfdi_xml(uuid=uuid_ya_importado, folio='900')
+        self._crear_factura_bandeja(
+            cuenta,
+            xml_previo,
+            external_message_id='msg-previo',
+            attachment_key='xml:0.1:previo.xml',
+            estado='importada',
+        )
+
+        xml_nuevo = self._build_cfdi_xml(uuid='11111111-AAAA-BBBB-CCCC-000000000001', folio='101')
+        xml_en_zip = self._build_cfdi_xml(uuid='11111111-AAAA-BBBB-CCCC-000000000002', folio='102')
+        # Mismo UUID ya importado pero distinto contenido (nuevo SHA-256)
+        xml_uuid_repetido = self._build_cfdi_xml(uuid=uuid_ya_importado, folio='900-REENVIO')
+        xml_corrupto = b'<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><bad/>'
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, 'w') as zf:
+            zf.writestr('fac_102.xml', xml_en_zip)
+            zf.writestr('../zipslip.xml', xml_nuevo)
+
+        def b64url(raw):
+            return base64.urlsafe_b64encode(raw).decode('ascii')
+
+        mensajes = {
+            'm1': {
+                'id': 'm1',
+                'payload': {
+                    'headers': [
+                        {'name': 'From', 'value': 'Proveedor Uno <prov1@test.com>'},
+                        {'name': 'Subject', 'value': 'Factura 101 y 102'},
+                        {'name': 'Date', 'value': 'Tue, 10 Nov 2026 10:00:00 -0600'},
+                    ],
+                    'parts': [
+                        {'filename': 'fac101.xml', 'body': {'attachmentId': 'att1', 'size': len(xml_nuevo)}},
+                        {'filename': 'paquete.zip', 'body': {'attachmentId': 'att2', 'size': len(zip_buf.getvalue())}},
+                    ],
+                },
+            },
+            'm2': {
+                'id': 'm2',
+                'payload': {
+                    'headers': [
+                        {'name': 'From', 'value': 'prov2@test.com'},
+                        {'name': 'Subject', 'value': 'XML roto y UUID repetido'},
+                    ],
+                    'parts': [
+                        {'filename': 'roto.xml', 'body': {'attachmentId': 'att3', 'size': len(xml_corrupto)}},
+                        {'filename': 'duplicado_sha.xml', 'body': {'attachmentId': 'att4', 'size': len(xml_nuevo)}},
+                        {'filename': 'uuid_rep.xml', 'body': {'attachmentId': 'att5', 'size': len(xml_uuid_repetido)}},
+                    ],
+                },
+            },
+        }
+        adjuntos = {
+            ('m1', 'att1'): {'data': b64url(xml_nuevo)},
+            ('m1', 'att2'): {'data': b64url(zip_buf.getvalue())},
+            ('m2', 'att3'): {'data': b64url(xml_corrupto)},
+            ('m2', 'att4'): {'data': b64url(xml_nuevo)},  # mismo SHA-256 que att1
+            ('m2', 'att5'): {'data': b64url(xml_uuid_repetido)},
+        }
+
+        mock_service = MagicMock()
+        mock_messages = mock_service.users.return_value.messages.return_value
+        mock_messages.list.return_value.execute.return_value = {
+            'messages': [{'id': 'm1'}, {'id': 'm2'}],
+        }
+        mock_messages.get.side_effect = lambda userId, id, format: MagicMock(
+            execute=MagicMock(return_value=mensajes[id])
+        )
+        mock_messages.attachments.return_value.get.side_effect = lambda userId, messageId, id: MagicMock(
+            execute=MagicMock(return_value=adjuntos[(messageId, id)])
+        )
+
+        with patch('apps.inventario.services.gmail_sync._build_gmail_service', return_value=mock_service):
+            res1 = sincronizar_bandeja_xml(cuenta=cuenta)
+            # Segunda corrida idéntica: todo debe deduplicarse
+            res2 = sincronizar_bandeja_xml(cuenta=cuenta)
+
+        self.assertEqual(res1['nuevas'], 3)  # fac101 (pendiente), fac_102 (pendiente), uuid_rep (importada)
+        self.assertEqual(res1['duplicadas'], 1)  # duplicado_sha.xml
+        self.assertEqual(res1['errores'], 1)  # roto.xml
+
+        self.assertEqual(res2['nuevas'], 0)
+        self.assertEqual(res2['errores'], 0)
+        self.assertGreaterEqual(res2['duplicadas'], 4)
+
+        fac_101 = FacturaXMLBandeja.objects.get(cfdi_uuid='11111111-AAAA-BBBB-CCCC-000000000001')
+        self.assertEqual(fac_101.estado, 'pendiente')
+
+        fac_102 = FacturaXMLBandeja.objects.get(cfdi_uuid='11111111-AAAA-BBBB-CCCC-000000000002')
+        self.assertEqual(fac_102.estado, 'pendiente')
+
+        fac_uuid_rep = FacturaXMLBandeja.objects.get(numero_factura='F900-REENVIO')
+        self.assertEqual(fac_uuid_rep.estado, 'importada')
+
+        fac_error = FacturaXMLBandeja.objects.get(nombre_archivo='roto.xml')
+        self.assertEqual(fac_error.estado, 'error')
+        self.assertTrue(bool(fac_error.error_detalle))
+
+        cuenta.refresh_from_db()
+        self.assertIsNotNone(cuenta.ultima_sincronizacion)
+        self.assertEqual(cuenta.ultimo_error, '')
+
+    def test_preview_importar_atomico_y_bloqueo_doble_importacion(self):
+        """
+        Verifica preview/, importar/ atómico, creación de inventario, bloqueo de doble
+        importación y bloqueo de UUID duplicado.
+        """
+        from apps.inventario.models import FacturaXMLBandeja
+
+        cuenta = self._crear_cuenta_conectada()
+        xml1 = self._build_cfdi_xml(uuid='UUID-UNICO-100', folio='5001')
+        xml2_mismo_uuid = self._build_cfdi_xml(uuid='UUID-UNICO-100', folio='5001-DUP')
+
+        f1 = self._crear_factura_bandeja(cuenta, xml1, external_message_id='m-imp-1')
+        f2 = self._crear_factura_bandeja(cuenta, xml2_mismo_uuid, external_message_id='m-imp-2')
+
+        # 1. Preview
+        res_prev = self.client.get(f'/api/inventario/xml-bandeja/{f1.id}/preview/')
+        self.assertEqual(res_prev.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_prev.data['accion'], 'preview')
+        self.assertEqual(res_prev.data['datos']['cfdi_uuid'], 'UUID-UNICO-100')
+        self.assertEqual(len(res_prev.data['datos']['items']), 1)
+
+        # 2. Importar primera vez
+        res_imp = self.client.post(f'/api/inventario/xml-bandeja/{f1.id}/importar/')
+        self.assertEqual(res_imp.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_imp.data['accion'], 'guardado')
+        self.assertEqual(res_imp.data['resultado']['total_items'], 1)
+
+        f1.refresh_from_db()
+        self.assertEqual(f1.estado, 'importada')
+        self.assertEqual(f1.importado_por, self.admin_user)
+        self.assertIsNotNone(f1.importado_at)
+        self.assertIsNotNone(f1.proveedor_vinculado)
+        self.assertTrue(Producto.objects.filter(codigo='NEX-2055516').exists())
+        self.assertEqual(EntradaInventario.objects.filter(numero_factura='F5001').count(), 1)
+
+        # 3. Bloqueo contra doble importación del mismo registro
+        res_dup = self.client.post(f'/api/inventario/xml-bandeja/{f1.id}/importar/')
+        self.assertEqual(res_dup.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(EntradaInventario.objects.filter(numero_factura='F5001').count(), 1)
+
+        # 4. Bloqueo contra importación de otro registro con el mismo cfdi_uuid
+        res_uuid_dup = self.client.post(f'/api/inventario/xml-bandeja/{f2.id}/importar/')
+        self.assertEqual(res_uuid_dup.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('UUID', res_uuid_dup.data['error'])
+        f2.refresh_from_db()
+        self.assertEqual(f2.estado, 'pendiente')
+
+    def test_descargar_descartar_restaurar_y_filtros_listado(self):
+        """Verifica listado paginado, filtros, descarga XML, descartar y restaurar."""
+        cuenta = self._crear_cuenta_conectada()
+        xml1 = self._build_cfdi_xml(uuid='UUID-LIST-1', folio='7001', emisor_nombre='PROVEEDOR ALFA')
+        xml2 = self._build_cfdi_xml(uuid='UUID-LIST-2', folio='7002', emisor_nombre='PROVEEDOR BETA')
+
+        f1 = self._crear_factura_bandeja(cuenta, xml1, external_message_id='m-l1', nombre_archivo='mi factura?.xml')
+        f2 = self._crear_factura_bandeja(cuenta, xml2, external_message_id='m-l2', estado='descartada')
+
+        # Listado filtrado por estado
+        res_pend = self.client.get('/api/inventario/xml-bandeja/?estado=pendiente')
+        self.assertEqual(res_pend.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_pend.data['count'], 1)
+        self.assertEqual(res_pend.data['results'][0]['id'], f1.id)
+        # No debe exponer rutas internas ni secretos
+        self.assertNotIn('archivo_xml', res_pend.data['results'][0])
+        self.assertNotIn('oauth_token_json_enc', res_pend.data['results'][0])
+
+        # Buscador
+        res_search = self.client.get('/api/inventario/xml-bandeja/?search=BETA')
+        self.assertEqual(res_search.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_search.data['count'], 1)
+        self.assertEqual(res_search.data['results'][0]['id'], f2.id)
+
+        # Descargar
+        res_dl = self.client.get(f'/api/inventario/xml-bandeja/{f1.id}/descargar/')
+        self.assertEqual(res_dl.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_dl['Content-Type'], 'application/xml')
+        self.assertIn('attachment;', res_dl['Content-Disposition'])
+        body = b''.join(res_dl.streaming_content)
+        if getattr(res_dl, 'file_to_stream', None):
+            res_dl.file_to_stream.close()
+        self.assertEqual(body, xml1)
+
+        # Descartar f1
+        res_desc = self.client.patch(f'/api/inventario/xml-bandeja/{f1.id}/descartar/')
+        self.assertEqual(res_desc.status_code, status.HTTP_200_OK)
+        f1.refresh_from_db()
+        self.assertEqual(f1.estado, 'descartada')
+
+        # Restaurar f1
+        res_rest = self.client.patch(f'/api/inventario/xml-bandeja/{f1.id}/restaurar/')
+        self.assertEqual(res_rest.status_code, status.HTTP_200_OK)
+        f1.refresh_from_db()
+        self.assertEqual(f1.estado, 'pendiente')
+
+    def test_rbac_y_autenticacion_bandeja_xml(self):
+        """
+        Verifica RBAC:
+        - Anónimo -> 401 en todos los endpoints protegidos.
+        - Operador -> 403 en sincronizar, gmail/auth-url, gmail/disconnect, importar, descartar y restaurar.
+        """
+        cuenta = self._crear_cuenta_conectada()
+        xml1 = self._build_cfdi_xml(uuid='UUID-RBAC-1', folio='8001')
+        f1 = self._crear_factura_bandeja(cuenta, xml1, external_message_id='m-rbac')
+
+        anon = APIClient()
+        for method, url in [
+            ('get', '/api/inventario/xml-bandeja/'),
+            ('post', '/api/inventario/xml-bandeja/sincronizar/'),
+            ('get', f'/api/inventario/xml-bandeja/{f1.id}/preview/'),
+            ('post', f'/api/inventario/xml-bandeja/{f1.id}/importar/'),
+            ('get', f'/api/inventario/xml-bandeja/{f1.id}/descargar/'),
+            ('patch', f'/api/inventario/xml-bandeja/{f1.id}/descartar/'),
+            ('get', '/api/inventario/xml-bandeja/gmail/status/'),
+            ('get', '/api/inventario/xml-bandeja/gmail/auth-url/'),
+            ('post', '/api/inventario/xml-bandeja/gmail/disconnect/'),
+        ]:
+            resp = getattr(anon, method)(url)
+            self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED, f'Esperado 401 en {method} {url}')
+
+        op = APIClient()
+        op.force_authenticate(user=self.operador_user)
+        for method, url in [
+            ('post', '/api/inventario/xml-bandeja/sincronizar/'),
+            ('get', '/api/inventario/xml-bandeja/gmail/auth-url/'),
+            ('post', '/api/inventario/xml-bandeja/gmail/disconnect/'),
+            ('post', f'/api/inventario/xml-bandeja/{f1.id}/importar/'),
+            ('patch', f'/api/inventario/xml-bandeja/{f1.id}/descartar/'),
+            ('patch', f'/api/inventario/xml-bandeja/{f1.id}/restaurar/'),
+        ]:
+            resp = getattr(op, method)(url)
+            self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN, f'Esperado 403 en {method} {url}')
+
+        # Operador autenticado sí puede consultar status y listado
+        self.assertEqual(op.get('/api/inventario/xml-bandeja/gmail/status/').status_code, status.HTTP_200_OK)
+        self.assertEqual(op.get('/api/inventario/xml-bandeja/').status_code, status.HTTP_200_OK)
+
+    def test_cron_validacion_x_cron_key(self):
+        """Verifica que /xml-bandeja/cron/ valide X-Cron-Key con hmac.compare_digest."""
+        from unittest.mock import patch
+
+        anon = APIClient()
+        # Sin header
+        self.assertEqual(anon.post('/api/inventario/xml-bandeja/cron/').status_code, status.HTTP_403_FORBIDDEN)
+        # Clave incorrecta
+        self.assertEqual(
+            anon.post('/api/inventario/xml-bandeja/cron/', HTTP_X_CRON_KEY='wrong-key').status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        # Clave correcta
+        with patch('apps.inventario.views.sincronizar_bandeja_xml', return_value={'cuentas_procesadas': 0, 'nuevas': 0}) as mock_sync:
+            res_ok = anon.post('/api/inventario/xml-bandeja/cron/', HTTP_X_CRON_KEY='cron-secret-emirs-test-2026')
+        self.assertEqual(res_ok.status_code, status.HTTP_200_OK)
+        mock_sync.assert_called_once()
+
+    def test_oauth2_auth_url_callback_state_anti_csrf_y_disconnect(self):
+        """
+        Verifica generación de auth-url, validación de state firmado en callback OAuth2
+        (rechazo de state manipulado/no-admin y guardado cifrado en éxito) y disconnect.
+        """
+        from unittest.mock import MagicMock, patch
+        from django.core.signing import TimestampSigner
+        from apps.inventario.models import ConfiguracionCorreoXML
+        from apps.inventario.services.gmail_sync import OAUTH_STATE_SALT, descifrar_token_json
+
+        # 1. auth-url para admin
+        res_url = self.client.get('/api/inventario/xml-bandeja/gmail/auth-url/')
+        self.assertEqual(res_url.status_code, status.HTTP_200_OK)
+        self.assertIn('accounts.google.com', res_url.data['auth_url'])
+        self.assertIn('gmail.readonly', res_url.data['auth_url'])
+        self.assertIn('access_type=offline', res_url.data['auth_url'])
+
+        # 2. Callback público con state manipulado -> redirige con gmail=error
+        anon = APIClient()
+        res_bad_state = anon.get('/api/inventario/xml-bandeja/gmail/callback/?code=abc&state=forged-state')
+        self.assertEqual(res_bad_state.status_code, status.HTTP_302_FOUND)
+        self.assertIn('gmail=error', res_bad_state['Location'])
+
+        # 3. Callback con state firmado de un usuario operador (no admin) -> redirige con gmail=error
+        signer = TimestampSigner(salt=OAUTH_STATE_SALT)
+        op_state = signer.sign_object({'uid': self.operador_user.id, 'nonce': 'n1'})
+        res_op_state = anon.get(f'/api/inventario/xml-bandeja/gmail/callback/?code=abc&state={op_state}')
+        self.assertEqual(res_op_state.status_code, status.HTTP_302_FOUND)
+        self.assertIn('gmail=error', res_op_state['Location'])
+
+        # 4. Callback válido de admin -> intercambia token, guarda cifrado y redirige a connected
+        admin_state = signer.sign_object({'uid': self.admin_user.id, 'nonce': 'n2'})
+        mock_creds = MagicMock()
+        mock_creds.to_json.return_value = '{"token": "t-ok", "refresh_token": "r-secret-ok"}'
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+
+        mock_service = MagicMock()
+        mock_service.users.return_value.getProfile.return_value.execute.return_value = {
+            'emailAddress': 'facturas@emirs.mx',
+            'historyId': '12345',
+        }
+
+        with (
+            patch('apps.inventario.services.gmail_sync.Flow.from_client_config', return_value=mock_flow),
+            patch('apps.inventario.services.gmail_sync._build_gmail_service', return_value=mock_service),
+        ):
+            res_ok = anon.get(f'/api/inventario/xml-bandeja/gmail/callback/?code=valid-code&state={admin_state}')
+
+        self.assertEqual(res_ok.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(res_ok['Location'], 'http://localhost:5173/inventario?tab=xml&subtab=bandeja&gmail=connected')
+
+        cuenta = ConfiguracionCorreoXML.objects.get(email_cuenta='facturas@emirs.mx')
+        self.assertTrue(cuenta.activa)
+        self.assertNotIn('r-secret-ok', cuenta.oauth_token_json_enc)
+        self.assertEqual(descifrar_token_json(cuenta.oauth_token_json_enc)['refresh_token'], 'r-secret-ok')
+
+        # 5. Status conectado
+        res_status = self.client.get('/api/inventario/xml-bandeja/gmail/status/')
+        self.assertEqual(res_status.status_code, status.HTTP_200_OK)
+        self.assertTrue(res_status.data['conectado'])
+        self.assertTrue(res_status.data['connected'])
+        self.assertTrue(res_status.data['oauth_configurado'])
+        self.assertTrue(res_status.data['configured_env'])
+        self.assertIn('pendientes_count', res_status.data)
+        self.assertEqual(res_status.data['email_cuenta'], 'facturas@emirs.mx')
+
+        # 6. Disconnect
+        res_disc = self.client.post('/api/inventario/xml-bandeja/gmail/disconnect/')
+        self.assertEqual(res_disc.status_code, status.HTTP_200_OK)
+        self.assertFalse(res_disc.data['conectado'])
+        cuenta.refresh_from_db()
+        self.assertFalse(cuenta.activa)
+        self.assertEqual(cuenta.oauth_token_json_enc, '')
+
+    def test_gmail_status_contrato_y_pendientes_count(self):
+        """Verifica que gmail/status/ incluya conectado, connected, oauth_configurado, configured_env y pendientes_count."""
+        from django.test import override_settings
+
+        cuenta = self._crear_cuenta_conectada()
+        xml1 = self._build_cfdi_xml(uuid='UUID-STAT-1', folio='9101')
+        xml2 = self._build_cfdi_xml(uuid='UUID-STAT-2', folio='9102')
+        xml3 = self._build_cfdi_xml(uuid='UUID-STAT-3', folio='9103')
+        self._crear_factura_bandeja(cuenta, xml1, external_message_id='m-st1', estado='pendiente')
+        self._crear_factura_bandeja(cuenta, xml2, external_message_id='m-st2', estado='pendiente')
+        self._crear_factura_bandeja(cuenta, xml3, external_message_id='m-st3', estado='descartada')
+
+        res = self.client.get('/api/inventario/xml-bandeja/gmail/status/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIs(res.data['conectado'], True)
+        self.assertIs(res.data['connected'], True)
+        self.assertIs(res.data['oauth_configurado'], True)
+        self.assertIs(res.data['configured_env'], True)
+        self.assertEqual(res.data['pendientes_count'], 2)
+
+        with override_settings(GOOGLE_OAUTH_CLIENT_ID='', GOOGLE_OAUTH_CLIENT_SECRET=''):
+            cuenta.activa = False
+            cuenta.save(update_fields=['activa'])
+            res_off = self.client.get('/api/inventario/xml-bandeja/gmail/status/')
+        self.assertEqual(res_off.status_code, status.HTTP_200_OK)
+        self.assertIs(res_off.data['conectado'], False)
+        self.assertIs(res_off.data['connected'], False)
+        self.assertIs(res_off.data['oauth_configurado'], False)
+        self.assertIs(res_off.data['configured_env'], False)
+        self.assertEqual(res_off.data['pendientes_count'], 2)
+
+    def test_cron_rechaza_claves_vacias_e_inseguras_en_bandeja_y_notificaciones(self):
+        """Verifica rechazo 403 cuando CRON_SECRET_KEY es '' o el fallback inseguro en ambos endpoints /cron/."""
+        from django.test import override_settings
+
+        anon = APIClient()
+        for bad_secret in ('', 'cambia-esto-en-produccion'):
+            with override_settings(CRON_SECRET_KEY=bad_secret):
+                res_xml = anon.post(
+                    '/api/inventario/xml-bandeja/cron/',
+                    HTTP_X_CRON_KEY=bad_secret,
+                )
+                self.assertEqual(res_xml.status_code, status.HTTP_403_FORBIDDEN)
+
+                res_notif = anon.post(
+                    '/api/notificaciones/cron/',
+                    HTTP_X_CRON_KEY=bad_secret,
+                )
+                self.assertEqual(res_notif.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_preview_file_not_found_y_error_inesperado_no_exponen_rutas(self):
+        """Verifica que preview/ devuelva 404 ante FileNotFoundError y no filtre rutas absolutas."""
+        import os
+        from unittest.mock import patch
+
+        cuenta = self._crear_cuenta_conectada()
+        xml1 = self._build_cfdi_xml(uuid='UUID-FNFE-1', folio='9201')
+        f1 = self._crear_factura_bandeja(cuenta, xml1, external_message_id='m-fnfe')
+
+        # Eliminar el archivo físico del disco conservando el registro en BD
+        ruta_fisica = f1.archivo_xml.path
+        self.assertTrue(os.path.exists(ruta_fisica))
+        os.remove(ruta_fisica)
+
+        res_404 = self.client.get(f'/api/inventario/xml-bandeja/{f1.id}/preview/')
+        self.assertEqual(res_404.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(res_404.data['error'], 'El archivo XML no se encuentra disponible.')
+        self.assertNotIn(self._temp_media.name, str(res_404.data))
+
+        # Simular error inesperado durante lectura con ruta interna sensible
+        with patch.object(
+            f1.archivo_xml.storage,
+            'open',
+            side_effect=RuntimeError('/srv/secret/internal/path/factura.xml permission denied'),
+        ):
+            res_500 = self.client.get(f'/api/inventario/xml-bandeja/{f1.id}/preview/')
+        self.assertEqual(res_500.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertNotIn('/srv/secret', str(res_500.data))
+
+    def test_importar_rechaza_registro_descartado(self):
+        """Verifica que importar/ rechace registros en estado 'descartada' con HTTP 400."""
+        cuenta = self._crear_cuenta_conectada()
+        xml1 = self._build_cfdi_xml(uuid='UUID-DESC-1', folio='9301')
+        f1 = self._crear_factura_bandeja(
+            cuenta,
+            xml1,
+            external_message_id='m-desc-imp',
+            estado='descartada',
+        )
+
+        res = self.client.post(f'/api/inventario/xml-bandeja/{f1.id}/importar/')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            res.data['error'],
+            'Este XML está descartado. Restáuralo a pendiente antes de importarlo.',
+        )
+        f1.refresh_from_db()
+        self.assertEqual(f1.estado, 'descartada')
 

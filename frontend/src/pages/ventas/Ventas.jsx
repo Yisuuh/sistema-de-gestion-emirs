@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import ModalTicket from '../../components/ModalTicket';
 import TabCotizador from './TabCotizador';
-import { coincideProductoInteligente, detectarMedidaFormateada } from '../../lib/medidaUtils';
+import { coincideProductoInteligente, detectarMedidaFormateada, calcularPrecioPosLlanta } from '../../lib/medidaUtils';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   PlusIcon, TrashIcon, MagnifyingGlassIcon, ShoppingCartIcon,
@@ -409,13 +409,32 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
     if (itemPrecargado && itemPrecargado.producto) {
       const prod = itemPrecargado.producto;
       const cant = Math.max(1, Math.min(itemPrecargado.cantidad || 1, prod.stock_actual ?? 999));
-      const precio = parseFloat(itemPrecargado.precio_unitario || prod.precio_descuento || prod.precio_venta) || 0;
+      const preciosCotizados = itemPrecargado.precios_cotizados || null;
+      const calc = calcularPrecioPosLlanta({
+        producto: prod,
+        cantidad: cant,
+        preciosCotizados,
+      });
+      const precio = calc.precioUnitario > 0
+        ? calc.precioUnitario
+        : (parseFloat(itemPrecargado.precio_unitario || prod.precio_descuento || prod.precio_venta) || 0);
+      const subtotalCalc = calc.totalPaquete > 0 ? calc.totalPaquete : Number((cant * precio).toFixed(2));
       const key = `p-${prod.id}`;
       setCarrito(prev => {
         const existe = prev.find(i => i._key === key);
         if (existe) {
           return prev.map(i => i._key === key
-            ? { ...i, cantidad: cant, precio_unitario: precio, subtotal: cant * precio }
+            ? {
+              ...i,
+              producto: prod,
+              cantidad: cant,
+              precio_unitario: precio,
+              subtotal: subtotalCalc,
+              precios_cotizados: preciosCotizados,
+              precioEditadoManual: false,
+              etiquetaTarifa: calc.etiquetaTarifa,
+              ahorroTotal: calc.ahorroTotal,
+            }
             : i
           );
         }
@@ -427,8 +446,12 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
           descripcion: prod.descripcion_completa || prod.codigo,
           cantidad: cant,
           precio_unitario: precio,
-          subtotal: cant * precio,
+          subtotal: subtotalCalc,
           stock_max: prod.stock_actual ?? 999,
+          precios_cotizados: preciosCotizados,
+          precioEditadoManual: false,
+          etiquetaTarifa: calc.etiquetaTarifa,
+          ahorroTotal: calc.ahorroTotal,
         }];
       });
       if (itemPrecargado.clienteId) setClienteSel(String(itemPrecargado.clienteId));
@@ -476,19 +499,65 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
     const existente = carrito.find(i => i._key === key);
     if (existente) {
       if (esProducto && existente.cantidad >= (item.stock_actual ?? 999)) return;
-      setCarrito(c => c.map(i => i._key === key
-        ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precio_unitario }
-        : i
-      ));
+      const nuevaCantidad = existente.cantidad + 1;
+      if (esProducto) {
+        const prodObj = existente.producto || item;
+        const calc = calcularPrecioPosLlanta({
+          producto: prodObj,
+          cantidad: nuevaCantidad,
+          preciosCotizados: existente.precios_cotizados || null,
+          precioEditadoManual: Boolean(existente.precioEditadoManual),
+          precioManual: existente.precio_unitario,
+        });
+        setCarrito(c => c.map(i => i._key === key
+          ? {
+            ...i,
+            cantidad: nuevaCantidad,
+            precio_unitario: calc.precioUnitario,
+            subtotal: calc.totalPaquete,
+            etiquetaTarifa: calc.etiquetaTarifa,
+            ahorroTotal: calc.ahorroTotal,
+          }
+          : i
+        ));
+      } else {
+        setCarrito(c => c.map(i => i._key === key
+          ? { ...i, cantidad: nuevaCantidad, subtotal: Number((nuevaCantidad * i.precio_unitario).toFixed(2)) }
+          : i
+        ));
+      }
+    } else if (esProducto) {
+      const calc = calcularPrecioPosLlanta({ producto: item, cantidad: 1 });
+      const precio = calc.precioUnitario || parseFloat(item.precio_descuento || item.precio_venta || item.precio) || 0;
+      setCarrito(c => [...c, {
+        _key: key, id: Date.now(),
+        producto: item,
+        servicio: null,
+        descripcion: item.descripcion_completa || item.codigo,
+        cantidad: 1,
+        precio_unitario: precio,
+        subtotal: calc.totalPaquete || precio,
+        stock_max: item.stock_actual ?? 999,
+        precios_cotizados: null,
+        precioEditadoManual: false,
+        etiquetaTarifa: calc.etiquetaTarifa,
+        ahorroTotal: calc.ahorroTotal,
+      }]);
     } else {
       const precio = parseFloat(item.precio_descuento || item.precio_venta || item.precio) || 0;
       setCarrito(c => [...c, {
         _key: key, id: Date.now(),
-        producto: esProducto ? item : null,
-        servicio: esProducto ? null : item,
-        descripcion: esProducto ? (item.descripcion_completa || item.codigo) : (item.nombre || item.descripcion),
-        cantidad: 1, precio_unitario: precio, subtotal: precio,
-        stock_max: esProducto ? (item.stock_actual ?? 999) : 999,
+        producto: null,
+        servicio: item,
+        descripcion: item.nombre || item.descripcion,
+        cantidad: 1,
+        precio_unitario: precio,
+        subtotal: precio,
+        stock_max: 999,
+        precios_cotizados: null,
+        precioEditadoManual: false,
+        etiquetaTarifa: null,
+        ahorroTotal: 0,
       }]);
     }
   };
@@ -496,17 +565,41 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
   const quitarItem = (id) => setCarrito(c => c.filter(i => i.id !== id));
 
   const actualizarCantidad = (id, val) => {
-    const n = parseInt(val) || 1;
+    const n = parseInt(val, 10) || 1;
     setCarrito(c => c.map(i => {
       if (i.id !== id) return i;
       const cantidad = Math.max(1, Math.min(n, i.stock_max));
-      return { ...i, cantidad, subtotal: cantidad * i.precio_unitario };
+      if (!i.producto || i.precioEditadoManual) {
+        return { ...i, cantidad, subtotal: Number((cantidad * i.precio_unitario).toFixed(2)) };
+      }
+      const calc = calcularPrecioPosLlanta({
+        producto: i.producto,
+        cantidad,
+        preciosCotizados: i.precios_cotizados || null,
+        precioEditadoManual: Boolean(i.precioEditadoManual),
+        precioManual: i.precio_unitario,
+      });
+      return {
+        ...i,
+        cantidad,
+        precio_unitario: calc.precioUnitario,
+        subtotal: calc.totalPaquete,
+        etiquetaTarifa: calc.etiquetaTarifa,
+        ahorroTotal: calc.ahorroTotal,
+      };
     }));
   };
 
   const actualizarPrecio = (id, val) => {
     const precio = parseFloat(val) || 0;
-    setCarrito(c => c.map(i => i.id !== id ? i : { ...i, precio_unitario: precio, subtotal: i.cantidad * precio }));
+    setCarrito(c => c.map(i => i.id !== id ? i : {
+      ...i,
+      precio_unitario: precio,
+      subtotal: Number((i.cantidad * precio).toFixed(2)),
+      precioEditadoManual: true,
+      etiquetaTarifa: null,
+      ahorroTotal: 0,
+    }));
   };
 
   const subtotal = carrito.reduce((s, i) => s + parseFloat(i.subtotal || 0), 0);
@@ -879,7 +972,15 @@ function TabPOS({ itemPrecargado, onClearItemPrecargado }) {
               : carrito.map(item => (
                 <div key={item.id} className="p-3">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="text-xs font-medium text-gray-800 flex-1 pr-2 leading-tight">{item.descripcion}</p>
+                    <div className="flex-1 pr-2">
+                      <p className="text-xs font-medium text-gray-800 leading-tight">{item.descripcion}</p>
+                      {item.etiquetaTarifa && (
+                        <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold">
+                          {item.etiquetaTarifa}
+                          {item.ahorroTotal > 0 ? ` (-$${fmt(item.ahorroTotal)})` : ''}
+                        </span>
+                      )}
+                    </div>
                     <button onClick={() => quitarItem(item.id)} className="text-gray-300 hover:text-red-500">
                       <TrashIcon className="w-4 h-4" />
                     </button>

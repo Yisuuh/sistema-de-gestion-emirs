@@ -323,16 +323,23 @@ export default function TabCotizador({ onCargarAlPOS }) {
 
   const seleccionarProductoDeStock = (uid, prod) => {
     const costoBase = parseFloat(prod.ultimo_precio_compra || prod.precio_compra || 0);
+    const tieneCostoReal = costoBase > 0;
     const precioVentaLista = parseFloat(prod.precio_descuento || prod.precio_venta || 0);
-    const costoEstimado = costoBase > 0 ? costoBase : Math.round(precioVentaLista * 0.75 * 100) / 100;
+    const costoEstimado = tieneCostoReal ? costoBase : Math.round(precioVentaLista * 0.75 * 100) / 100;
+    const costoIncluyeIva = tieneCostoReal
+      ? (prod.ultimo_precio_incluye_iva !== undefined && prod.ultimo_precio_incluye_iva !== null
+        ? Boolean(prod.ultimo_precio_incluye_iva)
+        : true)
+      : true;
     const marcaNom = typeof prod.marca === 'string' ? prod.marca : prod.marca?.nombre || prod.marca_nombre || '';
     const medProd = prod.medida || medidaEfectiva;
     const catRin = obtenerCategoriaRin(medProd);
 
     // Calcular margen implícito si hay precio de lista y costo
+    const costoConIvaRef = costoIncluyeIva ? costoEstimado : Math.round(costoEstimado * 1.16 * 100) / 100;
     let valorMargenCalc = '25';
-    if (costoEstimado > 0 && precioVentaLista > costoEstimado) {
-      valorMargenCalc = String(Math.round(((precioVentaLista - costoEstimado) / costoEstimado) * 1000) / 10);
+    if (costoConIvaRef > 0 && precioVentaLista > costoConIvaRef) {
+      valorMargenCalc = String(Math.round(((precioVentaLista - costoConIvaRef) / costoConIvaRef) * 1000) / 10);
     }
 
     setOpciones((prev) =>
@@ -348,7 +355,7 @@ export default function TabCotizador({ onCargarAlPOS }) {
           medida: medProd,
           tiempo_entrega: 'Inmediata (En Stock)',
           costo_proveedor: costoEstimado > 0 ? String(costoEstimado) : '',
-          costo_incluye_iva: true,
+          costo_incluye_iva: costoIncluyeIva,
           categoria_rin: catRin,
           tipo_margen: 'porcentaje',
           valor_margen: valorMargenCalc,
@@ -625,18 +632,48 @@ export default function TabCotizador({ onCargarAlPOS }) {
   });
 
   // ─── Cargar Opción al POS ────────────────────────────────────────────────
-  const handleEnviarOpcionAlPOS = (op, cantidadCot = cantidadRequerida, clienteCot = clienteId, vehiculoCot = vehiculoId) => {
+  const handleEnviarOpcionAlPOS = (
+    op,
+    cantidadCot = cantidadRequerida,
+    clienteCot = clienteId,
+    vehiculoCot = vehiculoId,
+    factorCot = factorInteres
+  ) => {
     const prodId = op.producto || op.producto_obj?.id;
     const prodEncontrado = op.producto_obj || productos.find((p) => p.id === prodId);
     if (!prodEncontrado) {
       setErrorMsg('Esta opción es Sobre Pedido y aún no está vinculada a un producto en stock del inventario.');
       return;
     }
+    const p1 = parseFloat(op.precio_unitario_publico) || parseFloat(prodEncontrado.precio_venta) || 0;
+    const parTotal = parseFloat(op.precio_par) || 0;
+    const j4Total = parseFloat(op.precio_juego_4) || 0;
+    const p2 = parTotal > 0 ? Number((parTotal / 2).toFixed(2)) : p1;
+    const p4 = j4Total > 0 ? Number((j4Total / 4).toFixed(2)) : p2;
+    const costoCot = parseFloat(op.costo_proveedor ?? prodEncontrado.ultimo_precio_compra ?? 0) || 0;
+    const costoIncluyeIvaCot = op.costo_incluye_iva !== undefined
+      ? Boolean(op.costo_incluye_iva)
+      : Boolean(prodEncontrado.ultimo_precio_incluye_iva);
+    const catRinCot = op.categoria_rin || obtenerCategoriaRin(op.medida || prodEncontrado.medida);
+    const factorCotNum = parseFloat(op.factor_interes ?? factorCot) || 1.079;
+
     if (onCargarAlPOS) {
       onCargarAlPOS({
         producto: prodEncontrado,
         cantidad: Math.max(1, parseInt(cantidadCot, 10) || 1),
-        precio_unitario: parseFloat(op.precio_unitario_publico) || parseFloat(prodEncontrado.precio_venta) || 0,
+        precio_unitario: p1,
+        precios_cotizados: {
+          p1,
+          p2,
+          p4,
+          precio_par: parTotal,
+          precio_juego_4: j4Total,
+          categoria_rin: catRinCot,
+          costo: costoCot,
+          costo_incluye_iva: costoIncluyeIvaCot,
+          factor_interes: factorCotNum,
+          utiliza_tabulador: op.utiliza_tabulador !== false,
+        },
         clienteId: clienteCot || '',
         vehiculoId: vehiculoCot || '',
       });

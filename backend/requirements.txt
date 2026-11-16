@@ -13,6 +13,13 @@ django-cors-headers==4.3.1
 # Utilidades
 python-dotenv==1.0.0
 Pillow==10.2.0
+defusedxml==0.7.1
+
+# Gmail OAuth2 y cifrado de tokens
+cryptography==50.0.2
+google-api-python-client==2.202.0
+google-auth-oauthlib==1.5.0
+google-auth-httplib2==0.4.4
 
 # Filtros y búsqueda
 django-filter==23.5

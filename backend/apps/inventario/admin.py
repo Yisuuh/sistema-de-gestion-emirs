@@ -1,5 +1,9 @@
 from django.contrib import admin
-from .models import Marca, Proveedor, Producto, EntradaInventario, SalidaInventario, PagoProveedor
+from .models import (
+    Marca, Proveedor, Producto, EntradaInventario,
+    SalidaInventario, PagoProveedor,
+    ConfiguracionCorreoXML, FacturaXMLBandeja,
+)
 
 
 @admin.register(Marca)
@@ -50,3 +54,20 @@ class PagoProveedorAdmin(admin.ModelAdmin):
     list_filter = ['proveedor', 'fecha']
     search_fields = ['proveedor__nombre', 'referencia', 'notas']
     readonly_fields = ['created_at', 'registrado_por']
+
+
+@admin.register(ConfiguracionCorreoXML)
+class ConfiguracionCorreoXMLAdmin(admin.ModelAdmin):
+    list_display = ['nombre', 'proveedor_tipo', 'email_cuenta', 'activa', 'ultima_sincronizacion']
+    list_filter = ['activa', 'proveedor_tipo']
+    search_fields = ['nombre', 'email_cuenta']
+    exclude = ['oauth_token_json_enc']
+    readonly_fields = ['created_at', 'updated_at', 'ultima_sincronizacion']
+
+
+@admin.register(FacturaXMLBandeja)
+class FacturaXMLBandejaAdmin(admin.ModelAdmin):
+    list_display = ['numero_factura', 'emisor_nombre', 'emisor_rfc', 'total', 'estado', 'fecha_correo']
+    list_filter = ['estado', 'cuenta']
+    search_fields = ['numero_factura', 'emisor_nombre', 'emisor_rfc', 'cfdi_uuid', 'nombre_archivo']
+    readonly_fields = ['archivo_sha256', 'created_at', 'importado_at', 'importado_por']
