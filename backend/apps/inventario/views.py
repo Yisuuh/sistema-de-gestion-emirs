@@ -44,6 +44,7 @@ from .services.xml_import import (
     guardar_factura_cfdi,
 )
 from .services.gmail_sync import (
+    GmailOAuthError,
     generar_url_oauth_gmail,
     procesar_callback_oauth_gmail,
     sincronizar_bandeja_xml,
@@ -1357,6 +1358,15 @@ class FacturaXMLBandejaViewSet(viewsets.ReadOnlyModelViewSet):
             'pendientes_count': pendientes_count,
         })
 
+    @staticmethod
+    def _sanitize_oauth_error_code(raw: object, fallback: str) -> str:
+        """Devuelve un código de error OAuth2 corto y seguro o el fallback."""
+        if isinstance(raw, str):
+            candidate = raw.strip()
+            if re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', candidate):
+                return candidate
+        return fallback
+
     @action(detail=False, methods=['get'], url_path='gmail/auth-url')
     def gmail_auth_url(self, request):
         """GET /api/inventario/xml-bandeja/gmail/auth-url/ — Admin only."""
@@ -1364,7 +1374,7 @@ class FacturaXMLBandejaViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             auth_url = generar_url_oauth_gmail(request.user)
             return Response({'auth_url': auth_url})
-        except ValueError as exc:
+        except (GmailOAuthError, ValueError) as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(
@@ -1384,15 +1394,21 @@ class FacturaXMLBandejaViewSet(viewsets.ReadOnlyModelViewSet):
 
         error = request.query_params.get('error')
         if error:
-            return HttpResponseRedirect(f'{redirect_base}&gmail=error&reason={quote(error)}')
+            safe_error = self._sanitize_oauth_error_code(error, 'oauth_error')
+            return HttpResponseRedirect(f'{redirect_base}&gmail=error&reason={quote(safe_error)}')
 
         code = request.query_params.get('code', '')
         state = request.query_params.get('state', '')
         try:
             procesar_callback_oauth_gmail(code=code, state=state)
             return HttpResponseRedirect(f'{redirect_base}&gmail=connected')
-        except Exception:
-            return HttpResponseRedirect(f'{redirect_base}&gmail=error')
+        except GmailOAuthError as exc:
+            logger.exception('Error en callback OAuth2 de Gmail')
+            return HttpResponseRedirect(f'{redirect_base}&gmail=error&reason={quote(str(exc))}')
+        except Exception as exc:
+            logger.exception('Error en callback OAuth2 de Gmail')
+            reason_code = self._sanitize_oauth_error_code(getattr(exc, 'error', None), type(exc).__name__)
+            return HttpResponseRedirect(f'{redirect_base}&gmail=error&reason={quote(reason_code)}')
 
     @action(detail=False, methods=['post'], url_path='gmail/disconnect')
     def gmail_disconnect(self, request):

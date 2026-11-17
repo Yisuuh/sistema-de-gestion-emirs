@@ -24,6 +24,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from defusedxml import DefusedXmlException
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ImproperlyConfigured
 from django.core.files.base import ContentFile
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import IntegrityError
@@ -47,6 +48,10 @@ MAX_ZIP_FILES = 20
 MAX_MESSAGES_PER_SYNC = 200
 
 
+class GmailOAuthError(Exception):
+    """Error controlado del flujo de autorización OAuth2 de Gmail."""
+
+
 def obtener_fernet() -> Fernet:
     """
     Obtiene la instancia Fernet usando GMAIL_TOKEN_ENCRYPTION_KEY o,
@@ -57,11 +62,17 @@ def obtener_fernet() -> Fernet:
         key_bytes = configured_key.encode('utf-8') if isinstance(configured_key, str) else configured_key
         return Fernet(key_bytes)
 
+    try:
+        secret_key = getattr(settings, 'SECRET_KEY', '') or ''
+    except ImproperlyConfigured:
+        secret_key = ''
+    if not secret_key.strip():
+        raise ValueError('Configuración de cifrado incompleta: define GMAIL_TOKEN_ENCRYPTION_KEY o SECRET_KEY.')
+
     if not getattr(settings, 'DEBUG', False):
         logger.warning('GMAIL_TOKEN_ENCRYPTION_KEY no está configurada; usando respaldo derivado de SECRET_KEY.')
 
-    secret_bytes = (getattr(settings, 'SECRET_KEY', '') or 'emirs-fallback').encode('utf-8')
-    digest = hashlib.sha256(secret_bytes).digest()
+    digest = hashlib.sha256(secret_key.encode('utf-8')).digest()
     derived_key = base64.urlsafe_b64encode(digest)
     return Fernet(derived_key)
 
@@ -89,7 +100,7 @@ def _build_client_config() -> dict[str, Any]:
     redirect_uri = (getattr(settings, 'GOOGLE_OAUTH_REDIRECT_URI', '') or '').strip()
 
     if not client_id or not client_secret:
-        raise ValueError(
+        raise GmailOAuthError(
             'Las credenciales de Google OAuth2 (GOOGLE_OAUTH_CLIENT_ID y GOOGLE_OAUTH_CLIENT_SECRET) '
             'no están configuradas en el servidor.'
         )
@@ -120,17 +131,26 @@ def _es_usuario_admin(usuario: Any) -> bool:
 def generar_url_oauth_gmail(usuario: Any) -> str:
     """
     Genera la URL de autorización OAuth2 de Google con scope gmail.readonly,
-    access_type='offline', prompt='consent' y parámetro state firmado.
+    access_type='offline', prompt='consent', PKCE (code_verifier cifrado en state)
+    y parámetro state firmado.
     """
     if not _es_usuario_admin(usuario):
-        raise PermissionError('Solo los administradores pueden vincular una cuenta de Gmail.')
+        raise GmailOAuthError('Solo los administradores pueden vincular una cuenta de Gmail.')
+
+    code_verifier = secrets.token_urlsafe(64)
+    cv_enc = obtener_fernet().encrypt(code_verifier.encode('utf-8')).decode('ascii')
 
     client_config = _build_client_config()
-    flow = Flow.from_client_config(client_config, scopes=GMAIL_SCOPES)
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=GMAIL_SCOPES,
+        code_verifier=code_verifier,
+        autogenerate_code_verifier=False,
+    )
     flow.redirect_uri = getattr(settings, 'GOOGLE_OAUTH_REDIRECT_URI', '')
 
     signer = TimestampSigner(salt=OAUTH_STATE_SALT)
-    state = signer.sign_object({'uid': usuario.id, 'nonce': secrets.token_urlsafe(16)})
+    state = signer.sign_object({'uid': usuario.id, 'nonce': secrets.token_urlsafe(16), 'cv': cv_enc})
 
     auth_url, _ = flow.authorization_url(
         access_type='offline',
@@ -144,30 +164,49 @@ def generar_url_oauth_gmail(usuario: Any) -> str:
 def procesar_callback_oauth_gmail(code: str, state: str) -> ConfiguracionCorreoXML:
     """
     Valida el parámetro state firmado, verifica que el usuario sea administrador,
-    intercambia el código por tokens OAuth2 y guarda las credenciales cifradas.
+    recupera el code_verifier PKCE cifrado obligatorio, intercambia el código por
+    tokens OAuth2 y guarda las credenciales cifradas.
     """
     if not state or not code:
-        raise ValueError('Parámetros OAuth2 incompletos (code/state requeridos).')
+        raise GmailOAuthError('Parámetros OAuth2 incompletos (code/state requeridos).')
 
     signer = TimestampSigner(salt=OAUTH_STATE_SALT)
     try:
         payload = signer.unsign_object(state, max_age=OAUTH_STATE_MAX_AGE)
     except SignatureExpired as exc:
-        raise ValueError('La sesión de autorización OAuth2 expiró. Intenta nuevamente.') from exc
+        raise GmailOAuthError('La sesión de autorización OAuth2 expiró. Intenta nuevamente.') from exc
     except BadSignature as exc:
-        raise ValueError('Estado OAuth2 inválido.') from exc
+        raise GmailOAuthError('Estado OAuth2 inválido.') from exc
 
     uid = payload.get('uid') if isinstance(payload, dict) else None
     if not uid:
-        raise ValueError('Estado OAuth2 sin identificador de usuario.')
+        raise GmailOAuthError('Estado OAuth2 sin identificador de usuario.')
+
+    cv_enc = payload.get('cv') if isinstance(payload, dict) else None
+    if not isinstance(cv_enc, str) or not cv_enc.strip():
+        raise GmailOAuthError('Estado OAuth2 inválido o corrupto.')
+
+    fernet = obtener_fernet()
+    try:
+        code_verifier = fernet.decrypt(cv_enc.encode('ascii')).decode('utf-8')
+    except (InvalidToken, UnicodeError, ValueError) as exc:
+        raise GmailOAuthError('Estado OAuth2 inválido o corrupto.') from exc
+
+    if not code_verifier:
+        raise GmailOAuthError('Estado OAuth2 inválido o corrupto.')
 
     Usuario = get_user_model()
     usuario = Usuario.objects.filter(pk=uid).first()
     if not _es_usuario_admin(usuario):
-        raise PermissionError('El usuario no tiene permisos de administrador para vincular Gmail.')
+        raise GmailOAuthError('El usuario no tiene permisos de administrador para vincular Gmail.')
 
     client_config = _build_client_config()
-    flow = Flow.from_client_config(client_config, scopes=GMAIL_SCOPES)
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=GMAIL_SCOPES,
+        code_verifier=code_verifier,
+        autogenerate_code_verifier=False,
+    )
     flow.redirect_uri = getattr(settings, 'GOOGLE_OAUTH_REDIRECT_URI', '')
     flow.fetch_token(code=code)
 
@@ -176,7 +215,7 @@ def procesar_callback_oauth_gmail(code: str, state: str) -> ConfiguracionCorreoX
     profile = service.users().getProfile(userId='me').execute()
     email_cuenta = (profile.get('emailAddress') or '').strip()
     if not email_cuenta:
-        raise ValueError('No se pudo obtener el correo electrónico de la cuenta de Gmail.')
+        raise GmailOAuthError('No se pudo obtener el correo electrónico de la cuenta de Gmail.')
 
     token_dict = json.loads(creds.to_json())
 

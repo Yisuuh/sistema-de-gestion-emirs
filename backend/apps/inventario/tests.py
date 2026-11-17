@@ -1832,7 +1832,7 @@ class BandejaXMLGmailTestCase(TestCase):
         """Verifica cifrado/descifrado Fernet con fallback SECRET_KEY y clave explícita."""
         from cryptography.fernet import Fernet
         from django.test import override_settings
-        from apps.inventario.services.gmail_sync import cifrar_token_json, descifrar_token_json
+        from apps.inventario.services.gmail_sync import cifrar_token_json, descifrar_token_json, obtener_fernet
 
         payload = {'token': 'abc', 'refresh_token': 'xyz-secret'}
         enc = cifrar_token_json(payload)
@@ -1852,6 +1852,11 @@ class BandejaXMLGmailTestCase(TestCase):
         # Descifrar con clave distinta falla
         with self.assertRaises(ValueError):
             descifrar_token_json(enc2)
+
+        # Sin GMAIL_TOKEN_ENCRYPTION_KEY ni SECRET_KEY falla explícitamente (sin respaldo estático)
+        with override_settings(GMAIL_TOKEN_ENCRYPTION_KEY='', SECRET_KEY=''):
+            with self.assertRaises(ValueError):
+                obtener_fernet()
 
     def test_extraccion_segura_zip_y_rechazo_zip_slip(self):
         """Verifica extracción de XML dentro de ZIP y bloqueo de rutas zip-slip / no-XML."""
@@ -2156,7 +2161,7 @@ class BandejaXMLGmailTestCase(TestCase):
         from unittest.mock import MagicMock, patch
         from django.core.signing import TimestampSigner
         from apps.inventario.models import ConfiguracionCorreoXML
-        from apps.inventario.services.gmail_sync import OAUTH_STATE_SALT, descifrar_token_json
+        from apps.inventario.services.gmail_sync import OAUTH_STATE_SALT, descifrar_token_json, obtener_fernet
 
         # 1. auth-url para admin
         res_url = self.client.get('/api/inventario/xml-bandeja/gmail/auth-url/')
@@ -2173,13 +2178,16 @@ class BandejaXMLGmailTestCase(TestCase):
 
         # 3. Callback con state firmado de un usuario operador (no admin) -> redirige con gmail=error
         signer = TimestampSigner(salt=OAUTH_STATE_SALT)
-        op_state = signer.sign_object({'uid': self.operador_user.id, 'nonce': 'n1'})
+        fernet = obtener_fernet()
+        op_cv_enc = fernet.encrypt(b'op-verifier-1').decode('ascii')
+        op_state = signer.sign_object({'uid': self.operador_user.id, 'nonce': 'n1', 'cv': op_cv_enc})
         res_op_state = anon.get(f'/api/inventario/xml-bandeja/gmail/callback/?code=abc&state={op_state}')
         self.assertEqual(res_op_state.status_code, status.HTTP_302_FOUND)
         self.assertIn('gmail=error', res_op_state['Location'])
 
         # 4. Callback válido de admin -> intercambia token, guarda cifrado y redirige a connected
-        admin_state = signer.sign_object({'uid': self.admin_user.id, 'nonce': 'n2'})
+        admin_cv_enc = fernet.encrypt(b'admin-verifier-2').decode('ascii')
+        admin_state = signer.sign_object({'uid': self.admin_user.id, 'nonce': 'n2', 'cv': admin_cv_enc})
         mock_creds = MagicMock()
         mock_creds.to_json.return_value = '{"token": "t-ok", "refresh_token": "r-secret-ok"}'
         mock_flow = MagicMock()
@@ -2321,4 +2329,180 @@ class BandejaXMLGmailTestCase(TestCase):
         )
         f1.refresh_from_db()
         self.assertEqual(f1.estado, 'descartada')
+
+    def test_oauth2_pkce_flujo_completo_y_error_seguro_en_callback(self):
+        """
+        Verifica el flujo PKCE completo:
+        - auth-url genera code_challenge y state con 'cv' cifrado (no texto plano).
+        - callback descifra 'cv' y pasa el mismo code_verifier a Flow.from_client_config.
+        - Un 'cv' corrupto o un error inesperado producen redirect seguro sin filtrar secretos ni rutas.
+        """
+        from unittest.mock import MagicMock, patch
+        from urllib.parse import parse_qs, quote, unquote, urlparse
+        from django.core.signing import TimestampSigner
+        from google_auth_oauthlib.flow import Flow
+        from apps.inventario.models import ConfiguracionCorreoXML
+        from apps.inventario.services.gmail_sync import OAUTH_STATE_SALT, obtener_fernet
+
+        # 1. auth-url: espiar Flow.from_client_config manteniendo ejecución real
+        captured_auth_kwargs = {}
+        real_from_client_config = Flow.from_client_config
+
+        def spy_from_client_config(client_config, scopes=None, **kwargs):
+            captured_auth_kwargs.update(kwargs)
+            return real_from_client_config(client_config, scopes=scopes, **kwargs)
+
+        with patch('apps.inventario.services.gmail_sync.Flow.from_client_config', side_effect=spy_from_client_config):
+            res_url = self.client.get('/api/inventario/xml-bandeja/gmail/auth-url/')
+
+        self.assertEqual(res_url.status_code, status.HTTP_200_OK)
+        auth_url = res_url.data['auth_url']
+        parsed = urlparse(auth_url)
+        qs = parse_qs(parsed.query)
+
+        self.assertIn('code_challenge', qs)
+        self.assertEqual(qs.get('code_challenge_method'), ['S256'])
+        self.assertIn('state', qs)
+
+        generated_cv = captured_auth_kwargs.get('code_verifier')
+        self.assertTrue(generated_cv)
+        self.assertIs(captured_auth_kwargs.get('autogenerate_code_verifier'), False)
+        self.assertNotIn(generated_cv, auth_url)
+
+        # Verificar que state contiene 'cv' cifrado (no en texto plano)
+        state = qs['state'][0]
+        payload = TimestampSigner(salt=OAUTH_STATE_SALT).unsign_object(state)
+        self.assertIn('cv', payload)
+        self.assertNotEqual(payload['cv'], generated_cv)
+        decrypted_cv = obtener_fernet().decrypt(payload['cv'].encode('ascii')).decode('utf-8')
+        self.assertEqual(decrypted_cv, generated_cv)
+
+        # 2. callback con ese state -> Flow.from_client_config recibe exactamente el mismo code_verifier
+        anon = APIClient()
+        mock_creds = MagicMock()
+        mock_creds.to_json.return_value = '{"token": "t-pkce", "refresh_token": "r-pkce"}'
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+        mock_service = MagicMock()
+        mock_service.users.return_value.getProfile.return_value.execute.return_value = {
+            'emailAddress': 'pkce@emirs.mx',
+            'historyId': '777',
+        }
+
+        with (
+            patch('apps.inventario.services.gmail_sync.Flow.from_client_config', return_value=mock_flow) as mock_flow_cls,
+            patch('apps.inventario.services.gmail_sync._build_gmail_service', return_value=mock_service),
+        ):
+            res_cb = anon.get(f'/api/inventario/xml-bandeja/gmail/callback/?code=pkce-code&state={quote(state)}')
+
+        self.assertEqual(res_cb.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(res_cb['Location'], 'http://localhost:5173/inventario?tab=xml&subtab=bandeja&gmail=connected')
+        _, cb_kwargs = mock_flow_cls.call_args
+        self.assertEqual(cb_kwargs.get('code_verifier'), generated_cv)
+        self.assertIs(cb_kwargs.get('autogenerate_code_verifier'), False)
+        mock_flow.fetch_token.assert_called_once_with(code='pkce-code')
+        self.assertTrue(ConfiguracionCorreoXML.objects.filter(email_cuenta='pkce@emirs.mx', activa=True).exists())
+
+        # 3. state con 'cv' corrupto -> ValueError -> redirect con reason explícito
+        bad_cv_state = TimestampSigner(salt=OAUTH_STATE_SALT).sign_object({
+            'uid': self.admin_user.id,
+            'nonce': 'n-bad',
+            'cv': 'token-corrupto',
+        })
+        with self.assertLogs('apps.inventario.views', level='ERROR'):
+            res_bad_cv = anon.get(
+                f'/api/inventario/xml-bandeja/gmail/callback/?code=pkce-code&state={quote(bad_cv_state)}'
+            )
+        self.assertEqual(res_bad_cv.status_code, status.HTTP_302_FOUND)
+        self.assertIn('gmail=error', res_bad_cv['Location'])
+        bad_reason = parse_qs(urlparse(res_bad_cv['Location']).query).get('reason', [''])[0]
+        self.assertEqual(unquote(bad_reason), 'Estado OAuth2 inválido o corrupto.')
+
+        # 4. Error OAuth2 con atributo .error -> pasa código corto seguro sin filtrar secretos/rutas
+        class FakeOAuth2Error(Exception):
+            error = 'invalid_grant'
+
+        mock_flow_err = MagicMock()
+        mock_flow_err.fetch_token.side_effect = FakeOAuth2Error(
+            '/srv/secret/internal client_secret=test-client-secret refresh_token=r-pkce'
+        )
+        with (
+            patch('apps.inventario.services.gmail_sync.Flow.from_client_config', return_value=mock_flow_err),
+            self.assertLogs('apps.inventario.views', level='ERROR'),
+        ):
+            res_oauth_err = anon.get(
+                f'/api/inventario/xml-bandeja/gmail/callback/?code=pkce-code&state={quote(state)}'
+            )
+        self.assertEqual(res_oauth_err.status_code, status.HTTP_302_FOUND)
+        oauth_reason = parse_qs(urlparse(res_oauth_err['Location']).query).get('reason', [''])[0]
+        self.assertEqual(oauth_reason, 'invalid_grant')
+        self.assertNotIn('test-client-secret', res_oauth_err['Location'])
+        self.assertNotIn('/srv/secret', res_oauth_err['Location'])
+        self.assertNotIn('r-pkce', res_oauth_err['Location'])
+
+        # 5. Error inesperado genérico -> pasa solo nombre de clase seguro sin rutas ni secretos
+        mock_flow_runtime = MagicMock()
+        mock_flow_runtime.fetch_token.side_effect = RuntimeError(
+            '/srv/secret/path/token.json client_secret=test-client-secret refresh_token=r-pkce'
+        )
+        with (
+            patch('apps.inventario.services.gmail_sync.Flow.from_client_config', return_value=mock_flow_runtime),
+            self.assertLogs('apps.inventario.views', level='ERROR'),
+        ):
+            res_runtime_err = anon.get(
+                f'/api/inventario/xml-bandeja/gmail/callback/?code=pkce-code&state={quote(state)}'
+            )
+        self.assertEqual(res_runtime_err.status_code, status.HTTP_302_FOUND)
+        runtime_reason = parse_qs(urlparse(res_runtime_err['Location']).query).get('reason', [''])[0]
+        self.assertEqual(runtime_reason, 'RuntimeError')
+        self.assertNotIn('test-client-secret', res_runtime_err['Location'])
+        self.assertNotIn('/srv/secret', res_runtime_err['Location'])
+        self.assertNotIn('r-pkce', res_runtime_err['Location'])
+
+        # 6. state sin 'cv' -> GmailOAuthError explícito (PKCE obligatorio)
+        no_cv_state = TimestampSigner(salt=OAUTH_STATE_SALT).sign_object({
+            'uid': self.admin_user.id,
+            'nonce': 'n-no-cv',
+        })
+        with self.assertLogs('apps.inventario.views', level='ERROR'):
+            res_no_cv = anon.get(
+                f'/api/inventario/xml-bandeja/gmail/callback/?code=pkce-code&state={quote(no_cv_state)}'
+            )
+        self.assertEqual(res_no_cv.status_code, status.HTTP_302_FOUND)
+        no_cv_reason = parse_qs(urlparse(res_no_cv['Location']).query).get('reason', [''])[0]
+        self.assertEqual(unquote(no_cv_reason), 'Estado OAuth2 inválido o corrupto.')
+
+        # 7. PermissionError y ValueError externos NO exponen rutas internas en Location
+        for ext_exc, expected_name, forbidden_fragment in (
+            (PermissionError('/ruta/secreta/sistema'), 'PermissionError', '/ruta/secreta/sistema'),
+            (ValueError('ruta/interna/token'), 'ValueError', 'ruta/interna'),
+        ):
+            mock_flow_ext = MagicMock()
+            mock_flow_ext.fetch_token.side_effect = ext_exc
+            with (
+                patch('apps.inventario.services.gmail_sync.Flow.from_client_config', return_value=mock_flow_ext),
+                self.assertLogs('apps.inventario.views', level='ERROR'),
+            ):
+                res_ext = anon.get(
+                    f'/api/inventario/xml-bandeja/gmail/callback/?code=pkce-code&state={quote(state)}'
+                )
+            self.assertEqual(res_ext.status_code, status.HTTP_302_FOUND)
+            ext_reason = parse_qs(urlparse(res_ext['Location']).query).get('reason', [''])[0]
+            self.assertEqual(ext_reason, expected_name)
+            self.assertNotIn(forbidden_fragment, unquote(res_ext['Location']))
+
+        # 8. Parámetro ?error= arbitrario se sanitiza a 'oauth_error'; código válido se conserva
+        res_bad_q_err = anon.get(
+            '/api/inventario/xml-bandeja/gmail/callback/?error=' + quote('texto arbitrario con espacios')
+        )
+        self.assertEqual(res_bad_q_err.status_code, status.HTTP_302_FOUND)
+        bad_q_reason = parse_qs(urlparse(res_bad_q_err['Location']).query).get('reason', [''])[0]
+        self.assertEqual(bad_q_reason, 'oauth_error')
+        self.assertNotIn('texto', unquote(res_bad_q_err['Location']))
+        self.assertNotIn('arbitrario', unquote(res_bad_q_err['Location']))
+
+        res_ok_q_err = anon.get('/api/inventario/xml-bandeja/gmail/callback/?error=access_denied')
+        self.assertEqual(res_ok_q_err.status_code, status.HTTP_302_FOUND)
+        ok_q_reason = parse_qs(urlparse(res_ok_q_err['Location']).query).get('reason', [''])[0]
+        self.assertEqual(ok_q_reason, 'access_denied')
 
